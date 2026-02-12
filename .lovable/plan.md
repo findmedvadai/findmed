@@ -1,169 +1,146 @@
 
 
-# FindMed Scheduling Platform — Phase 1: Core Booking Flow
+# Phase 1A: Authentication System + Dashboard Layouts
 
-## Branding & Design System
-- Apply FindMed colors: **Azul #123D74** (headers, structure), **Rosa #E30050** (CTA buttons), **Gris #8493A2** (secondary text), **Gris claro #EDEEF1** (backgrounds/borders), **Blanco #FFFFFF** (base)
-- Professional, medical, minimalist style with rounded buttons and clear visual hierarchy
-- All dates/times in **America/Mexico_City** timezone
+## Overview
+Build the login system, auth context, role-based route protection, and sidebar-based dashboard layouts for Doctor and Admin roles. After this step you will have a working login page, protected dashboards with navigation, and placeholder pages for each section.
 
 ---
 
-## Database Schema (Phase 1 Tables)
-Set up the core Supabase tables with RLS policies:
+## 1. Auth Context and Hook
 
-- **users** — with role enum (superadmin, admin, doctor) and doctor_id FK
-- **user_roles** — separate roles table for security
-- **cities**, **zones**, **specialties** — catalog tables
-- **doctors** — with Google Calendar fields (connected, refresh_token_ref, calendar_id)
-- **doctor_specialties** — many-to-many relationship
-- **doctor_schedule_settings** — duration, confirmation threshold, timezone
-- **doctor_weekly_availability** — weekday ranges with enable/disable
-- **doctor_date_overrides** — specific blocked dates
-- **patients** — phone in E.164 format
-- **reservation_sessions** — booking tokens (12h expiry, single-use)
-- **appointments** — full appointment lifecycle with status enum
-- **appointment_manage_tokens** — manage tokens (12h expiry, multi-use)
-- **notifications** — in-app notifications for doctor/admin
+**File: `src/hooks/useAuth.tsx`**
 
-RLS policies ensuring patients never access tables directly, doctors only see their own data, and admins have full operational access.
+Create an auth context provider that:
+- Listens to `onAuthStateChange` (set up BEFORE calling `getSession`)
+- Stores the current Supabase session/user
+- Fetches the user's role from `user_roles` table and `doctor_id` from `users` table
+- Exposes: `user`, `session`, `role`, `doctorId`, `loading`, `signOut`
 
 ---
 
-## Edge Functions (Phase 1)
+## 2. Login Page
 
-### 1. Triage Webhook (`POST /triage-webhook`)
-- Receives doctor_id, patient info, symptoms from n8n
-- Normalizes phone to E.164 (+52 default)
-- Upserts patient, creates reservation_session with 32-char token
-- Returns reserve_url with 12h expiry
+**File: `src/pages/Login.tsx`**
 
-### 2. Get Availability (`GET /reserve`)
-- Validates token (exists, not expired, not used, phone match)
-- Checks doctor is active and Google Calendar connected
-- Calculates available slots for next 30 days using weekly availability, date overrides, and Google Calendar conflicts
-- Returns calendar days with availability
-
-### 3. Create Appointment (`POST /appointments/create`)
-- Re-validates everything (anti-race condition with DB lock)
-- Creates Google Calendar event
-- Creates appointment (status=scheduled)
-- Marks reservation token as used
-- Generates manage_token
-- Fires webhook to n8n
-
-### 4. Cancel Appointment (`POST /appointments/cancel`)
-- Validates manage_token + phone
-- Deletes Google Calendar event
-- Updates status to cancelled (reason=patient)
-- Idempotent (already cancelled = success)
-
-### 5. Reschedule Appointment (`POST /appointments/reschedule`)
-- Validates manage_token + phone
-- Re-validates new slot availability
-- Deletes old Google Calendar event, creates new one
-- Updates same appointment with new times, resets to scheduled
-- Issues new manage_token
-
-### 6. Confirm Appointment (`POST /appointments/confirm`)
-- Called by n8n when patient confirms via WhatsApp
-- Changes scheduled → confirmed (idempotent)
+- Clean login form with email + password (FindMed branding)
+- FindMed logo/title at the top in Azul #123D74
+- Rosa CTA button for "Iniciar Sesion"
+- Error messages displayed inline
+- On success: redirect based on role (doctor -> /doctor/agenda, admin/superadmin -> /admin/calendario)
+- Loading/submitting states on button
 
 ---
 
-## Patient Pages (No Login Required)
+## 3. Route Protection Component
 
-### `/reserva` — Booking Page
-- Validates token via Edge Function on load
-- Shows doctor name, specialties, address, city/zone
-- Monthly calendar showing all days (unavailable days grayed out)
-- On day selection: shows available time slots
-- On slot confirmation: creates appointment with loading state, prevents double-click
-- Success screen with friendly confirmation message
-- Error states with friendly messages (expired, used, slot taken, doctor disconnected)
+**File: `src/components/ProtectedRoute.tsx`**
 
-### `/gestionar` — Manage Appointment Page
-- Validates manage_token on load
-- Shows appointment details (doctor, date, time)
-- Two options: **Cancel** or **Reschedule**
-- Cancel: confirmation dialog → cancels → success message
-- Reschedule: shows calendar/slots picker → creates new booking → success with new manage_url
-- Friendly error messages for expired tokens
+- Wraps routes that require authentication
+- Accepts `allowedRoles` prop (e.g., `['admin', 'superadmin']`)
+- Shows loading spinner while checking auth
+- Redirects to `/login` if not authenticated
+- Redirects to appropriate dashboard if role doesn't match
 
 ---
 
-## Doctor Dashboard (Login Required)
+## 4. Dashboard Layouts with Sidebar
 
-### Onboarding — Google Calendar Connection
-- OAuth flow via Edge Function to connect Google Calendar
-- After connection: dropdown to select which calendar to use
-- Saves calendar_id to doctor profile
+### Admin Layout
+**File: `src/components/layouts/AdminLayout.tsx`**
 
-### `/doctor/agenda` — Calendar View
-- Visual calendar showing appointments with color coding:
-  - 🟡 Yellow = Scheduled
-  - 🟢 Green = Confirmed
-- Based on platform appointments
+Sidebar navigation with items:
+- Calendario (`/admin/calendario`)
+- Reservas (`/admin/reservas`)
+- Doctores (`/admin/doctores`)
+- Catalogos (`/admin/catalogos`)
+- Inbox (`/admin/inbox`)
 
-### `/doctor/configuracion` — Settings
-- **Profile**: phone, address, city, zone, specialties
-- **Appointment duration**: minutes input
-- **Confirmation threshold**: hours before appointment
-- **Weekly availability**: checkboxes per weekday with time range picker
-- **Blocked dates**: calendar picker for specific dates
+Uses `SidebarProvider`, `Sidebar`, `SidebarContent`, `SidebarTrigger` from the existing sidebar component. Header bar with FindMed branding and user menu (sign out).
 
-### `/doctor/por-completar` — Complete Appointments
-- List of confirmed appointments where start_at has passed
-- Red badge indicator for pending items
-- Form to add doctor_notes and mark as completed
-- Ability to edit notes after completion
+### Doctor Layout
+**File: `src/components/layouts/DoctorLayout.tsx`**
 
-### `/doctor/inbox` — Notifications
-- Tabs for scheduled and cancelled appointment notifications
+Sidebar navigation with items:
+- Agenda (`/doctor/agenda`)
+- Configuracion (`/doctor/configuracion`)
+- Por Completar (`/doctor/por-completar`) -- with red badge
+- Inbox (`/doctor/inbox`)
+
+Same sidebar pattern, with doctor's name displayed.
 
 ---
 
-## Admin Dashboard (Login Required)
+## 5. Placeholder Pages
 
-### `/admin/calendario` — Global Calendar
-- Overview of all appointments across all doctors
+Create minimal placeholder pages so navigation works:
 
-### `/admin/reservas` — Reservations Table
-- Full table with all required columns: patient name, phone, symptoms, doctor, specialties, status, date/time, city, zone, cancel reason, doctor notes
-- Filters: date range, status, doctor, specialty, city, zone, cancel reason
-- Search by patient name
-- Pagination
+**Admin pages:**
+- `src/pages/admin/Calendario.tsx`
+- `src/pages/admin/Reservas.tsx`
+- `src/pages/admin/Doctores.tsx`
+- `src/pages/admin/Catalogos.tsx`
+- `src/pages/admin/Inbox.tsx`
 
-### `/admin/doctores` — Doctor Management
-- CRUD for doctors
-- Shows Google Calendar connection status (connected/disconnected)
-- "Enable doctor profile" to create login credentials
+**Doctor pages:**
+- `src/pages/doctor/Agenda.tsx`
+- `src/pages/doctor/Configuracion.tsx`
+- `src/pages/doctor/PorCompletar.tsx`
+- `src/pages/doctor/DoctorInbox.tsx`
 
-### `/admin/catalogos` — Catalog Management
-- CRUD for cities, zones, specialties
-- Alphabetically sorted dropdowns
-
-### `/admin/inbox` — Completed Appointments
-- Notifications for completed appointments
-- Click to see detail card with doctor_notes
+Each page shows a title card with "Coming soon" content so the layout is visible.
 
 ---
 
-## Authentication & Roles
-- Supabase Auth for Doctor, Admin, Superadmin login
-- Role-based route protection
-- Doctors can only see/edit their own data
-- Admins have full operational access
-- Patient phone is hidden from doctors
+## 6. Updated Routing
+
+**File: `src/App.tsx`**
+
+Update to include:
+- `/login` -- Login page
+- `/admin/*` routes wrapped in `ProtectedRoute` (roles: admin, superadmin) with `AdminLayout`
+- `/doctor/*` routes wrapped in `ProtectedRoute` (roles: doctor) with `DoctorLayout`
+- `/reserva` and `/gestionar` -- public patient routes (placeholder for now)
+- `/` redirects to `/login`
 
 ---
 
-## Phase 2 (Future)
-These will be built in subsequent phases:
-- Superadmin webhook management (CRUD, test send, logs)
-- Superadmin API key management (create/rotate/revoke)
-- Auto-cancel cron job (every 5 min for unconfirmed appointments)
-- Google Calendar polling job (every 5-10 min to detect doctor deletions)
-- Webhook dispatch system to n8n
-- Complete appointment endpoint for doctor
+## 7. Index Page Update
+
+**File: `src/pages/Index.tsx`**
+
+Redirect to `/login` since the root page should send users to authenticate.
+
+---
+
+## Files Created/Modified Summary
+
+| Action | File |
+|--------|------|
+| Create | `src/hooks/useAuth.tsx` |
+| Create | `src/pages/Login.tsx` |
+| Create | `src/components/ProtectedRoute.tsx` |
+| Create | `src/components/layouts/AdminLayout.tsx` |
+| Create | `src/components/layouts/DoctorLayout.tsx` |
+| Create | `src/pages/admin/Calendario.tsx` |
+| Create | `src/pages/admin/Reservas.tsx` |
+| Create | `src/pages/admin/Doctores.tsx` |
+| Create | `src/pages/admin/Catalogos.tsx` |
+| Create | `src/pages/admin/Inbox.tsx` |
+| Create | `src/pages/doctor/Agenda.tsx` |
+| Create | `src/pages/doctor/Configuracion.tsx` |
+| Create | `src/pages/doctor/PorCompletar.tsx` |
+| Create | `src/pages/doctor/DoctorInbox.tsx` |
+| Modify | `src/App.tsx` |
+| Modify | `src/pages/Index.tsx` |
+
+---
+
+## Technical Notes
+
+- Auth state listener uses `onAuthStateChange` set up BEFORE `getSession()` to avoid race conditions
+- Roles are fetched from `user_roles` table via `has_role` security definer function pattern -- never stored in localStorage
+- The `users` table provides the `doctor_id` mapping for doctor-role users
+- Sidebar uses the existing `src/components/ui/sidebar.tsx` component with `NavLink` for active route highlighting
+- All text in Spanish to match the Mexican medical context
 
