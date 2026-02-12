@@ -47,6 +47,18 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        cta: {
+          DEFAULT: "hsl(var(--cta))",
+          foreground: "hsl(var(--cta-foreground))",
+        },
+        scheduled: {
+          DEFAULT: "hsl(var(--scheduled))",
+          foreground: "hsl(var(--scheduled-foreground))",
+        },
+        confirmed: {
+          DEFAULT: "hsl(var(--confirmed))",
+          foreground: "hsl(var(--confirmed-foreground))",
+        },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
