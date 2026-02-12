@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
-import { Save, Calendar as CalendarIcon, Link2, Unlink } from "lucide-react";
+import { Save, Calendar as CalendarIcon, Link2, Unlink, Loader2 } from "lucide-react";
 
 const WEEKDAYS = [
   { value: 1, label: "Lunes" },
@@ -144,7 +144,7 @@ export default function Configuracion() {
   });
 
   // --- Google Calendar ---
-  const { data: doctor } = useQuery({
+  const { data: doctor, refetch: refetchDoctor } = useQuery({
     queryKey: ["doctor-profile", doctorId],
     queryFn: async () => {
       if (!doctorId) return null;
@@ -158,6 +158,58 @@ export default function Configuracion() {
     },
     enabled: !!doctorId,
   });
+
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+
+  const handleConnectGoogle = async () => {
+    setConnectingGoogle(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error("No autenticado");
+
+      const res = await supabase.functions.invoke("google-calendar-auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.error) throw res.error;
+      const { url } = res.data;
+      
+      // Open OAuth popup
+      const popup = window.open(url, "google-calendar-auth", "width=500,height=700,scrollbars=yes");
+      
+      // Poll for popup close, then refetch
+      const interval = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(interval);
+          setConnectingGoogle(false);
+          refetchDoctor();
+        }
+      }, 500);
+    } catch (error) {
+      console.error("Error connecting Google Calendar:", error);
+      toast({ title: "Error al conectar Google Calendar", variant: "destructive" });
+      setConnectingGoogle(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!doctorId) return;
+    const { error } = await supabase
+      .from("doctors")
+      .update({
+        google_calendar_connected: false,
+        google_calendar_id: null,
+        google_refresh_token_ref: null,
+      })
+      .eq("id", doctorId);
+    if (error) {
+      toast({ title: "Error al desconectar", variant: "destructive" });
+    } else {
+      toast({ title: "Google Calendar desconectado" });
+      refetchDoctor();
+    }
+  };
 
   const isLoading = settingsLoading || availLoading;
 
@@ -285,7 +337,7 @@ export default function Configuracion() {
                   )}
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="gap-2" disabled>
+              <Button variant="outline" size="sm" className="gap-2" onClick={handleDisconnectGoogle}>
                 <Unlink className="h-4 w-4" /> Desconectar
               </Button>
             </div>
@@ -297,9 +349,15 @@ export default function Configuracion() {
               </p>
               <Button
                 className="gap-2 bg-cta text-cta-foreground hover:bg-cta/90"
-                onClick={() => toast({ title: "Próximamente", description: "La integración con Google Calendar se está configurando. Contacta al administrador." })}
+                onClick={handleConnectGoogle}
+                disabled={connectingGoogle}
               >
-                <CalendarIcon className="h-4 w-4" /> Conectar Google Calendar
+                {connectingGoogle ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CalendarIcon className="h-4 w-4" />
+                )}
+                {connectingGoogle ? "Conectando…" : "Conectar Google Calendar"}
               </Button>
               <p className="text-xs text-muted-foreground">
                 La integración se activará cuando el administrador configure las credenciales de Google.
