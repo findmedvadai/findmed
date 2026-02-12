@@ -1,1 +1,7 @@
 project_id = "iepdgygvztocornqkkhk"
+
+[functions.triage-webhook]
+verify_jwt = false
+
+[functions.seed-admin]
+verify_jwt = false
