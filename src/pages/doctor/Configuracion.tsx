@@ -22,7 +22,7 @@ const WEEKDAYS = [
   { value: 0, label: "Domingo" },
 ];
 
-const DURATION_OPTIONS = [15, 20, 30, 45, 60];
+const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90, 120];
 
 interface WeekdaySlot {
   id?: string;
@@ -295,11 +295,14 @@ export default function Configuracion() {
               <p className="text-sm text-muted-foreground">
                 Conecta tu Google Calendar para sincronizar citas automáticamente.
               </p>
-              <Button className="gap-2 bg-cta text-cta-foreground hover:bg-cta/90" disabled>
+              <Button
+                className="gap-2 bg-cta text-cta-foreground hover:bg-cta/90"
+                onClick={() => toast({ title: "Próximamente", description: "La integración con Google Calendar se está configurando. Contacta al administrador." })}
+              >
                 <CalendarIcon className="h-4 w-4" /> Conectar Google Calendar
               </Button>
               <p className="text-xs text-muted-foreground">
-                Requiere configuración de credenciales de Google.
+                La integración se activará cuando el administrador configure las credenciales de Google.
               </p>
             </div>
           )}
