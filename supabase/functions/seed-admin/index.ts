@@ -13,8 +13,11 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  const email = "admin@findmed.test";
-  const password = "Admin123!";
+  const { role = "admin" } = await req.json().catch(() => ({ role: "admin" }));
+
+  const isDoctor = role === "doctor";
+  const email = isDoctor ? "doctor@findmed.test" : "admin@findmed.test";
+  const password = isDoctor ? "Doctor123!" : "Admin123!";
 
   // Create auth user
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -29,9 +32,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  const userId = authData?.user?.id;
+  let userId = authData?.user?.id;
+
   if (!userId) {
-    // User already exists, find them
     const { data: { users } } = await supabaseAdmin.auth.admin.listUsers();
     const existing = users?.find((u) => u.email === email);
     if (!existing) {
@@ -39,22 +42,25 @@ Deno.serve(async (req) => {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    // Ensure rows exist
-    await supabaseAdmin.from("users").upsert({ id: existing.id, role: "admin" }, { onConflict: "id" });
-    await supabaseAdmin.from("user_roles").upsert(
-      { user_id: existing.id, role: "admin" },
-      { onConflict: "user_id,role" }
-    );
-    return new Response(JSON.stringify({ message: "User already exists", email, password }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    userId = existing.id;
   }
 
-  // Insert into users and user_roles
-  await supabaseAdmin.from("users").insert({ id: userId, role: "admin" });
-  await supabaseAdmin.from("user_roles").insert({ user_id: userId, role: "admin" });
+  if (isDoctor) {
+    // Create doctor record
+    const { data: doctor } = await supabaseAdmin.from("doctors").upsert(
+      { full_name: "Dr. Test Doctor", phone: "+525551234567" },
+      { onConflict: "id" }
+    ).select("id").single();
 
-  return new Response(JSON.stringify({ message: "Admin user created", email, password }), {
+    const doctorId = doctor?.id;
+    await supabaseAdmin.from("users").upsert({ id: userId, role: "doctor", doctor_id: doctorId }, { onConflict: "id" });
+    await supabaseAdmin.from("user_roles").upsert({ user_id: userId, role: "doctor" }, { onConflict: "user_id,role" });
+  } else {
+    await supabaseAdmin.from("users").upsert({ id: userId, role: "admin" }, { onConflict: "id" });
+    await supabaseAdmin.from("user_roles").upsert({ user_id: userId, role: "admin" }, { onConflict: "user_id,role" });
+  }
+
+  return new Response(JSON.stringify({ message: `${role} user ready`, email, password }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });
