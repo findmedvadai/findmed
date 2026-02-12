@@ -98,7 +98,9 @@ export default function Configuracion() {
     enabled: !!doctorId,
   });
 
-  const [slots, setSlots] = useState<WeekdaySlot[]>([]);
+  const [slots, setSlots] = useState<WeekdaySlot[]>(
+    WEEKDAYS.map((wd) => ({ weekday: wd.value, start_time: "09:00", end_time: "17:00", is_enabled: false }))
+  );
 
   useEffect(() => {
     if (availability) {
