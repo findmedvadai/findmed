@@ -7,6 +7,17 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -17,38 +28,52 @@ serve(async (req) => {
     if (!GOOGLE_CLIENT_ID) throw new Error("GOOGLE_CLIENT_ID not configured");
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Verify the user is authenticated
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "No autorizado" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
-      return new Response(JSON.stringify({ error: "No autorizado" }), {
+    const payload = decodeJwtPayload(token);
+    if (!payload?.sub || !payload?.exp) {
+      return new Response(JSON.stringify({ error: "Token inválido" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const userId = claimsData.claims.sub;
+    // Check expiration
+    const now = Math.floor(Date.now() / 1000);
+    if ((payload.exp as number) < now) {
+      return new Response(JSON.stringify({ error: "Token expirado" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // Get the doctor_id for this user
-    const { data: userData } = await supabase
+    const userId = payload.sub as string;
+
+    // Use service role to query the users table
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: userData, error: userError } = await supabase
       .from("users")
       .select("doctor_id")
       .eq("id", userId)
       .maybeSingle();
+
+    if (userError) {
+      console.error("Error fetching user:", userError);
+      return new Response(JSON.stringify({ error: "Error al verificar usuario" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (!userData?.doctor_id) {
       return new Response(JSON.stringify({ error: "No eres un doctor" }), {
@@ -58,8 +83,6 @@ serve(async (req) => {
     }
 
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
-
-    // Use doctor_id as state to identify them on callback
     const state = userData.doctor_id;
 
     const params = new URLSearchParams({
