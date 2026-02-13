@@ -1,0 +1,265 @@
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { format, isPast } from "date-fns";
+import { es } from "date-fns/locale";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
+import type { Database } from "@/integrations/supabase/types";
+
+type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
+
+export interface CalendarItem {
+  id: string;
+  type: "appointment" | "google";
+  start: Date;
+  end: Date;
+  title: string;
+  status?: AppointmentStatus;
+  phone?: string;
+  symptoms?: string;
+  doctorNotes?: string;
+  htmlLink?: string;
+}
+
+interface Props {
+  item: CalendarItem | null;
+  open: boolean;
+  onClose: () => void;
+  doctorId: string;
+}
+
+const STATUS_LABELS: Record<AppointmentStatus, string> = {
+  scheduled: "Agendada",
+  confirmed: "Confirmada",
+  cancelled: "Cancelada",
+  completed: "Completada",
+};
+
+const STATUS_STYLES: Record<AppointmentStatus, string> = {
+  scheduled: "bg-scheduled text-scheduled-foreground",
+  confirmed: "bg-confirmed text-confirmed-foreground",
+  cancelled: "bg-destructive/60 text-destructive-foreground",
+  completed: "bg-primary/80 text-primary-foreground",
+};
+
+export default function AppointmentDetailDialog({ item, open, onClose, doctorId }: Props) {
+  const queryClient = useQueryClient();
+  const [notes, setNotes] = useState("");
+  const [editingNotes, setEditingNotes] = useState(false);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
+  };
+
+  const cancelMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ status: "cancelled", cancel_reason: "doctor" })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Cita cancelada");
+      invalidate();
+      onClose();
+    },
+    onError: () => toast.error("Error al cancelar la cita"),
+  });
+
+  const completeMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ status: "completed" })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Cita completada");
+      invalidate();
+      onClose();
+    },
+    onError: () => toast.error("Error al completar la cita"),
+  });
+
+  const notesMutation = useMutation({
+    mutationFn: async ({ id, doctorNotes }: { id: string; doctorNotes: string }) => {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ doctor_notes: doctorNotes, doctor_notes_updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Notas guardadas");
+      invalidate();
+      setEditingNotes(false);
+    },
+    onError: () => toast.error("Error al guardar notas"),
+  });
+
+  if (!item) return null;
+
+  const isGoogle = item.type === "google";
+  const canComplete = item.status === "confirmed" && isPast(item.start);
+  const canCancel = item.status === "scheduled" || item.status === "confirmed";
+  const canEditNotes = item.status === "completed";
+
+  const handleOpenChange = (isOpen: boolean) => {
+    if (!isOpen) {
+      setEditingNotes(false);
+      onClose();
+    }
+  };
+
+  const startEditNotes = () => {
+    setNotes(item.doctorNotes ?? "");
+    setEditingNotes(true);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {item.title}
+            {!isGoogle && item.status && (
+              <Badge className={STATUS_STYLES[item.status]}>{STATUS_LABELS[item.status]}</Badge>
+            )}
+          </DialogTitle>
+          <DialogDescription>
+            {format(item.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 text-sm">
+          <div>
+            <span className="text-muted-foreground">Horario: </span>
+            <span className="font-medium">
+              {format(item.start, "HH:mm")} – {format(item.end, "HH:mm")}
+            </span>
+          </div>
+
+          {!isGoogle && item.symptoms && (
+            <div>
+              <span className="text-muted-foreground">Síntomas: </span>
+              <span>{item.symptoms}</span>
+            </div>
+          )}
+
+          {!isGoogle && item.doctorNotes && !editingNotes && (
+            <div>
+              <span className="text-muted-foreground">Notas médicas: </span>
+              <span>{item.doctorNotes}</span>
+            </div>
+          )}
+
+          {isGoogle && item.htmlLink && (
+            <a
+              href={item.htmlLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline text-xs"
+            >
+              Abrir en Google Calendar
+            </a>
+          )}
+        </div>
+
+        {/* Edit notes for completed appointments */}
+        {canEditNotes && editingNotes && (
+          <div className="space-y-2">
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Escribe las notas médicas..."
+              rows={4}
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setEditingNotes(false)}>
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                disabled={notesMutation.isPending}
+                onClick={() => notesMutation.mutate({ id: item.id, doctorNotes: notes })}
+              >
+                Guardar notas
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        {!isGoogle && (
+          <div className="flex gap-2 justify-end pt-2">
+            {canEditNotes && !editingNotes && (
+              <Button variant="outline" size="sm" onClick={startEditNotes}>
+                Editar notas
+              </Button>
+            )}
+
+            {canComplete && (
+              <Button
+                size="sm"
+                disabled={completeMutation.isPending}
+                onClick={() => completeMutation.mutate(item.id)}
+              >
+                Completar
+              </Button>
+            )}
+
+            {canCancel && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" size="sm">
+                    Cancelar cita
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Esta acción no se puede deshacer. El paciente será notificado de la cancelación.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Volver</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => cancelMutation.mutate(item.id)}
+                      disabled={cancelMutation.isPending}
+                    >
+                      Sí, cancelar
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
