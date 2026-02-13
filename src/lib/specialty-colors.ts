@@ -1,26 +1,26 @@
 // Predefined palette for specialty color coding
 const SPECIALTY_COLORS = [
-  "#E30050", // Rosa (Ginecología)
-  "#16A34A", // Verde (Gastroenterología)
-  "#DC2626", // Rojo (Cardiología)
-  "#9333EA", // Morado (Dermatología)
-  "#2563EB", // Azul (Pediatría)
-  "#EA580C", // Naranja (Oftalmología)
-  "#0D9488", // Teal (Neurología)
-  "#6B7280", // Gris (Otras)
+  "#E30050", // Rosa
+  "#16A34A", // Verde
+  "#DC2626", // Rojo
+  "#9333EA", // Morado
+  "#2563EB", // Azul
+  "#EA580C", // Naranja
+  "#0D9488", // Teal
+  "#6B7280", // Gris
 ];
 
+const DEFAULT_COLOR = "#6B7280";
+
 /**
- * Given a sorted list of specialty IDs, returns the color assigned to a specific specialty.
- * Colors cycle if there are more specialties than colors.
+ * Given a color map (specialty_id -> color from DB), returns the color for a specialty.
+ * Falls back to grey if not found.
  */
 export function getSpecialtyColor(
   specialtyId: string,
-  sortedSpecialtyIds: string[]
+  colorMap: Record<string, string>
 ): string {
-  const idx = sortedSpecialtyIds.indexOf(specialtyId);
-  if (idx === -1) return SPECIALTY_COLORS[SPECIALTY_COLORS.length - 1]; // fallback grey
-  return SPECIALTY_COLORS[idx % SPECIALTY_COLORS.length];
+  return colorMap[specialtyId] || DEFAULT_COLOR;
 }
 
-export { SPECIALTY_COLORS };
+export { SPECIALTY_COLORS, DEFAULT_COLOR };

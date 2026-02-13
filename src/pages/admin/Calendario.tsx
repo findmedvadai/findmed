@@ -15,18 +15,24 @@ import {
   getMinutes,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Check, ChevronsUpDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +41,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { getSpecialtyColor } from "@/lib/specialty-colors";
+import { cn } from "@/lib/utils";
 
 const START_HOUR = 7;
 const END_HOUR = 21;
@@ -53,7 +60,7 @@ interface AppointmentRow {
   doctors: {
     id: string;
     full_name: string;
-    doctor_specialties: { specialty_id: string; specialties: { id: string; name: string } | null }[];
+    doctor_specialties: { specialty_id: string; specialties: { id: string; name: string; color: string | null } | null }[];
   } | null;
 }
 
@@ -69,7 +76,7 @@ interface CalendarAppt {
   symptoms: string | null;
 }
 
-// --- Overlap logic (same as doctor Agenda) ---
+// --- Overlap logic ---
 
 function computeOverlapColumns(items: CalendarAppt[]) {
   const sorted = [...items].sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -99,6 +106,63 @@ function computeOverlapColumns(items: CalendarAppt[]) {
   return result;
 }
 
+// --- Combobox component ---
+
+function FilterCombobox({
+  value,
+  onChange,
+  options,
+  placeholder,
+  allLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { id: string; name: string }[];
+  placeholder: string;
+  allLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value === "all" ? allLabel : options.find((o) => o.id === value)?.name ?? allLabel;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" aria-expanded={open} className="h-8 w-52 justify-between text-xs font-normal">
+          <span className="truncate">{selected}</span>
+          <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-52 p-0">
+        <Command>
+          <CommandInput placeholder={placeholder} className="h-8 text-xs" />
+          <CommandList>
+            <CommandEmpty>Sin resultados</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="all"
+                onSelect={() => { onChange("all"); setOpen(false); }}
+              >
+                <Check className={cn("mr-2 h-3 w-3", value === "all" ? "opacity-100" : "opacity-0")} />
+                {allLabel}
+              </CommandItem>
+              {options.map((opt) => (
+                <CommandItem
+                  key={opt.id}
+                  value={opt.name}
+                  onSelect={() => { onChange(opt.id); setOpen(false); }}
+                >
+                  <Check className={cn("mr-2 h-3 w-3", value === opt.id ? "opacity-100" : "opacity-0")} />
+                  {opt.name}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // --- Component ---
 
 export default function Calendario() {
@@ -118,6 +182,32 @@ export default function Calendario() {
     [weekStart]
   );
 
+  // Fetch ALL doctors and specialties for filters
+  const { data: allDoctors } = useQuery({
+    queryKey: ["all-doctors-for-filter"],
+    queryFn: async () => {
+      const { data } = await supabase.from("doctors").select("id, full_name").eq("is_active", true).order("full_name");
+      return (data ?? []) as { id: string; full_name: string }[];
+    },
+  });
+
+  const { data: allSpecialties } = useQuery({
+    queryKey: ["all-specialties-for-filter"],
+    queryFn: async () => {
+      const { data } = await supabase.from("specialties").select("id, name, color").eq("is_active", true).order("name");
+      return (data ?? []) as { id: string; name: string; color: string | null }[];
+    },
+  });
+
+  // Build colorMap from DB specialties
+  const colorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of allSpecialties ?? []) {
+      if (s.color) map[s.id] = s.color;
+    }
+    return map;
+  }, [allSpecialties]);
+
   // Fetch appointments
   const { data: rawAppointments, isLoading } = useQuery({
     queryKey: ["admin-calendar-appointments", weekKey],
@@ -127,7 +217,7 @@ export default function Calendario() {
         .select(`
           id, start_at, end_at, status, symptoms,
           patients(full_name),
-          doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name)))
+          doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name, color)))
         `)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
@@ -137,28 +227,6 @@ export default function Calendario() {
       return (data ?? []) as unknown as AppointmentRow[];
     },
   });
-
-  // Extract unique specialties (sorted by name) for color assignment
-  const { sortedSpecialtyIds, specialtyMap, doctors } = useMemo(() => {
-    const specMap = new Map<string, string>(); // id -> name
-    const docMap = new Map<string, string>(); // id -> name
-    for (const a of rawAppointments ?? []) {
-      if (a.doctors) {
-        docMap.set(a.doctors.id, a.doctors.full_name);
-        for (const ds of a.doctors.doctor_specialties ?? []) {
-          if (ds.specialties) {
-            specMap.set(ds.specialties.id, ds.specialties.name);
-          }
-        }
-      }
-    }
-    const sortedEntries = [...specMap.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    return {
-      sortedSpecialtyIds: sortedEntries.map(([id]) => id),
-      specialtyMap: specMap,
-      doctors: docMap,
-    };
-  }, [rawAppointments]);
 
   // Build calendar items
   const calendarItems = useMemo(() => {
@@ -216,6 +284,17 @@ export default function Calendario() {
     };
   }, [filteredItems]);
 
+  // Specialty legend from active specialties in current week
+  const weekSpecialtyIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const a of rawAppointments ?? []) {
+      for (const ds of a.doctors?.doctor_specialties ?? []) {
+        ids.add(ds.specialty_id);
+      }
+    }
+    return [...ids];
+  }, [rawAppointments]);
+
   // Auto-scroll to current hour
   useEffect(() => {
     const now = new Date();
@@ -229,6 +308,9 @@ export default function Calendario() {
   const goToNext = () => setWeekStart((w) => addWeeks(w, 1));
   const goToToday = () => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 0 }));
   const monthLabel = format(weekStart, "MMMM yyyy", { locale: es });
+
+  const doctorOptions = (allDoctors ?? []).map((d) => ({ id: d.id, name: d.full_name }));
+  const specialtyOptions = (allSpecialties ?? []).map((s) => ({ id: s.id, name: s.name }));
 
   return (
     <div className="flex h-full flex-col gap-2">
@@ -253,30 +335,22 @@ export default function Calendario() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters - searchable comboboxes */}
       <div className="flex items-center gap-2 px-1 flex-wrap">
-        <Select value={filterDoctor} onValueChange={setFilterDoctor}>
-          <SelectTrigger className="h-8 w-48 text-xs">
-            <SelectValue placeholder="Todos los doctores" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los doctores</SelectItem>
-            {[...doctors.entries()].map(([id, name]) => (
-              <SelectItem key={id} value={id}>{name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={filterSpecialty} onValueChange={setFilterSpecialty}>
-          <SelectTrigger className="h-8 w-48 text-xs">
-            <SelectValue placeholder="Todas las especialidades" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todas las especialidades</SelectItem>
-            {sortedSpecialtyIds.map((id) => (
-              <SelectItem key={id} value={id}>{specialtyMap.get(id)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FilterCombobox
+          value={filterDoctor}
+          onChange={setFilterDoctor}
+          options={doctorOptions}
+          placeholder="Buscar doctor..."
+          allLabel="Todos los doctores"
+        />
+        <FilterCombobox
+          value={filterSpecialty}
+          onChange={setFilterSpecialty}
+          options={specialtyOptions}
+          placeholder="Buscar especialidad..."
+          allLabel="Todas las especialidades"
+        />
       </div>
 
       {/* Summary cards */}
@@ -311,10 +385,11 @@ export default function Calendario() {
       </div>
 
       {/* Specialty legend */}
-      {sortedSpecialtyIds.length > 0 && (
+      {weekSpecialtyIds.length > 0 && (
         <div className="flex items-center gap-2 px-1 flex-wrap">
-          {sortedSpecialtyIds.map((id) => {
-            const color = getSpecialtyColor(id, sortedSpecialtyIds);
+          {weekSpecialtyIds.map((id) => {
+            const color = getSpecialtyColor(id, colorMap);
+            const name = (allSpecialties ?? []).find((s) => s.id === id)?.name ?? id;
             return (
               <Badge
                 key={id}
@@ -323,7 +398,7 @@ export default function Calendario() {
                 style={{ borderColor: color, color }}
               >
                 <span className="h-2 w-2 rounded-full inline-block" style={{ backgroundColor: color }} />
-                {specialtyMap.get(id)}
+                {name}
               </Badge>
             );
           })}
@@ -400,7 +475,7 @@ export default function Calendario() {
                     const leftPct = col * widthPct;
 
                     const specColor = item.specialtyId
-                      ? getSpecialtyColor(item.specialtyId, sortedSpecialtyIds)
+                      ? getSpecialtyColor(item.specialtyId, colorMap)
                       : "#6B7280";
 
                     const isReduced = item.status === "cancelled" || item.status === "completed";

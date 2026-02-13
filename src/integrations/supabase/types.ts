@@ -457,18 +457,21 @@ export type Database = {
       }
       specialties: {
         Row: {
+          color: string | null
           created_at: string
           id: string
           is_active: boolean
           name: string
         }
         Insert: {
+          color?: string | null
           created_at?: string
           id?: string
           is_active?: boolean
           name: string
         }
         Update: {
+          color?: string | null
           created_at?: string
           id?: string
           is_active?: boolean
@@ -498,19 +501,25 @@ export type Database = {
         Row: {
           created_at: string
           doctor_id: string | null
+          email: string | null
           id: string
+          initial_password: string | null
           role: Database["public"]["Enums"]["app_role"]
         }
         Insert: {
           created_at?: string
           doctor_id?: string | null
+          email?: string | null
           id: string
+          initial_password?: string | null
           role: Database["public"]["Enums"]["app_role"]
         }
         Update: {
           created_at?: string
           doctor_id?: string | null
+          email?: string | null
           id?: string
+          initial_password?: string | null
           role?: Database["public"]["Enums"]["app_role"]
         }
         Relationships: [
