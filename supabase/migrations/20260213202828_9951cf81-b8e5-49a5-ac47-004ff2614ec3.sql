@@ -1,0 +1,1 @@
+ALTER TABLE public.doctors ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;

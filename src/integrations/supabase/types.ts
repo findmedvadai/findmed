@@ -286,6 +286,7 @@ export type Database = {
           google_refresh_token_ref: string | null
           id: string
           is_active: boolean
+          is_deleted: boolean
           phone: string | null
           updated_at: string
           zone_id: string | null
@@ -300,6 +301,7 @@ export type Database = {
           google_refresh_token_ref?: string | null
           id?: string
           is_active?: boolean
+          is_deleted?: boolean
           phone?: string | null
           updated_at?: string
           zone_id?: string | null
@@ -314,6 +316,7 @@ export type Database = {
           google_refresh_token_ref?: string | null
           id?: string
           is_active?: boolean
+          is_deleted?: boolean
           phone?: string | null
           updated_at?: string
           zone_id?: string | null
