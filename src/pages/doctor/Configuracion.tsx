@@ -32,6 +32,12 @@ interface WeekdaySlot {
   is_enabled: boolean;
 }
 
+interface GoogleCalendar {
+  id: string;
+  summary: string;
+  primary: boolean;
+}
+
 export default function Configuracion() {
   const { doctorId } = useAuth();
   const queryClient = useQueryClient();
@@ -152,7 +158,7 @@ export default function Configuracion() {
       if (!doctorId) return null;
       const { data, error } = await supabase
         .from("doctors")
-        .select("google_calendar_connected, google_calendar_id")
+        .select("google_calendar_connected, google_calendar_id, google_refresh_token_ref")
         .eq("id", doctorId)
         .maybeSingle();
       if (error) throw error;
@@ -162,6 +168,63 @@ export default function Configuracion() {
   });
 
   const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [calendarList, setCalendarList] = useState<GoogleCalendar[]>([]);
+  const [loadingCalendars, setLoadingCalendars] = useState(false);
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string>("");
+
+  // Detect "token saved but no calendar selected" state and load calendar list
+  const hasTokenButNoCalendar = doctor?.google_refresh_token_ref && !doctor?.google_calendar_connected;
+
+  useEffect(() => {
+    if (hasTokenButNoCalendar && calendarList.length === 0 && !loadingCalendars) {
+      fetchCalendarList();
+    }
+  }, [hasTokenButNoCalendar]);
+
+  const fetchCalendarList = async () => {
+    setLoadingCalendars(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error("No autenticado");
+
+      const res = await supabase.functions.invoke("google-calendar-list", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.error) throw res.error;
+      const calendars = res.data?.calendars || [];
+      setCalendarList(calendars);
+      // Pre-select primary if available
+      const primary = calendars.find((c: GoogleCalendar) => c.primary);
+      if (primary) setSelectedCalendarId(primary.id);
+      else if (calendars.length > 0) setSelectedCalendarId(calendars[0].id);
+    } catch (error) {
+      console.error("Error fetching calendars:", error);
+      toast({ title: "Error al cargar calendarios", variant: "destructive" });
+    } finally {
+      setLoadingCalendars(false);
+    }
+  };
+
+  const saveCalendarSelection = async () => {
+    if (!doctorId || !selectedCalendarId) return;
+    const { error } = await supabase
+      .from("doctors")
+      .update({
+        google_calendar_id: selectedCalendarId,
+        google_calendar_connected: true,
+      })
+      .eq("id", doctorId);
+
+    if (error) {
+      toast({ title: "Error al guardar calendario", variant: "destructive" });
+    } else {
+      toast({ title: "Calendario seleccionado" });
+      setCalendarList([]);
+      refetchDoctor();
+    }
+  };
 
   const handleConnectGoogle = async () => {
     setConnectingGoogle(true);
@@ -177,10 +240,8 @@ export default function Configuracion() {
       if (res.error) throw res.error;
       const { url } = res.data;
       
-      // Open OAuth popup
       const popup = window.open(url, "google-calendar-auth", "width=500,height=700,scrollbars=yes");
       
-      // Poll for popup close, then refetch
       const interval = setInterval(() => {
         if (popup?.closed) {
           clearInterval(interval);
@@ -209,6 +270,7 @@ export default function Configuracion() {
       toast({ title: "Error al desconectar", variant: "destructive" });
     } else {
       toast({ title: "Google Calendar desconectado" });
+      setCalendarList([]);
       refetchDoctor();
     }
   };
@@ -342,6 +404,55 @@ export default function Configuracion() {
               <Button variant="outline" size="sm" className="gap-2" onClick={handleDisconnectGoogle}>
                 <Unlink className="h-4 w-4" /> Desconectar
               </Button>
+            </div>
+          ) : hasTokenButNoCalendar ? (
+            /* Calendar selection step */
+            <div className="space-y-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+                <p className="text-sm font-medium">Cuenta de Google vinculada — selecciona un calendario</p>
+              </div>
+              {loadingCalendars ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cargando calendarios…
+                </div>
+              ) : calendarList.length > 0 ? (
+                <div className="space-y-3">
+                  <Select value={selectedCalendarId} onValueChange={setSelectedCalendarId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona un calendario" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {calendarList.map((cal) => (
+                        <SelectItem key={cal.id} value={cal.id}>
+                          {cal.summary}{cal.primary ? " (Principal)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={saveCalendarSelection}
+                      disabled={!selectedCalendarId}
+                      className="gap-2"
+                    >
+                      <Save className="h-4 w-4" />
+                      Usar este calendario
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleDisconnectGoogle}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">No se encontraron calendarios.</p>
+                  <Button variant="outline" size="sm" onClick={fetchCalendarList}>
+                    Reintentar
+                  </Button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-6 text-center">
