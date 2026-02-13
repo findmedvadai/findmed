@@ -1,146 +1,65 @@
 
 
-# Phase 1A: Authentication System + Dashboard Layouts
+## Plan: Seleccion de Calendario y Visualizacion en Agenda
 
-## Overview
-Build the login system, auth context, role-based route protection, and sidebar-based dashboard layouts for Doctor and Admin roles. After this step you will have a working login page, protected dashboards with navigation, and placeholder pages for each section.
+Hay dos problemas identificados:
 
----
-
-## 1. Auth Context and Hook
-
-**File: `src/hooks/useAuth.tsx`**
-
-Create an auth context provider that:
-- Listens to `onAuthStateChange` (set up BEFORE calling `getSession`)
-- Stores the current Supabase session/user
-- Fetches the user's role from `user_roles` table and `doctor_id` from `users` table
-- Exposes: `user`, `session`, `role`, `doctorId`, `loading`, `signOut`
+1. **No se pregunta cual calendario conectar**: El callback (`google-calendar-callback`) automaticamente selecciona el calendario primario sin dar opcion al doctor.
+2. **La Agenda no muestra eventos de Google Calendar**: La pagina de Agenda solo consulta la tabla `appointments` de la base de datos, no los eventos del Google Calendar conectado.
 
 ---
 
-## 2. Login Page
+### Solucion Problema 1: Selector de Calendario
 
-**File: `src/pages/Login.tsx`**
+En lugar de auto-seleccionar el calendario primario en el callback, el flujo sera:
 
-- Clean login form with email + password (FindMed branding)
-- FindMed logo/title at the top in Azul #123D74
-- Rosa CTA button for "Iniciar Sesion"
-- Error messages displayed inline
-- On success: redirect based on role (doctor -> /doctor/agenda, admin/superadmin -> /admin/calendario)
-- Loading/submitting states on button
+1. El callback almacena el `refresh_token` en la base de datos pero marca `google_calendar_connected = false` temporalmente (solo guarda el token).
+2. Se crea una nueva edge function `google-calendar-list` que usa el refresh token para obtener un access token fresco y listar los calendarios disponibles del doctor.
+3. En la pagina de Configuracion, despues de que el popup de OAuth se cierra, se muestra un selector (dropdown) con los calendarios disponibles del doctor para que elija cual usar.
+4. Al seleccionar un calendario, se actualiza `google_calendar_id` y se marca `google_calendar_connected = true`.
 
----
+### Solucion Problema 2: Mostrar Eventos de Google Calendar en Agenda
 
-## 3. Route Protection Component
+1. Se crea una nueva edge function `google-calendar-events` que:
+   - Recibe el `doctor_id` y un rango de fechas
+   - Usa el `refresh_token` almacenado para obtener un access token
+   - Consulta la Google Calendar API para obtener los eventos del dia
+   - Retorna los eventos formateados
 
-**File: `src/components/ProtectedRoute.tsx`**
-
-- Wraps routes that require authentication
-- Accepts `allowedRoles` prop (e.g., `['admin', 'superadmin']`)
-- Shows loading spinner while checking auth
-- Redirects to `/login` if not authenticated
-- Redirects to appropriate dashboard if role doesn't match
+2. En la pagina de Agenda se agrega una segunda query que llama a esta edge function para obtener los eventos de Google Calendar del dia seleccionado, y los muestra junto (o mezclados) con las citas de la base de datos.
 
 ---
 
-## 4. Dashboard Layouts with Sidebar
+### Detalle Tecnico
 
-### Admin Layout
-**File: `src/components/layouts/AdminLayout.tsx`**
+#### Archivos nuevos:
+- `supabase/functions/google-calendar-list/index.ts` -- Lista calendarios del doctor usando su refresh token
+- `supabase/functions/google-calendar-events/index.ts` -- Obtiene eventos de un rango de fechas
 
-Sidebar navigation with items:
-- Calendario (`/admin/calendario`)
-- Reservas (`/admin/reservas`)
-- Doctores (`/admin/doctores`)
-- Catalogos (`/admin/catalogos`)
-- Inbox (`/admin/inbox`)
+#### Archivos modificados:
+- `supabase/functions/google-calendar-callback/index.ts` -- Guardar token sin auto-seleccionar calendario, marcar como "pendiente de seleccion"
+- `src/pages/doctor/Configuracion.tsx` -- Agregar paso de seleccion de calendario despues del OAuth
+- `src/pages/doctor/Agenda.tsx` -- Agregar seccion de eventos de Google Calendar
+- `supabase/config.toml` -- Registrar las nuevas edge functions con `verify_jwt = false`
 
-Uses `SidebarProvider`, `Sidebar`, `SidebarContent`, `SidebarTrigger` from the existing sidebar component. Header bar with FindMed branding and user menu (sign out).
+#### Flujo del usuario:
+```text
+1. Doctor hace clic en "Conectar Google Calendar"
+2. Se abre popup de OAuth de Google
+3. Doctor autoriza la app
+4. Callback guarda el refresh_token en DB
+5. Popup se cierra
+6. Configuracion detecta que hay token pero no calendario seleccionado
+7. Se muestra dropdown con calendarios disponibles
+8. Doctor selecciona uno
+9. Se guarda google_calendar_id y google_calendar_connected = true
+```
 
-### Doctor Layout
-**File: `src/components/layouts/DoctorLayout.tsx`**
+#### Cambios en la base de datos:
+- No se necesitan nuevas tablas ni columnas. Los campos existentes (`google_calendar_connected`, `google_calendar_id`, `google_refresh_token_ref`) son suficientes.
 
-Sidebar navigation with items:
-- Agenda (`/doctor/agenda`)
-- Configuracion (`/doctor/configuracion`)
-- Por Completar (`/doctor/por-completar`) -- with red badge
-- Inbox (`/doctor/inbox`)
-
-Same sidebar pattern, with doctor's name displayed.
-
----
-
-## 5. Placeholder Pages
-
-Create minimal placeholder pages so navigation works:
-
-**Admin pages:**
-- `src/pages/admin/Calendario.tsx`
-- `src/pages/admin/Reservas.tsx`
-- `src/pages/admin/Doctores.tsx`
-- `src/pages/admin/Catalogos.tsx`
-- `src/pages/admin/Inbox.tsx`
-
-**Doctor pages:**
-- `src/pages/doctor/Agenda.tsx`
-- `src/pages/doctor/Configuracion.tsx`
-- `src/pages/doctor/PorCompletar.tsx`
-- `src/pages/doctor/DoctorInbox.tsx`
-
-Each page shows a title card with "Coming soon" content so the layout is visible.
-
----
-
-## 6. Updated Routing
-
-**File: `src/App.tsx`**
-
-Update to include:
-- `/login` -- Login page
-- `/admin/*` routes wrapped in `ProtectedRoute` (roles: admin, superadmin) with `AdminLayout`
-- `/doctor/*` routes wrapped in `ProtectedRoute` (roles: doctor) with `DoctorLayout`
-- `/reserva` and `/gestionar` -- public patient routes (placeholder for now)
-- `/` redirects to `/login`
-
----
-
-## 7. Index Page Update
-
-**File: `src/pages/Index.tsx`**
-
-Redirect to `/login` since the root page should send users to authenticate.
-
----
-
-## Files Created/Modified Summary
-
-| Action | File |
-|--------|------|
-| Create | `src/hooks/useAuth.tsx` |
-| Create | `src/pages/Login.tsx` |
-| Create | `src/components/ProtectedRoute.tsx` |
-| Create | `src/components/layouts/AdminLayout.tsx` |
-| Create | `src/components/layouts/DoctorLayout.tsx` |
-| Create | `src/pages/admin/Calendario.tsx` |
-| Create | `src/pages/admin/Reservas.tsx` |
-| Create | `src/pages/admin/Doctores.tsx` |
-| Create | `src/pages/admin/Catalogos.tsx` |
-| Create | `src/pages/admin/Inbox.tsx` |
-| Create | `src/pages/doctor/Agenda.tsx` |
-| Create | `src/pages/doctor/Configuracion.tsx` |
-| Create | `src/pages/doctor/PorCompletar.tsx` |
-| Create | `src/pages/doctor/DoctorInbox.tsx` |
-| Modify | `src/App.tsx` |
-| Modify | `src/pages/Index.tsx` |
-
----
-
-## Technical Notes
-
-- Auth state listener uses `onAuthStateChange` set up BEFORE `getSession()` to avoid race conditions
-- Roles are fetched from `user_roles` table via `has_role` security definer function pattern -- never stored in localStorage
-- The `users` table provides the `doctor_id` mapping for doctor-role users
-- Sidebar uses the existing `src/components/ui/sidebar.tsx` component with `NavLink` for active route highlighting
-- All text in Spanish to match the Mexican medical context
+#### Seguridad:
+- Las nuevas edge functions validan el JWT del doctor manualmente (mismo patron que `google-calendar-auth`)
+- El refresh token solo se accede via service role key en las edge functions
+- Los eventos de Google Calendar se obtienen server-side, nunca se expone el token al cliente
 
