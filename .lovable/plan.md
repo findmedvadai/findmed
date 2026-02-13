@@ -1,98 +1,152 @@
-## Calendario del Admin - Vista global de citas con colores por especialidad
+## Implementacion de Doctores (tarjetas), Catalogos e Inbox del Admin
 
-### Resumen
+### 1. Pagina de Doctores (`src/pages/admin/Doctores.tsx`) - Tarjetas con colores de especialidad + CRUD
 
-Construir la pagina completa del Calendario del admin que muestre todas las citas internas de todos los doctores en una vista semanal, con codificacion visual por especialidad (borde + texto de color, fondo blanco) y un indicador circular de estado (amarillo = agendada, verde = confirmada).
+**Vista principal: Grid de tarjetas**
 
-### Diseno visual de cada cita
+Cada doctor se muestra como una tarjeta con el mismo estilo visual del calendario admin:
 
 ```text
-+----------------------------------+
-|  [border-left color por espec.]  |
-|  ● Nombre del paciente           |
-|    09:00 - 09:30                 |
-|    Dr. Garcia                    |
-+----------------------------------+
++--------------------------------------+
+|  [border-left-4 color especialidad]  |
+|           Dr. Juan Garcia            |
+|                                      |
+|             Ginecologia              |
+|                                      |
+|    Ciudad de Mexico - Zona Norte     |
+|                                      |
++--------------------------------------+
 ```
 
-- Rectangulo con fondo blanco y borde izquierdo grueso del color de la especialidad
-- Texto del nombre del paciente y doctor en el color de la especialidad
-- Circulo pequeno (6px) a la izquierda del nombre: amarillo (scheduled) o verde (confirmed)
-- Citas canceladas/completadas se muestran con opacidad reducida
+- Rectangulo blanco redondeado con `border-l-4` del color de su especialidad principal (primera en `doctor_specialties`)
+- Nombre y especialidad en el color de la especialidad (reutiliza `getSpecialtyColor` de `specialty-colors.ts`)
+- Info secundaria en gris: ciudad, zona
 
-### Mapa de colores por especialidad
+**Filtros superiores:**
 
-Se definira un mapa de colores predeterminados con al menos 8 colores distinguibles. Las especialidades se asignaran a colores por orden alfabetico o por ID. Colores iniciales propuestos:
+- Busqueda por nombre
+- Filtro por especialidad, ciudad, zona, estado activo/inactivo
+- Boton "Nuevo Doctor" abre formulario de creacion
 
+**Click en tarjeta abre Dialog de detalle (solo lectura):**
 
-| Especialidad      | Color (HSL)       | Hex aprox. |
-| ----------------- | ----------------- | ---------- |
-| Ginecologia       | Rosa (#E30050)    | Rosa CTA   |
-| Gastroenterologia | Verde (#16A34A)   | Verde      |
-| Cardiologia       | Rojo (#DC2626)    | Rojo       |
-| Dermatologia      | Morado (#9333EA)  | Morado     |
-| Pediatria         | Azul (#2563EB)    | Azul       |
-| Oftalmologia      | Naranja (#EA580C) | Naranja    |
-| Neurologia        | Teal (#0D9488)    | Teal       |
-| Otras             | Gris (#6B7280)    | Gris       |
+- Nombre completo
+- Telefono
+- Direccion
+- Especialidades (como badges con colores)
+- Ciudad y zona
+- Google Calendar (estado de conexion)
+- Boton editar y toggle activar/desactivar
+- Info login y contraseña de la plataforma
+- Id del doctor
 
+**CRUD:**
 
-Los colores se asignan dinamicamente: se consultan todas las especialidades y se asigna un color del arreglo a cada una (por indice). Si hay mas especialidades que colores, se repiten ciclicamente.
+- **Crear doctor**: Formulario con nombre, telefono, direccion, email, contrasena temporal, ciudad, zona, especialidades. Llama a una edge function `create-doctor` que usa service role para crear auth user + doctor + users + user_roles + doctor_specialties atomicamente.
+- **Editar doctor**: Dialog para actualizar nombre, telefono, direccion, ciudad, zona, especialidades (mutaciones directas, admin ya tiene RLS).
+- **Activar/Desactivar**: Toggle de `is_active` directamente.
 
-### Estructura de datos y queries
+**Query principal:**
 
-1. **Citas**: `appointments` con join a `patients` (nombre) y `doctors` (nombre del doctor)
-2. **Especialidades por doctor**: `doctor_specialties` con join a `specialties` (nombre) - se toma la primera especialidad del doctor como color representativo
-3. **No se consulta** la edge function de Google Calendar (regla de exclusion)
-4. **Filtros**: por especialidad, por doctor, por estado.
+```typescript
+supabase
+  .from("doctors")
+  .select(`
+    id, full_name, phone, address, is_active, city_id, zone_id,
+    google_calendar_connected,
+    doctor_specialties(specialty_id, specialties(id, name)),
+    cities(name), zones(name)
+  `)
+  .order("full_name")
+```
 
-### Detalles tecnicos
+---
+
+### 2. Edge Function `create-doctor` (`supabase/functions/create-doctor/index.ts`)
+
+Necesaria porque crear usuarios en auth requiere service role key.
+
+**Flujo:**
+
+1. Valida JWT del caller y verifica que sea admin (`is_admin_or_superadmin`)
+2. Crea usuario en `auth.users` con `admin.createUser({ email, password, email_confirm: true })`
+3. Inserta en `doctors` (full_name, phone, address, city_id, zone_id)
+4. Inserta en `users` (id = auth user id, role: "doctor", doctor_id)
+5. Inserta en `user_roles` (user_id, role: "doctor")
+6. Inserta en `doctor_specialties` (doctor_id, specialty_ids[])
+7. Retorna el doctor creado
+
+**Recibe:** `{ email, password, full_name, phone, address, city_id, zone_id, doctor_id, specialty_ids[] }`
+
+---
+
+### 3. Pagina de Catalogos (`src/pages/admin/Catalogos.tsx`) - CRUD de ciudades, zonas y especialidades
+
+**Interface:** 3 tabs usando componente `Tabs` de Radix:
+
+- **Ciudades** - CRUD sobre tabla `cities`
+- **Zonas** - CRUD sobre tabla `zones` (con filtro obligatorio por ciudad)
+- **Especialidades** - CRUD sobre tabla `specialties`
+
+**Cada tab contiene:**
+
+- Tabla simple con columnas: Nombre, Estado (badge activo/inactivo), Acciones
+- Boton "Agregar" abre Dialog con formulario (campo nombre, y para zonas un selector de ciudad)
+- Boton editar abre Dialog para cambiar nombre
+- Toggle de activar/desactivar (no borrado fisico)
+
+**Queries:**
+
+```typescript
+supabase.from("cities").select("*").order("name")
+supabase.from("zones").select("*, cities(name)").order("name")
+supabase.from("specialties").select("*").order("name")
+```
+
+**Mutaciones con `useMutation` + invalidacion de queries:**
+
+- Insert, Update nombre, Toggle `is_active`
+
+---
+
+### 4. Pagina de Inbox del Admin (`src/pages/admin/Inbox.tsx`) - Notificaciones
+
+Reutiliza el mismo patron visual y logica del `DoctorInbox` existente, adaptado al admin:
+
+- Consulta notificaciones con `recipient_role IN ('admin', 'superadmin')` (sin filtro de `doctor_id`)
+- Muestra nombre del doctor asociado (join `doctors(full_name)` via `doctor_id`)
+- Filtro por tipo de notificacion (mismos 5 tipos: scheduled, cancelled x3, completed)
+- Marcar como leida individual y masivo
+- Suscripcion realtime para actualizaciones en vivo
+- Limit de 100 notificaciones
+
+**Query:**
+
+```typescript
+supabase
+  .from("notifications")
+  .select("*, doctors(full_name)")
+  .in("recipient_role", ["admin", "superadmin"])
+  .order("created_at", { ascending: false })
+  .limit(100)
+```
+
+---
+
+### Resumen de archivos
 
 **Archivos a crear:**
 
-- `src/pages/admin/Calendario.tsx` - reescritura completa (actualmente placeholder)
-- `src/lib/specialty-colors.ts` - mapa de colores y utilidad para asignar color por especialidad
+- `supabase/functions/create-doctor/index.ts` - Edge function para alta de doctores
 
-**Archivos a modificar:**
+**Archivos a reescribir (actualmente placeholders):**
 
-- Ninguno adicional (la ruta ya existe en App.tsx)
+- `src/pages/admin/Doctores.tsx`
+- `src/pages/admin/Catalogos.tsx`
+- `src/pages/admin/Inbox.tsx`
 
-**Componente Calendario.tsx:**
+**Sin cambios necesarios en:**
 
-- Vista semanal con grid identico al de la Agenda del doctor (mismas constantes START_HOUR, END_HOUR, HOUR_HEIGHT)
-- Reutiliza la logica de `computeOverlapColumns` (se extraera o duplicara)
-- Header con navegacion de semana (anterior/siguiente/hoy)
-- Filtro dropdown para seleccionar doctor especifico o "Todos"
-- Cada rectangulo de cita:
-  - `bg-white border-l-4` con el color de la especialidad
-  - Texto en el color de la especialidad
-  - Circulo de 6px: `bg-scheduled` (amarillo) si status=scheduled, `bg-confirmed` (verde) si status=confirmed
-  - Para completed: opacidad reducida
-- Click en cita abre un dialog de detalle (version simplificada, solo lectura para admin)
-
-**Utilidad specialty-colors.ts:**
-
-- Exporta un arreglo de colores HSL/hex
-- Exporta una funcion `getSpecialtyColor(specialtyId, allSpecialties)` que retorna `{ border, text }` con clases CSS o valores inline
-- Como las especialidades pueden variar, se usa inline styles con los colores del arreglo
-
-**Query de datos:**
-
-```typescript
-// Citas de la semana para todos los doctores
-supabase
-  .from("appointments")
-  .select(`
-    id, start_at, end_at, status, symptoms,
-    patients(full_name),
-    doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name)))
-  `)
-  .gte("start_at", weekStart)
-  .lte("start_at", weekEnd)
-  .in("status", ["scheduled", "confirmed", "completed", "cancelled"])
-  .order("start_at")
-```
-
-**Leyenda de colores:**
-
-- Debajo de los contadores de resumen, una fila de badges mostrando cada especialidad con su color asignado para referencia rapida
+- `App.tsx` (rutas ya existen)
+- `AdminLayout.tsx` (navegacion ya configurada)
+- Base de datos (tablas y RLS ya soportan todas las operaciones del admin)
