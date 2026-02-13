@@ -30,9 +30,10 @@ import {
   Plus,
   Calendar,
   MapPin,
-  Phone,
   Pencil,
   Copy,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 /* ───────── types ───────── */
@@ -48,7 +49,7 @@ interface DoctorRow {
   google_calendar_connected: boolean;
   doctor_specialties: {
     specialty_id: string;
-    specialties: { id: string; name: string } | null;
+    specialties: { id: string; name: string; color: string | null } | null;
   }[];
   cities: { name: string } | null;
   zones: { name: string } | null;
@@ -74,11 +75,18 @@ function useCatalogs() {
   const specialties = useQuery({
     queryKey: ["specialties"],
     queryFn: async () => {
-      const { data } = await supabase.from("specialties").select("id, name").eq("is_active", true).order("name");
+      const { data } = await supabase.from("specialties").select("id, name, color").eq("is_active", true).order("name");
       return data ?? [];
     },
   });
-  return { cities: cities.data ?? [], zones: zones.data ?? [], specialties: specialties.data ?? [], allSpecialtyIds: (specialties.data ?? []).map((s) => s.id) };
+
+  // Build colorMap from DB
+  const colorMap: Record<string, string> = {};
+  for (const s of specialties.data ?? []) {
+    if (s.color) colorMap[s.id] = s.color;
+  }
+
+  return { cities: cities.data ?? [], zones: zones.data ?? [], specialties: specialties.data ?? [], colorMap };
 }
 
 /* ───────── main component ───────── */
@@ -106,7 +114,7 @@ export default function Doctores() {
         .select(`
           id, full_name, phone, address, is_active, city_id, zone_id,
           google_calendar_connected,
-          doctor_specialties(specialty_id, specialties(id, name)),
+          doctor_specialties(specialty_id, specialties(id, name, color)),
           cities(name), zones(name)
         `)
         .order("full_name");
@@ -140,7 +148,7 @@ export default function Doctores() {
   function getPrimaryColor(d: DoctorRow) {
     const first = d.doctor_specialties[0];
     if (!first) return "#6B7280";
-    return getSpecialtyColor(first.specialty_id, catalogs.allSpecialtyIds);
+    return getSpecialtyColor(first.specialty_id, catalogs.colorMap);
   }
 
   function getPrimarySpecialtyName(d: DoctorRow) {
@@ -170,12 +178,14 @@ export default function Doctores() {
         </Button>
       </div>
 
-      {/* Filters */}
+      {/* Search - full width */}
+      <div className="relative w-full">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input placeholder="Buscar por nombre…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+
+      {/* Filters - second row */}
       <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Buscar por nombre…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
         <Select value={filterSpecialty} onValueChange={setFilterSpecialty}>
           <SelectTrigger className="w-44"><SelectValue placeholder="Especialidad" /></SelectTrigger>
           <SelectContent>
@@ -245,7 +255,7 @@ export default function Doctores() {
       {selectedDoctor && (
         <DoctorDetailDialog
           doctor={selectedDoctor}
-          allSpecialtyIds={catalogs.allSpecialtyIds}
+          colorMap={catalogs.colorMap}
           onClose={() => setSelectedDoctor(null)}
           onToggleActive={() => {
             toggleActiveMut.mutate({ id: selectedDoctor.id, is_active: !selectedDoctor.is_active });
@@ -292,17 +302,33 @@ export default function Doctores() {
 
 function DoctorDetailDialog({
   doctor,
-  allSpecialtyIds,
+  colorMap,
   onClose,
   onToggleActive,
   onEdit,
 }: {
   doctor: DoctorRow;
-  allSpecialtyIds: string[];
+  colorMap: Record<string, string>;
   onClose: () => void;
   onToggleActive: () => void;
   onEdit: () => void;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Fetch login credentials
+  const { data: credentials } = useQuery({
+    queryKey: ["doctor-credentials", doctor.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("users")
+        .select("email, initial_password")
+        .eq("doctor_id", doctor.id)
+        .single();
+      if (error) return null;
+      return data;
+    },
+  });
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md">
@@ -325,7 +351,7 @@ function DoctorDetailDialog({
             <div className="flex flex-wrap gap-1">
               {doctor.doctor_specialties.length === 0 && <span className="text-muted-foreground">—</span>}
               {doctor.doctor_specialties.map((ds) => {
-                const c = getSpecialtyColor(ds.specialty_id, allSpecialtyIds);
+                const c = getSpecialtyColor(ds.specialty_id, colorMap);
                 return (
                   <Badge key={ds.specialty_id} variant="outline" style={{ borderColor: c, color: c }}>
                     {ds.specialties?.name}
@@ -343,10 +369,36 @@ function DoctorDetailDialog({
             </div>
           </Row>
           <Row label="Estado">
-            <div className="flex items-center gap-2">
-              <Badge variant={doctor.is_active ? "default" : "secondary"}>{doctor.is_active ? "Activo" : "Inactivo"}</Badge>
-            </div>
+            <Badge variant={doctor.is_active ? "default" : "secondary"}>{doctor.is_active ? "Activo" : "Inactivo"}</Badge>
           </Row>
+
+          {/* Login credentials section */}
+          <div className="border-t pt-3 mt-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Acceso a la plataforma</p>
+            <Row label="Email">
+              {credentials?.email ? (
+                <span className="flex items-center gap-1">
+                  {credentials.email}
+                  <button onClick={() => { navigator.clipboard.writeText(credentials.email!); toast({ title: "Email copiado" }); }} className="hover:text-foreground text-muted-foreground">
+                    <Copy className="h-3 w-3" />
+                  </button>
+                </span>
+              ) : "—"}
+            </Row>
+            <Row label="Contraseña">
+              {credentials?.initial_password ? (
+                <span className="flex items-center gap-1 font-mono text-xs">
+                  {showPassword ? credentials.initial_password : "••••••••"}
+                  <button onClick={() => setShowPassword(!showPassword)} className="hover:text-foreground text-muted-foreground">
+                    {showPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </button>
+                  <button onClick={() => { navigator.clipboard.writeText(credentials.initial_password!); toast({ title: "Contraseña copiada" }); }} className="hover:text-foreground text-muted-foreground">
+                    <Copy className="h-3 w-3" />
+                  </button>
+                </span>
+              ) : "—"}
+            </Row>
+          </div>
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" size="sm" onClick={onToggleActive}>
@@ -552,7 +604,6 @@ function EditDoctorDialog({
     }
     setSaving(true);
     try {
-      // Update doctor record
       const { error: docErr } = await supabase
         .from("doctors")
         .update({
@@ -565,7 +616,6 @@ function EditDoctorDialog({
         .eq("id", doctor.id);
       if (docErr) throw docErr;
 
-      // Update specialties: delete all, re-insert
       await supabase.from("doctor_specialties").delete().eq("doctor_id", doctor.id);
       if (form.specialty_ids.length > 0) {
         const { error: specErr } = await supabase

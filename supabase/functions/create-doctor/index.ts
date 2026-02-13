@@ -94,11 +94,13 @@ Deno.serve(async (req) => {
       .single();
     if (docErr) throw docErr;
 
-    // 3. Create users record
+    // 3. Create users record (with email and initial_password for admin visibility)
     const { error: userErr } = await adminClient.from("users").insert({
       id: authUserId,
       role: "doctor",
       doctor_id: doctor.id,
+      email: email,
+      initial_password: password,
     });
     if (userErr) throw userErr;
 

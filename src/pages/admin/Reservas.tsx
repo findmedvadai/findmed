@@ -94,7 +94,6 @@ export default function Reservas() {
   const [filterZone, setFilterZone] = useState("all");
   const [selectedAppt, setSelectedAppt] = useState<AppointmentRow | null>(null);
 
-  // Fetch all appointments (internal only)
   const { data: rawAppointments, isLoading } = useQuery({
     queryKey: ["admin-reservas-appointments"],
     queryFn: async () => {
@@ -112,7 +111,6 @@ export default function Reservas() {
     },
   });
 
-  // Fetch cities and zones for display
   const { data: cities } = useQuery({
     queryKey: ["admin-cities"],
     queryFn: async () => {
@@ -132,7 +130,6 @@ export default function Reservas() {
   const cityMap = useMemo(() => new Map((cities ?? []).map((c) => [c.id, c.name])), [cities]);
   const zoneMap = useMemo(() => new Map((zones ?? []).map((z) => [z.id, z.name])), [zones]);
 
-  // Extract unique doctors and specialties for filters
   const { doctorsList, specialtiesList } = useMemo(() => {
     const docMap = new Map<string, string>();
     const specMap = new Map<string, string>();
@@ -150,10 +147,8 @@ export default function Reservas() {
     };
   }, [rawAppointments]);
 
-  // Filter
   const filtered = useMemo(() => {
     let items = rawAppointments ?? [];
-
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
       items = items.filter(
@@ -171,14 +166,11 @@ export default function Reservas() {
       );
     if (filterCity !== "all") items = items.filter((a) => a.doctors?.city_id === filterCity);
     if (filterZone !== "all") items = items.filter((a) => a.doctors?.zone_id === filterZone);
-
     return items;
   }, [rawAppointments, searchText, filterStatus, filterDoctor, filterSpecialty, filterCity, filterZone]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageItems = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  // Reset page when filters change
   const resetPage = () => setPage(0);
 
   const hasActiveFilters =
@@ -206,17 +198,19 @@ export default function Reservas() {
         <span className="text-sm text-muted-foreground">{filtered.length} citas</span>
       </div>
 
-      {/* Filters */}
+      {/* Search - full width */}
+      <div className="relative w-full">
+        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          placeholder="Buscar paciente, teléfono o doctor..."
+          value={searchText}
+          onChange={(e) => { setSearchText(e.target.value); resetPage(); }}
+          className="h-9 pl-9 text-xs"
+        />
+      </div>
+
+      {/* Filters - second row */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Buscar paciente, teléfono o doctor..."
-            value={searchText}
-            onChange={(e) => { setSearchText(e.target.value); resetPage(); }}
-            className="h-8 w-64 pl-9 text-xs"
-          />
-        </div>
         <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); resetPage(); }}>
           <SelectTrigger className="h-8 w-40 text-xs"><SelectValue placeholder="Estado" /></SelectTrigger>
           <SelectContent>
@@ -345,22 +339,10 @@ export default function Reservas() {
             Página {page + 1} de {totalPages}
           </span>
           <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-7 w-7"
-              disabled={page === 0}
-              onClick={() => setPage((p) => p - 1)}
-            >
+            <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
               <ChevronLeft className="h-3 w-3" />
             </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-7 w-7"
-              disabled={page >= totalPages - 1}
-              onClick={() => setPage((p) => p + 1)}
-            >
+            <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
               <ChevronRight className="h-3 w-3" />
             </Button>
           </div>

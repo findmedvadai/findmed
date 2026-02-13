@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Plus, Pencil } from "lucide-react";
+import { SPECIALTY_COLORS } from "@/lib/specialty-colors";
 
 /* ═══════ Cities Tab ═══════ */
 
@@ -92,7 +93,6 @@ function CitiesTab() {
         onEdit={(item) => { setEditItem(item); setName(item.name); }}
         onToggle={(id, active) => toggleMut.mutate({ id, is_active: active })}
       />
-      {/* Add dialog */}
       <CatalogFormDialog
         open={showAdd}
         onClose={() => setShowAdd(false)}
@@ -102,7 +102,6 @@ function CitiesTab() {
         onSave={() => { if (name.trim()) addMut.mutate(name.trim()); }}
         saving={addMut.isPending}
       />
-      {/* Edit dialog */}
       <CatalogFormDialog
         open={!!editItem}
         onClose={() => setEditItem(null)}
@@ -270,8 +269,9 @@ function ZonesTab() {
 function SpecialtiesTab() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
-  const [editItem, setEditItem] = useState<{ id: string; name: string } | null>(null);
+  const [editItem, setEditItem] = useState<{ id: string; name: string; color: string | null } | null>(null);
   const [name, setName] = useState("");
+  const [color, setColor] = useState<string>("");
 
   const { data: specialties, isLoading } = useQuery({
     queryKey: ["catalog-specialties"],
@@ -283,20 +283,20 @@ function SpecialtiesTab() {
   });
 
   const addMut = useMutation({
-    mutationFn: async (n: string) => {
-      const { error } = await supabase.from("specialties").insert({ name: n });
+    mutationFn: async ({ name, color }: { name: string; color: string | null }) => {
+      const { error } = await supabase.from("specialties").insert({ name, color });
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); toast({ title: "Especialidad creada" }); setShowAdd(false); setName(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); qc.invalidateQueries({ queryKey: ["specialties"] }); toast({ title: "Especialidad creada" }); setShowAdd(false); setName(""); setColor(""); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const editMut = useMutation({
-    mutationFn: async ({ id, name }: { id: string; name: string }) => {
-      const { error } = await supabase.from("specialties").update({ name }).eq("id", id);
+    mutationFn: async ({ id, name, color }: { id: string; name: string; color: string | null }) => {
+      const { error } = await supabase.from("specialties").update({ name, color }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); toast({ title: "Especialidad actualizada" }); setEditItem(null); setName(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); qc.invalidateQueries({ queryKey: ["specialties"] }); toast({ title: "Especialidad actualizada" }); setEditItem(null); setName(""); setColor(""); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -314,34 +314,145 @@ function SpecialtiesTab() {
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button size="sm" className="gap-1" onClick={() => { setShowAdd(true); setName(""); }}>
+        <Button size="sm" className="gap-1" onClick={() => { setShowAdd(true); setName(""); setColor(""); }}>
           <Plus className="h-4 w-4" /> Agregar
         </Button>
       </div>
-      <CatalogTable
-        items={(specialties ?? []).map((s) => ({ id: s.id, name: s.name, is_active: s.is_active }))}
-        onEdit={(item) => { setEditItem(item); setName(item.name); }}
-        onToggle={(id, active) => toggleMut.mutate({ id, is_active: active })}
-      />
-      <CatalogFormDialog
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Color</TableHead>
+            <TableHead>Nombre</TableHead>
+            <TableHead>Estado</TableHead>
+            <TableHead className="w-24">Acciones</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {(specialties ?? []).length === 0 && (
+            <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">Sin registros</TableCell></TableRow>
+          )}
+          {(specialties ?? []).map((item) => (
+            <TableRow key={item.id}>
+              <TableCell>
+                <span
+                  className="inline-block h-5 w-5 rounded-full border border-border"
+                  style={{ backgroundColor: item.color || "#6B7280" }}
+                />
+              </TableCell>
+              <TableCell className="font-medium">{item.name}</TableCell>
+              <TableCell>
+                <Badge variant={item.is_active ? "default" : "secondary"}>{item.is_active ? "Activo" : "Inactivo"}</Badge>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditItem({ id: item.id, name: item.name, color: item.color }); setName(item.name); setColor(item.color || ""); }}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Switch checked={item.is_active} onCheckedChange={(v) => toggleMut.mutate({ id: item.id, is_active: v })} />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+
+      {/* Add specialty dialog */}
+      <SpecialtyFormDialog
         open={showAdd}
         onClose={() => setShowAdd(false)}
         title="Agregar Especialidad"
         name={name}
         setName={setName}
-        onSave={() => { if (name.trim()) addMut.mutate(name.trim()); }}
+        color={color}
+        setColor={setColor}
+        onSave={() => { if (name.trim()) addMut.mutate({ name: name.trim(), color: color || null }); }}
         saving={addMut.isPending}
       />
-      <CatalogFormDialog
+
+      {/* Edit specialty dialog */}
+      <SpecialtyFormDialog
         open={!!editItem}
         onClose={() => setEditItem(null)}
         title="Editar Especialidad"
         name={name}
         setName={setName}
-        onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim() }); }}
+        color={color}
+        setColor={setColor}
+        onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim(), color: color || null }); }}
         saving={editMut.isPending}
       />
     </div>
+  );
+}
+
+/* ═══════ Specialty Form Dialog (with color picker) ═══════ */
+
+function SpecialtyFormDialog({
+  open,
+  onClose,
+  title,
+  name,
+  setName,
+  color,
+  setColor,
+  onSave,
+  saving,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  name: string;
+  setName: (v: string) => void;
+  color: string;
+  setColor: (v: string) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>Ingresa el nombre y elige un color.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Nombre *</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSave(); }} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Color</Label>
+            <div className="flex flex-wrap gap-2">
+              {SPECIALTY_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setColor(c)}
+                  className={`h-8 w-8 rounded-full border-2 transition-transform hover:scale-110 ${color === c ? "border-foreground scale-110 ring-2 ring-foreground/20" : "border-transparent"}`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <span
+                className="inline-block h-6 w-6 rounded-full border border-border flex-shrink-0"
+                style={{ backgroundColor: color || "#6B7280" }}
+              />
+              <Input
+                placeholder="#HEX personalizado"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="flex-1 text-xs"
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={onSave} disabled={saving || !name.trim()}>{saving ? "Guardando…" : "Guardar"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
