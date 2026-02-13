@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CalendarDays } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
+import AppointmentDetailDialog, { type CalendarItem } from "@/components/doctor/AppointmentDetailDialog";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -32,17 +33,6 @@ interface GoogleEvent {
   end: string;
   description: string | null;
   htmlLink: string;
-}
-
-interface CalendarItem {
-  id: string;
-  type: "appointment" | "google";
-  start: Date;
-  end: Date;
-  title: string;
-  status?: AppointmentStatus;
-  phone?: string;
-  symptoms?: string;
 }
 
 const START_HOUR = 7;
@@ -87,6 +77,7 @@ export default function Agenda() {
     startOfWeek(new Date(), { weekStartsOn: 0 })
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
 
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
   const weekKey = format(weekStart, "yyyy-MM-dd");
@@ -159,6 +150,7 @@ export default function Agenda() {
         status: appt.status as AppointmentStatus,
         phone: patient?.phone ?? undefined,
         symptoms: appt.symptoms ?? undefined,
+        doctorNotes: appt.doctor_notes ?? undefined,
       });
     }
 
@@ -171,6 +163,7 @@ export default function Agenda() {
         start: parseISO(e.start),
         end: parseISO(e.end),
         title: e.summary,
+        htmlLink: e.htmlLink,
       });
     }
 
@@ -351,30 +344,38 @@ export default function Agenda() {
                   const widthPercent = 100 / totalCols;
                   const leftPercent = col * widthPercent;
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-default ${getEventStyle(item)}`}
-                      style={{
-                        top: Math.max(0, top),
-                        height: Math.max(15, height),
-                        left: `calc(${leftPercent}% + 1px)`,
-                        width: `calc(${widthPercent}% - 2px)`,
-                      }}
-                      title={`${item.title}\n${format(item.start, "HH:mm")} - ${format(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
-                    >
-                      <div className="font-semibold truncate">{item.title}</div>
-                      <div className="truncate opacity-80">
-                        {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
+                    return (
+                      <div
+                        key={item.id}
+                        className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)}`}
+                        onClick={() => setSelectedItem(item)}
+                        style={{
+                          top: Math.max(0, top),
+                          height: Math.max(15, height),
+                          left: `calc(${leftPercent}% + 1px)`,
+                          width: `calc(${widthPercent}% - 2px)`,
+                        }}
+                        title={`${item.title}\n${format(item.start, "HH:mm")} - ${format(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
+                      >
+                        <div className="font-semibold truncate">{item.title}</div>
+                        <div className="truncate opacity-80">
+                          {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
+                        </div>
                       </div>
-                    </div>
-                  );
+                    );
                 })}
               </div>
             );
           })}
         </div>
       </div>
+
+      <AppointmentDetailDialog
+        item={selectedItem}
+        open={!!selectedItem}
+        onClose={() => setSelectedItem(null)}
+        doctorId={doctorId ?? ""}
+      />
     </div>
   );
 }
