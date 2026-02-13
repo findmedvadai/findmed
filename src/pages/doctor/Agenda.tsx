@@ -86,6 +86,7 @@ export default function Agenda() {
       return (data.events || []) as GoogleEvent[];
     },
     enabled: !!doctorId,
+    refetchInterval: 60_000, // Poll every 60 seconds
   });
 
   const goToPrev = () => setSelectedDate((d) => subDays(d, 1));
