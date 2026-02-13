@@ -23,6 +23,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { CalendarDays } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog, { type CalendarItem } from "@/components/doctor/AppointmentDetailDialog";
+import DayHeaderPopover from "@/components/doctor/DayHeaderPopover";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -274,20 +275,22 @@ export default function Agenda() {
       <div className="grid grid-cols-[3rem_repeat(7,1fr)] border-b border-border">
         <div /> {/* spacer for time column */}
         {weekDays.map((day) => (
-          <div key={day.toISOString()} className="flex flex-col items-center py-1">
-            <span className="text-[10px] uppercase text-muted-foreground">
-              {format(day, "EEE", { locale: es })}
-            </span>
-            <span
-              className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
-                isToday(day)
-                  ? "bg-primary text-primary-foreground"
-                  : "text-foreground"
-              }`}
-            >
-              {format(day, "d")}
-            </span>
-          </div>
+          <DayHeaderPopover key={day.toISOString()} day={day} doctorId={doctorId ?? ""}>
+            <button className="flex flex-col items-center py-1 hover:bg-accent/50 rounded transition-colors cursor-pointer">
+              <span className="text-[10px] uppercase text-muted-foreground">
+                {format(day, "EEE", { locale: es })}
+              </span>
+              <span
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
+                  isToday(day)
+                    ? "bg-primary text-primary-foreground"
+                    : "text-foreground"
+                }`}
+              >
+                {format(day, "d")}
+              </span>
+            </button>
+          </DayHeaderPopover>
         ))}
       </div>
 
