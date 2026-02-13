@@ -19,7 +19,8 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card, CardContent } from "@/components/ui/card";
+import { CalendarDays } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
@@ -46,7 +47,7 @@ interface CalendarItem {
 
 const START_HOUR = 7;
 const END_HOUR = 21;
-const HOUR_HEIGHT = 60;
+const HOUR_HEIGHT = 36;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
 
 function computeOverlapColumns(items: CalendarItem[]) {
@@ -203,6 +204,15 @@ export default function Agenda() {
 
   const monthLabel = format(weekStart, "MMMM yyyy", { locale: es });
 
+  const summary = useMemo(() => {
+    if (!appointments) return { total: 0, confirmed: 0, scheduled: 0 };
+    return {
+      total: appointments.length,
+      confirmed: appointments.filter((a) => a.status === "confirmed").length,
+      scheduled: appointments.filter((a) => a.status === "scheduled").length,
+    };
+  }, [appointments]);
+
   function getEventStyle(item: CalendarItem): string {
     if (item.type === "google") return "bg-primary/80 text-primary-foreground";
     if (item.status === "scheduled") return "bg-scheduled text-scheduled-foreground";
@@ -234,6 +244,37 @@ export default function Agenda() {
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-3 px-1">
+        <Card>
+          <CardContent className="flex items-center gap-2 p-3">
+            <CalendarDays className="h-4 w-4 text-primary" />
+            <div>
+              <p className="text-lg font-bold leading-none">{summary.total}</p>
+              <p className="text-[10px] text-muted-foreground">Citas</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-2 p-3">
+            <div className="h-2.5 w-2.5 rounded-full bg-confirmed" />
+            <div>
+              <p className="text-lg font-bold leading-none">{summary.confirmed}</p>
+              <p className="text-[10px] text-muted-foreground">Confirmadas</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-2 p-3">
+            <div className="h-2.5 w-2.5 rounded-full bg-scheduled" />
+            <div>
+              <p className="text-lg font-bold leading-none">{summary.scheduled}</p>
+              <p className="text-[10px] text-muted-foreground">Por confirmar</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Day headers */}
