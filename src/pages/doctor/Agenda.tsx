@@ -2,10 +2,10 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, startOfDay, endOfDay, addDays, subDays, isToday, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Clock, User, FileText, CalendarDays } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, User, FileText, CalendarDays, Globe } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,12 +20,22 @@ const statusConfig: Record<AppointmentStatus, { label: string; className: string
   completed: { label: "Completada", className: "bg-muted text-muted-foreground" },
 };
 
+interface GoogleEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  description: string | null;
+  htmlLink: string;
+}
+
 export default function Agenda() {
   const { doctorId } = useAuth();
   const [selectedDate, setSelectedDate] = useState(() => new Date());
 
   const dateKey = format(selectedDate, "yyyy-MM-dd");
 
+  // Local appointments
   const { data: appointments, isLoading } = useQuery({
     queryKey: ["doctor-appointments", doctorId, dateKey],
     queryFn: async () => {
@@ -47,9 +57,67 @@ export default function Agenda() {
     enabled: !!doctorId,
   });
 
+  // Google Calendar events
+  const { data: googleEvents } = useQuery({
+    queryKey: ["google-calendar-events", doctorId, dateKey],
+    queryFn: async () => {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) return [];
+
+      const timeMin = startOfDay(selectedDate).toISOString();
+      const timeMax = endOfDay(selectedDate).toISOString();
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+      const response = await fetch(
+        `${supabaseUrl}/functions/v1/google-calendar-events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            apikey: anonKey,
+          },
+        }
+      );
+
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.events || []) as GoogleEvent[];
+    },
+    enabled: !!doctorId,
+  });
+
   const goToPrev = () => setSelectedDate((d) => subDays(d, 1));
   const goToNext = () => setSelectedDate((d) => addDays(d, 1));
   const goToToday = () => setSelectedDate(new Date());
+
+  // Merge and sort all events by start time
+  const allItems = useMemo(() => {
+    const localItems = (appointments || []).map((appt) => ({
+      type: "appointment" as const,
+      id: appt.id,
+      startTime: appt.start_at,
+      endTime: appt.end_at,
+      data: appt,
+    }));
+
+    // Filter google events that don't already exist as appointments (by google_event_id)
+    const appointmentGoogleIds = new Set((appointments || []).map((a) => a.id));
+    const gcalItems = (googleEvents || [])
+      .filter((e) => !appointmentGoogleIds.has(e.id))
+      .map((e) => ({
+        type: "google" as const,
+        id: e.id,
+        startTime: e.start,
+        endTime: e.end,
+        data: e,
+      }));
+
+    return [...localItems, ...gcalItems].sort(
+      (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
+  }, [appointments, googleEvents]);
 
   const summary = useMemo(() => {
     if (!appointments) return { total: 0, confirmed: 0, scheduled: 0 };
@@ -98,7 +166,7 @@ export default function Agenda() {
             <CalendarDays className="h-5 w-5 text-primary" />
             <div>
               <p className="text-2xl font-bold">{summary.total}</p>
-              <p className="text-xs text-muted-foreground">Total</p>
+              <p className="text-xs text-muted-foreground">Citas</p>
             </div>
           </CardContent>
         </Card>
@@ -122,26 +190,68 @@ export default function Agenda() {
         </Card>
       </div>
 
-      {/* Appointment list */}
+      {/* Event list */}
       {isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-24 w-full rounded-xl" />
           ))}
         </div>
-      ) : appointments && appointments.length > 0 ? (
+      ) : allItems.length > 0 ? (
         <div className="space-y-3">
-          {appointments.map((appt) => {
-            const start = parseISO(appt.start_at);
-            const end = parseISO(appt.end_at);
-            const cfg = statusConfig[appt.status as AppointmentStatus];
-            const patient = appt.patients as { full_name: string; phone: string } | null;
+          {allItems.map((item) => {
+            if (item.type === "appointment") {
+              const appt = item.data as typeof appointments extends (infer U)[] ? U : never;
+              const start = parseISO(appt.start_at);
+              const end = parseISO(appt.end_at);
+              const cfg = statusConfig[appt.status as AppointmentStatus];
+              const patient = appt.patients as { full_name: string; phone: string } | null;
+
+              return (
+                <Card key={appt.id} className="transition-shadow hover:shadow-md">
+                  <CardContent className="flex items-start gap-4 p-4">
+                    <div className="flex flex-col items-center rounded-lg bg-secondary px-3 py-2 text-center">
+                      <span className="text-lg font-bold text-primary">
+                        {format(start, "HH:mm")}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {format(end, "HH:mm")}
+                      </span>
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">
+                            {patient?.full_name ?? "Paciente desconocido"}
+                          </span>
+                        </div>
+                        <Badge className={cfg.className}>{cfg.label}</Badge>
+                      </div>
+                      {patient?.phone && (
+                        <p className="text-sm text-muted-foreground">{patient.phone}</p>
+                      )}
+                      {appt.symptoms && (
+                        <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
+                          <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{appt.symptoms}</span>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            }
+
+            // Google Calendar event
+            const gcal = item.data as GoogleEvent;
+            const start = parseISO(gcal.start);
+            const end = parseISO(gcal.end);
 
             return (
-              <Card key={appt.id} className="transition-shadow hover:shadow-md">
+              <Card key={`gcal-${gcal.id}`} className="border-primary/20 transition-shadow hover:shadow-md">
                 <CardContent className="flex items-start gap-4 p-4">
-                  {/* Time column */}
-                  <div className="flex flex-col items-center rounded-lg bg-secondary px-3 py-2 text-center">
+                  <div className="flex flex-col items-center rounded-lg bg-primary/10 px-3 py-2 text-center">
                     <span className="text-lg font-bold text-primary">
                       {format(start, "HH:mm")}
                     </span>
@@ -149,26 +259,18 @@ export default function Agenda() {
                       {format(end, "HH:mm")}
                     </span>
                   </div>
-
-                  {/* Details */}
                   <div className="flex-1 space-y-1">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <User className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium">
-                          {patient?.full_name ?? "Paciente desconocido"}
-                        </span>
+                        <Globe className="h-4 w-4 text-primary" />
+                        <span className="font-medium">{gcal.summary}</span>
                       </div>
-                      <Badge className={cfg.className}>{cfg.label}</Badge>
+                      <Badge variant="outline" className="text-primary border-primary/30">
+                        Google Calendar
+                      </Badge>
                     </div>
-                    {patient?.phone && (
-                      <p className="text-sm text-muted-foreground">{patient.phone}</p>
-                    )}
-                    {appt.symptoms && (
-                      <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
-                        <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span>{appt.symptoms}</span>
-                      </div>
+                    {gcal.description && (
+                      <p className="text-sm text-muted-foreground line-clamp-2">{gcal.description}</p>
                     )}
                   </div>
                 </CardContent>

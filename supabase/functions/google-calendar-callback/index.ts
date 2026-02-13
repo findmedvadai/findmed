@@ -50,7 +50,7 @@ serve(async (req) => {
       });
     }
 
-    const { refresh_token, access_token } = tokenData;
+    const { refresh_token } = tokenData;
 
     if (!refresh_token) {
       console.error("No refresh_token returned. User may have already authorized without revoke.");
@@ -60,26 +60,16 @@ serve(async (req) => {
       );
     }
 
-    // Fetch calendar list to let doctor choose (we'll use primary for now)
-    const calendarRes = await fetch(
-      "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=owner",
-      { headers: { Authorization: `Bearer ${access_token}` } }
-    );
-    const calendarData = await calendarRes.json();
-    const primaryCalendar = calendarData.items?.find((c: any) => c.primary) || calendarData.items?.[0];
-    const calendarId = primaryCalendar?.id || "primary";
-
-    // Store refresh token as a Supabase secret-like reference
-    // We'll store it directly in a secure column for simplicity
+    // Store refresh token but DON'T auto-select calendar — let the doctor choose
     const doctorId = state;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const { error: updateError } = await supabase
       .from("doctors")
       .update({
-        google_calendar_connected: true,
-        google_calendar_id: calendarId,
         google_refresh_token_ref: refresh_token,
+        google_calendar_connected: false,
+        google_calendar_id: null,
       })
       .eq("id", doctorId);
 
@@ -92,7 +82,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      renderHTML("¡Conectado!", "Tu Google Calendar ha sido conectado exitosamente. Puedes cerrar esta ventana."),
+      renderHTML("¡Autorizado!", "Tu cuenta de Google ha sido vinculada. Cierra esta ventana y selecciona el calendario que deseas usar."),
       { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
     );
   } catch (err) {
