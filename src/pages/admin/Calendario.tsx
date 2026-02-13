@@ -186,7 +186,7 @@ export default function Calendario() {
   const { data: allDoctors } = useQuery({
     queryKey: ["all-doctors-for-filter"],
     queryFn: async () => {
-      const { data } = await supabase.from("doctors").select("id, full_name").eq("is_active", true).order("full_name");
+      const { data } = await supabase.from("doctors").select("id, full_name").eq("is_active", true).eq("is_deleted", false).order("full_name");
       return (data ?? []) as { id: string; full_name: string }[];
     },
   });

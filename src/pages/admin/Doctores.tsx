@@ -26,6 +26,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Search,
   Plus,
   Calendar,
@@ -34,6 +45,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Trash2,
 } from "lucide-react";
 
 /* ───────── types ───────── */
@@ -117,6 +129,7 @@ export default function Doctores() {
           doctor_specialties(specialty_id, specialties(id, name, color)),
           cities(name), zones(name)
         `)
+        .eq("is_deleted", false)
         .order("full_name");
       if (error) throw error;
       return (data ?? []) as unknown as DoctorRow[];
@@ -131,6 +144,19 @@ export default function Doctores() {
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-doctors"] }),
     onError: () => toast({ title: "Error al cambiar estado", variant: "destructive" }),
+  });
+
+  /* ── soft delete ── */
+  const deleteDoctorMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("doctors").update({ is_deleted: true, is_active: false } as any).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-doctors"] });
+      toast({ title: "Doctor eliminado correctamente" });
+    },
+    onError: () => toast({ title: "Error al eliminar doctor", variant: "destructive" }),
   });
 
   /* ── filter logic ── */
@@ -253,7 +279,7 @@ export default function Doctores() {
 
       {/* Detail dialog */}
       {selectedDoctor && (
-        <DoctorDetailDialog
+      <DoctorDetailDialog
           doctor={selectedDoctor}
           colorMap={catalogs.colorMap}
           onClose={() => setSelectedDoctor(null)}
@@ -263,6 +289,10 @@ export default function Doctores() {
           }}
           onEdit={() => {
             setShowEdit(true);
+          }}
+          onDelete={() => {
+            deleteDoctorMut.mutate(selectedDoctor.id);
+            setSelectedDoctor(null);
           }}
         />
       )}
@@ -306,12 +336,14 @@ function DoctorDetailDialog({
   onClose,
   onToggleActive,
   onEdit,
+  onDelete,
 }: {
   doctor: DoctorRow;
   colorMap: Record<string, string>;
   onClose: () => void;
   onToggleActive: () => void;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
   const [showPassword, setShowPassword] = useState(false);
 
@@ -401,6 +433,27 @@ function DoctorDetailDialog({
           </div>
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" size="sm" className="gap-1">
+                <Trash2 className="h-3 w-3" /> Eliminar
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>¿Eliminar a {doctor.full_name}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Este doctor dejará de aparecer en la plataforma. Las citas pasadas se conservarán. Esta acción no se puede deshacer fácilmente.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  Eliminar
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button variant="outline" size="sm" onClick={onToggleActive}>
             {doctor.is_active ? "Desactivar" : "Activar"}
           </Button>
