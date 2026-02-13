@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { Save, Calendar as CalendarIcon, Link2, Unlink, Loader2 } from "lucide-react";
+import DoctorProfileCard from "@/components/doctor/DoctorProfileCard";
 
 const WEEKDAYS = [
   { value: 1, label: "Lunes" },
@@ -290,6 +291,9 @@ export default function Configuracion() {
   return (
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold text-foreground">Configuración</h1>
+
+      {/* Doctor Profile */}
+      {doctorId && <DoctorProfileCard doctorId={doctorId} />}
 
       {/* Schedule Settings */}
       <Card>
