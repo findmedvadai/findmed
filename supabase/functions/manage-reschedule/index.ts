@@ -221,6 +221,51 @@ Deno.serve(async (req) => {
     .update({ appointment_id: newAppt.id })
     .eq("id", manageToken.id);
 
+  // 6. Insert notifications for doctor
+  const rescheduleDate = startAt.split("T")[0];
+  await supabase.from("notifications").insert([
+    {
+      doctor_id: oldAppt.doctor_id,
+      appointment_id: oldAppt.id,
+      recipient_role: "doctor",
+      type: "appointment_cancelled_by_patient",
+      title: "Cita reagendada (anterior cancelada)",
+      body: `${patient?.full_name ?? "Paciente"} reagendó su cita`,
+    },
+    {
+      doctor_id: oldAppt.doctor_id,
+      appointment_id: newAppt.id,
+      recipient_role: "doctor",
+      type: "appointment_scheduled",
+      title: "Nueva cita (reagendada)",
+      body: `${patient?.full_name ?? "Paciente"} - ${rescheduleDate} ${slot_start}`,
+    },
+  ]);
+
+  // Dispatch webhook (fire-and-forget)
+  try {
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch-webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({
+        event_type: "appointment.rescheduled",
+        payload: {
+          old_appointment_id: oldAppt.id,
+          new_appointment_id: newAppt.id,
+          patient_name: patient?.full_name,
+          doctor_name: doctor?.full_name,
+          start_at: startAt,
+          end_at: endAt,
+        },
+      }),
+    });
+  } catch (e) {
+    console.error("Error dispatching webhook:", e);
+  }
+
   return new Response(
     JSON.stringify({
       success: true,

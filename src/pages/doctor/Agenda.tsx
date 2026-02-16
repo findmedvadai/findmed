@@ -111,6 +111,7 @@ export default function Agenda() {
         .eq("doctor_id", doctorId)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
+        .in("status", ["scheduled", "confirmed", "completed"])
         .order("start_at", { ascending: true });
       if (error) throw error;
       return data ?? [];
@@ -207,7 +208,6 @@ export default function Agenda() {
     if (item.type === "google") return "bg-primary/80 text-primary-foreground";
     if (item.status === "scheduled") return "bg-scheduled text-scheduled-foreground";
     if (item.status === "confirmed") return "bg-confirmed text-confirmed-foreground";
-    if (item.status === "cancelled") return "bg-destructive/60 text-destructive-foreground";
     return "bg-muted text-muted-foreground";
   }
 

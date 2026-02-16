@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
   // Get appointment
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, status, google_event_id, doctor_id")
+    .select("id, status, google_event_id, doctor_id, patient_id, start_at")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -99,7 +99,23 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Delete Google Calendar event if exists
+  // Get patient info for notification
+  const { data: patient } = await supabase
+    .from("patients")
+    .select("full_name")
+    .eq("id", appointment.patient_id)
+    .maybeSingle();
+
+  // Insert notification for doctor
+  const cancelDate = appointment.start_at?.split("T")[0] ?? "";
+  await supabase.from("notifications").insert({
+    doctor_id: appointment.doctor_id,
+    appointment_id: appointment.id,
+    recipient_role: "doctor",
+    type: "appointment_cancelled_by_patient",
+    title: "Cita cancelada por paciente",
+    body: `${patient?.full_name ?? "Paciente"} canceló su cita del ${cancelDate}`,
+  });
   if (appointment.google_event_id) {
     const { data: doctor } = await supabase
       .from("doctors")
@@ -135,6 +151,29 @@ Deno.serve(async (req) => {
         console.error("Error deleting Google Calendar event:", err);
       }
     }
+  }
+
+  // Dispatch webhook (fire-and-forget)
+  try {
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch-webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({
+        event_type: "appointment.cancelled",
+        payload: {
+          appointment_id: appointment.id,
+          patient_name: patient?.full_name,
+          doctor_id: appointment.doctor_id,
+          start_at: appointment.start_at,
+          cancel_reason: "patient",
+        },
+      }),
+    });
+  } catch (e) {
+    console.error("Error dispatching webhook:", e);
   }
 
   return new Response(

@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      api_keys: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          key_hash: string
+          key_prefix: string
+          last_used_at: string | null
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          key_hash: string
+          key_prefix: string
+          last_used_at?: string | null
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          key_hash?: string
+          key_prefix?: string
+          last_used_at?: string | null
+          name?: string
+        }
+        Relationships: []
+      }
       appointment_manage_tokens: {
         Row: {
           appointment_id: string
@@ -534,6 +564,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      webhooks: {
+        Row: {
+          created_at: string
+          description: string | null
+          events: string[]
+          id: string
+          is_active: boolean
+          name: string
+          secret: string
+          updated_at: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          events?: string[]
+          id?: string
+          is_active?: boolean
+          name: string
+          secret: string
+          updated_at?: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          events?: string[]
+          id?: string
+          is_active?: boolean
+          name?: string
+          secret?: string
+          updated_at?: string
+          url?: string
+        }
+        Relationships: []
       }
       zones: {
         Row: {

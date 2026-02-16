@@ -230,7 +230,7 @@ export default function Calendario() {
         `)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
-        .in("status", ["scheduled", "confirmed", "completed", "cancelled"])
+        .in("status", ["scheduled", "confirmed", "completed"])
         .order("start_at", { ascending: true });
       if (error) throw error;
       return (data ?? []) as unknown as AppointmentRow[];
@@ -506,12 +506,12 @@ export default function Calendario() {
                       ? getSpecialtyColor(item.specialtyId, colorMap)
                       : "#6B7280";
 
-                    const isReduced = item.status === "cancelled" || item.status === "completed";
+                    const isCompressed = totalCols > 1;
 
                     return (
                       <div
                         key={item.id}
-                        className={`absolute overflow-hidden rounded px-1.5 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow bg-white border-l-4 ${isReduced ? "opacity-50" : ""}`}
+                        className={`absolute overflow-hidden rounded text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow bg-white border-l-4 ${isCompressed ? "px-0.5 py-0" : "px-1.5 py-0.5"}`}
                         style={{
                           top: Math.max(0, top),
                           height: Math.max(15, height),
@@ -533,11 +533,15 @@ export default function Calendario() {
                           />
                           <span className="truncate">{item.patientName}</span>
                         </div>
-                        <div className="truncate opacity-80">
-                          {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
-                        </div>
-                        {height > 30 && (
-                          <div className="truncate opacity-70">{item.doctorName}</div>
+                        {!isCompressed && (
+                          <>
+                            <div className="truncate opacity-80">
+                              {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
+                            </div>
+                            {height > 30 && (
+                              <div className="truncate opacity-70">{item.doctorName}</div>
+                            )}
+                          </>
                         )}
                       </div>
                     );

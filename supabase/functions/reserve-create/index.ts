@@ -191,6 +191,18 @@ Deno.serve(async (req) => {
     .update({ used_at: new Date().toISOString() })
     .eq("id", session.id);
 
+  // Insert notification for doctor
+  const formattedDate = startAt.split("T")[0];
+  const formattedTime = slot_start;
+  await supabase.from("notifications").insert({
+    doctor_id: session.doctor_id,
+    appointment_id: appointment.id,
+    recipient_role: "doctor",
+    type: "appointment_scheduled",
+    title: "Nueva cita agendada",
+    body: `${patient?.full_name ?? "Paciente"} - ${formattedDate} ${formattedTime}`,
+  });
+
   // Generate manage token (12 hours expiry)
   const manageToken = generateToken();
   const manageExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
@@ -204,6 +216,32 @@ Deno.serve(async (req) => {
 
   const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
   const manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
+
+  // Dispatch webhook (fire-and-forget)
+  try {
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch-webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({
+        event_type: "appointment.created",
+        payload: {
+          appointment_id: appointment.id,
+          patient_name: patient?.full_name,
+          patient_phone: patient?.phone,
+          doctor_name: doctor?.full_name,
+          start_at: startAt,
+          end_at: endAt,
+          symptoms: session.symptoms,
+          manage_url: manageUrl,
+        },
+      }),
+    });
+  } catch (e) {
+    console.error("Error dispatching webhook:", e);
+  }
 
   return new Response(
     JSON.stringify({

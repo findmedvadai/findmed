@@ -1,5 +1,5 @@
 import { Outlet } from "react-router-dom";
-import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut } from "lucide-react";
+import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -27,6 +27,11 @@ const navItems = [
   { title: "Inbox", url: "/admin/inbox", icon: Inbox },
 ];
 
+const settingsItems = [
+  { title: "Webhooks", url: "/admin/webhooks", icon: Webhook },
+  { title: "API Keys", url: "/admin/api-keys", icon: Key },
+];
+
 export default function AdminLayout() {
   const { signOut } = useAuth();
 
@@ -44,6 +49,27 @@ export default function AdminLayout() {
               <SidebarGroupContent>
                 <SidebarMenu>
                   {navItems.map((item) => (
+                    <SidebarMenuItem key={item.url}>
+                      <SidebarMenuButton asChild>
+                        <NavLink
+                          to={item.url}
+                          className="flex items-center gap-2"
+                          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                        >
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                        </NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel>Configuración</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {settingsItems.map((item) => (
                     <SidebarMenuItem key={item.url}>
                       <SidebarMenuButton asChild>
                         <NavLink
