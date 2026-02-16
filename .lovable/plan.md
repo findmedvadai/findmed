@@ -1,48 +1,90 @@
 
 
-## Eliminar doctores (borrado logico)
+## Crear eventos desde la agenda del doctor + sincronizacion bidireccional con Google Calendar
 
-Ya existe el campo `is_active` en la tabla `doctors`, pero actualmente se usa como un simple toggle activo/inactivo. La idea es agregar un concepto de "eliminado" que sea mas permanente y oculte al doctor de todas las vistas operativas, conservando los datos para consultas historicas.
+### Contexto actual
 
-### Enfoque: Nuevo campo `is_deleted` en la tabla `doctors`
+- La agenda del doctor muestra eventos de Google Calendar (lectura) y citas de la plataforma
+- No existe forma de crear eventos/citas desde la agenda
+- No existe una edge function para crear eventos en Google Calendar
+- Las citas creadas en la plataforma no se sincronizan a Google Calendar
 
-Se agrega una columna `is_deleted` (boolean, default false) para separar el concepto de "inactivo temporal" (que ya existe con `is_active`) del de "eliminado permanente". Un doctor eliminado no aparece en ninguna vista excepto en citas pasadas.
+### Cambios necesarios
 
-### Cambios en base de datos
+---
 
-Migracion SQL:
-```sql
-ALTER TABLE public.doctors ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;
+### 1. Nueva Edge Function: `google-calendar-create-event`
+
+Crea un evento en el Google Calendar del doctor. Recibe titulo, fecha/hora inicio y fin, y descripcion opcional. Usa el refresh token del doctor para obtener un access token y llama a la API de Google Calendar.
+
+**Archivo:** `supabase/functions/google-calendar-create-event/index.ts`
+
+**Logica:**
+- Autentica al doctor via JWT (mismo patron que `google-calendar-events`)
+- Obtiene `google_refresh_token_ref` y `google_calendar_id` del doctor
+- Refresca el access token de Google
+- Hace POST a `https://www.googleapis.com/calendar/v3/calendars/{calendarId}/events`
+- Retorna el `event_id` y `htmlLink` del evento creado
+
+**Request body:**
+```text
+{
+  "summary": "Titulo del evento",
+  "description": "Descripcion opcional",
+  "start_at": "2026-02-20T09:00:00-06:00",
+  "end_at": "2026-02-20T10:00:00-06:00"
+}
 ```
 
-### Cambios en la interfaz (`Doctores.tsx`)
+---
 
-1. **Boton "Eliminar"** en el dialog de detalle del doctor, con un `AlertDialog` de confirmacion ("Este doctor dejara de aparecer en la plataforma. Las citas pasadas se conservaran. Esta accion no se puede deshacer facilmente.")
-2. **Mutacion**: `supabase.from("doctors").update({ is_deleted: true, is_active: false }).eq("id", doctorId)`
-3. **Query principal**: Agregar `.eq("is_deleted", false)` al query de doctores para excluirlos de la lista
+### 2. Dialog para crear evento: `CreateEventDialog`
 
-### Ocultar doctores eliminados en las demas vistas
+**Archivo:** `src/components/doctor/CreateEventDialog.tsx`
 
-Los siguientes queries ya filtran por `is_active = true`, pero para mayor seguridad se agrega tambien `.eq("is_deleted", false)`:
+Un dialog modal con formulario para crear un evento rapido:
+- Campo: Titulo (requerido)
+- Campo: Descripcion (opcional)
+- Campos: Fecha, Hora inicio, Hora fin (pre-llenados si el doctor hizo click en un slot especifico)
+- Boton "Crear evento" que llama a la edge function
 
-- **Calendario.tsx**: query de `all-doctors-for-filter` (linea 189)
-- **Reservas.tsx**: los doctores en los filtros (si los hay)
-- **DoctorProfileCard.tsx**: no aplica, es del portal del doctor
+Al guardar exitosamente:
+- Invalida queries de `google-calendar-events` para refrescar la agenda
+- Muestra toast de exito
+- Cierra el dialog
 
-Las citas pasadas (`appointments`) seguiran mostrando el nombre del doctor mediante el join `doctors(full_name)` sin importar si esta eliminado, porque la relacion es por `doctor_id` y no se filtra por estado del doctor en esos queries.
+---
 
-### Resumen de archivos a modificar
+### 3. Modificar la agenda para permitir crear eventos
 
-| Archivo | Cambio |
+**Archivo:** `src/pages/doctor/Agenda.tsx`
+
+Cambios:
+- Agregar boton "+" en el header para abrir el CreateEventDialog
+- Hacer click en un slot vacio de la cuadricula para abrir el dialog pre-llenado con la fecha/hora correspondiente
+- Estado `createEventDate` para controlar el dialog y pre-llenar valores
+
+---
+
+### 4. Configuracion de la edge function
+
+**Archivo:** `supabase/config.toml` (se actualiza automaticamente)
+
+Registrar `google-calendar-create-event` con `verify_jwt = false` (la validacion se hace manualmente en el codigo, mismo patron que las demas funciones de Google Calendar).
+
+---
+
+### Resumen de archivos
+
+| Archivo | Accion |
 |---|---|
-| `doctors` (DB) | Agregar columna `is_deleted` boolean default false |
-| `src/pages/admin/Doctores.tsx` | Boton eliminar con confirmacion, filtrar `is_deleted = false` en query |
-| `src/pages/admin/Calendario.tsx` | Agregar `.eq("is_deleted", false)` al query de doctores para filtros |
+| `supabase/functions/google-calendar-create-event/index.ts` | Crear (nueva edge function) |
+| `src/components/doctor/CreateEventDialog.tsx` | Crear (nuevo componente) |
+| `src/pages/doctor/Agenda.tsx` | Modificar (agregar boton + y click en slot) |
 
-### Detalles tecnicos
+### Notas tecnicas
 
-- Se usa `AlertDialog` (ya importado en el proyecto) para la confirmacion de eliminacion
-- El boton de eliminar aparece en rojo en el footer del dialog de detalle, junto a "Desactivar" y "Editar"
-- No se necesita edge function: el admin ya tiene permisos RLS para hacer UPDATE en `doctors`
-- No se borra fisicamente el registro ni el auth user, solo se marca como eliminado
+- No se necesitan cambios en la base de datos. Los eventos creados desde la agenda son eventos de Google Calendar puros (tipo "google" en la UI). Cuando el portal del paciente cree citas, esas si se guardaran en la tabla `appointments` Y en Google Calendar.
+- El dialog pre-llena la fecha/hora basandose en donde el doctor haga click en la cuadricula, calculando la hora a partir de la posicion Y del click.
+- Se reutiliza el patron de autenticacion existente (decode JWT manual + service role) de las demas edge functions de Google Calendar.
 
