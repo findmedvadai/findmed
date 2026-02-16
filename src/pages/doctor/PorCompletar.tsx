@@ -109,11 +109,31 @@ function AppointmentNoteCard({ appointment, doctorId, onSaved }: AppointmentNote
         .update({
           doctor_notes: notes.trim(),
           doctor_notes_updated_at: new Date().toISOString(),
+          status: "completed" as any,
         })
         .eq("id", appointment.id);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      // Insert admin notification for completed appointment
+      try {
+        const { data: doctorData } = await supabase
+          .from("doctors")
+          .select("full_name")
+          .eq("id", doctorId)
+          .single();
+
+        await supabase.from("notifications").insert({
+          doctor_id: doctorId,
+          appointment_id: appointment.id,
+          recipient_role: "admin",
+          type: "appointment_completed",
+          title: "Cita completada con notas",
+          body: `Dr. ${doctorData?.full_name ?? "Doctor"} completó notas para ${patient?.full_name ?? "Paciente"}`,
+        } as any);
+      } catch (e) {
+        console.error("Error inserting admin notification:", e);
+      }
       toast({ title: "Notas guardadas" });
       onSaved();
     },
