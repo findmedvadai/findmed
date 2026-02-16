@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
     .eq("id", doctor_id)
     .maybeSingle();
 
-  let googleEvents: { start: string; end: string }[] = [];
+  let googleEvents: { startMin: number; endMin: number }[] = [];
 
   if (doctor?.google_calendar_connected && doctor.google_refresh_token_ref && doctor.google_calendar_id) {
     try {
@@ -153,11 +153,20 @@ Deno.serve(async (req) => {
         });
         const eventsData = await eventsRes.json();
 
+        // Parse local time directly from dateTime string (e.g. "2026-02-17T09:00:00-06:00")
+        // to avoid UTC conversion issues in Deno runtime
+        const parseLocalMinutes = (dt: string): number => {
+          const timePart = dt.split("T")[1]; // "09:00:00-06:00"
+          const hh = parseInt(timePart.substring(0, 2), 10);
+          const mm = parseInt(timePart.substring(3, 5), 10);
+          return hh * 60 + mm;
+        };
+
         googleEvents = (eventsData.items || [])
           .filter((e: any) => e.start?.dateTime)
           .map((e: any) => ({
-            start: e.start.dateTime,
-            end: e.end?.dateTime || e.start.dateTime,
+            startMin: parseLocalMinutes(e.start.dateTime),
+            endMin: parseLocalMinutes(e.end?.dateTime || e.start.dateTime),
           }));
       }
     } catch (err) {
@@ -183,12 +192,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Check Google events
+    // Check Google events (parse local time from dateTime string to avoid UTC conversion)
     for (const evt of googleEvents) {
-      const evtStart = new Date(evt.start);
-      const evtEnd = new Date(evt.end);
-      const evtStartMin = evtStart.getHours() * 60 + evtStart.getMinutes();
-      const evtEndMin = evtEnd.getHours() * 60 + evtEnd.getMinutes();
+      const evtStartMin = evt.startMin;
+      const evtEndMin = evt.endMin;
 
       if (slotStartMinutes < evtEndMin && slotEndMinutes > evtStartMin) {
         return false;
