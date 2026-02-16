@@ -90,11 +90,13 @@ Deno.serve(async (req) => {
 
   const durationMinutes = settings?.appointment_duration_minutes ?? 30;
 
-  // Calculate start_at and end_at
+  // Calculate start_at and end_at (keep as plain local time strings, no Z suffix)
   const startAt = `${date}T${slot_start}:00`;
-  const startDate = new Date(startAt);
-  const endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
-  const endAt = endDate.toISOString();
+  const slotParts = slot_start.split(":").map(Number);
+  const totalMinutes = slotParts[0] * 60 + slotParts[1] + durationMinutes;
+  const endHH = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const endMM = String(totalMinutes % 60).padStart(2, "0");
+  const endAt = `${date}T${endHH}:${endMM}:00`;
 
   // Get patient and doctor info
   const { data: patient } = await supabase
@@ -156,6 +158,7 @@ Deno.serve(async (req) => {
           end: { dateTime: endAt, timeZone: "America/Mexico_City" },
         };
 
+        // Remove the duplicate closing brace that was here
         const createRes = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
           {
@@ -171,7 +174,6 @@ Deno.serve(async (req) => {
         const eventData = await createRes.json();
         if (createRes.ok && eventData.id) {
           googleEventId = eventData.id;
-          // Update appointment with google_event_id
           await supabase
             .from("appointments")
             .update({ google_event_id: googleEventId })

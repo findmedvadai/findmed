@@ -6,6 +6,38 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Format a UTC ISO string to local time in the given timezone, returning "HH:MM"
+function formatTimeInTimezone(isoString: string, tz: string): string {
+  const d = new Date(isoString);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: tz,
+  }).formatToParts(d);
+  const hour = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return `${hour}:${minute}`;
+}
+
+// Format a UTC ISO string to a local ISO-like string (without Z) in the given timezone
+function toLocalISOString(isoString: string, tz: string): string {
+  const d = new Date(isoString);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: tz,
+  }).formatToParts(d);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -41,7 +73,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Find manage token
   const { data: manageToken, error: tokenError } = await supabase
     .from("appointment_manage_tokens")
     .select("id, appointment_id, expires_at")
@@ -62,10 +93,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get appointment details
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, start_at, end_at, status, doctor_id, symptoms")
+    .select("id, start_at, end_at, status, doctor_id, patient_id, symptoms")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -76,20 +106,37 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get doctor info
+  // Get doctor info + timezone
   const { data: doctor } = await supabase
     .from("doctors")
     .select("full_name, address")
     .eq("id", appointment.doctor_id)
     .maybeSingle();
 
+  const { data: settings } = await supabase
+    .from("doctor_schedule_settings")
+    .select("timezone")
+    .eq("doctor_id", appointment.doctor_id)
+    .maybeSingle();
+
+  const timezone = settings?.timezone ?? "America/Mexico_City";
+
+  // Get patient info
+  const { data: patient } = await supabase
+    .from("patients")
+    .select("full_name")
+    .eq("id", appointment.patient_id)
+    .maybeSingle();
+
   return new Response(
     JSON.stringify({
       appointment_id: appointment.id,
+      doctor_id: appointment.doctor_id,
       doctor_name: doctor?.full_name ?? "Doctor",
       doctor_address: doctor?.address ?? null,
-      start_at: appointment.start_at,
-      end_at: appointment.end_at,
+      patient_name: patient?.full_name ?? "Paciente",
+      start_at: toLocalISOString(appointment.start_at, timezone),
+      end_at: toLocalISOString(appointment.end_at, timezone),
       status: appointment.status,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
