@@ -1,0 +1,218 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+function generateToken(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let token = "";
+  for (let i = 0; i < 32; i++) {
+    token += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return token;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
+  const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+
+  let body: { session_id: string; slot_start: string; date: string };
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const { session_id, slot_start, date } = body;
+  if (!session_id || !slot_start || !date) {
+    return new Response(JSON.stringify({ error: "session_id, slot_start y date requeridos" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Get session
+  const { data: session, error: sessionError } = await supabase
+    .from("reservation_sessions")
+    .select("id, doctor_id, patient_id, symptoms, used_at, expires_at")
+    .eq("id", session_id)
+    .maybeSingle();
+
+  if (sessionError || !session) {
+    return new Response(JSON.stringify({ error: "Sesión no encontrada" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (session.used_at) {
+    return new Response(JSON.stringify({ error: "Este enlace ya fue utilizado" }), {
+      status: 410,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (new Date(session.expires_at) < new Date()) {
+    return new Response(JSON.stringify({ error: "Este enlace ha expirado" }), {
+      status: 410,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Get doctor settings for duration
+  const { data: settings } = await supabase
+    .from("doctor_schedule_settings")
+    .select("appointment_duration_minutes")
+    .eq("doctor_id", session.doctor_id)
+    .maybeSingle();
+
+  const durationMinutes = settings?.appointment_duration_minutes ?? 30;
+
+  // Calculate start_at and end_at
+  const startAt = `${date}T${slot_start}:00`;
+  const startDate = new Date(startAt);
+  const endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+  const endAt = endDate.toISOString();
+
+  // Get patient and doctor info
+  const { data: patient } = await supabase
+    .from("patients")
+    .select("full_name, phone")
+    .eq("id", session.patient_id)
+    .maybeSingle();
+
+  const { data: doctor } = await supabase
+    .from("doctors")
+    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected")
+    .eq("id", session.doctor_id)
+    .maybeSingle();
+
+  // Create appointment
+  const { data: appointment, error: apptError } = await supabase
+    .from("appointments")
+    .insert({
+      doctor_id: session.doctor_id,
+      patient_id: session.patient_id,
+      start_at: startAt,
+      end_at: endAt,
+      status: "scheduled",
+      symptoms: session.symptoms,
+      created_from_session_id: session.id,
+    })
+    .select("id")
+    .single();
+
+  if (apptError || !appointment) {
+    return new Response(
+      JSON.stringify({ error: "Error al crear la cita", details: apptError?.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Create Google Calendar event
+  let googleEventId: string | null = null;
+  if (doctor?.google_calendar_connected && doctor.google_refresh_token_ref && doctor.google_calendar_id) {
+    try {
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          refresh_token: doctor.google_refresh_token_ref,
+          grant_type: "refresh_token",
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (tokenRes.ok && tokenData.access_token) {
+        const calendarId = encodeURIComponent(doctor.google_calendar_id);
+        const eventBody = {
+          summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
+          description: session.symptoms ? `Síntomas: ${session.symptoms}` : undefined,
+          start: { dateTime: startAt, timeZone: "America/Mexico_City" },
+          end: { dateTime: endAt, timeZone: "America/Mexico_City" },
+        };
+
+        const createRes = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${tokenData.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(eventBody),
+          }
+        );
+
+        const eventData = await createRes.json();
+        if (createRes.ok && eventData.id) {
+          googleEventId = eventData.id;
+          // Update appointment with google_event_id
+          await supabase
+            .from("appointments")
+            .update({ google_event_id: googleEventId })
+            .eq("id", appointment.id);
+        }
+      }
+    } catch (err) {
+      console.error("Error creating Google Calendar event:", err);
+    }
+  }
+
+  // Mark session as used
+  await supabase
+    .from("reservation_sessions")
+    .update({ used_at: new Date().toISOString() })
+    .eq("id", session.id);
+
+  // Generate manage token (12 hours expiry)
+  const manageToken = generateToken();
+  const manageExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+
+  await supabase.from("appointment_manage_tokens").insert({
+    appointment_id: appointment.id,
+    token: manageToken,
+    expires_at: manageExpiresAt,
+    patient_phone: patient?.phone ?? "",
+  });
+
+  const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
+  const manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      appointment_id: appointment.id,
+      manage_url: manageUrl,
+      manage_token: manageToken,
+      doctor_name: doctor?.full_name ?? "Doctor",
+      start_at: startAt,
+      end_at: endAt,
+    }),
+    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+});

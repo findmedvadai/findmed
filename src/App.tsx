@@ -24,6 +24,10 @@ import Configuracion from "./pages/doctor/Configuracion";
 import PorCompletar from "./pages/doctor/PorCompletar";
 import DoctorInbox from "./pages/doctor/DoctorInbox";
 
+// Patient pages
+import Reserva from "./pages/patient/Reserva";
+import Gestionar from "./pages/patient/Gestionar";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -36,6 +40,8 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/reserva" element={<Reserva />} />
+            <Route path="/gestionar" element={<Gestionar />} />
 
             {/* Admin routes */}
             <Route

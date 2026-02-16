@@ -20,3 +20,18 @@ verify_jwt = false
 
 [functions.create-doctor]
 verify_jwt = false
+
+[functions.reserve-validate]
+verify_jwt = false
+
+[functions.reserve-slots]
+verify_jwt = false
+
+[functions.reserve-create]
+verify_jwt = false
+
+[functions.manage-validate]
+verify_jwt = false
+
+[functions.manage-cancel]
+verify_jwt = false

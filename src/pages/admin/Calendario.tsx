@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+
 import { useQuery } from "@tanstack/react-query";
 import {
   format,
@@ -173,6 +174,14 @@ export default function Calendario() {
   const [filterSpecialty, setFilterSpecialty] = useState("all");
   const [selectedAppt, setSelectedAppt] = useState<CalendarAppt | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Current time for red line indicator
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
   const weekKey = format(weekStart, "yyyy-MM-dd");
@@ -465,6 +474,25 @@ export default function Calendario() {
                       style={{ top: i * HOUR_HEIGHT }}
                     />
                   ))}
+
+                  {/* Current time red line */}
+                  {isToday(day) && (() => {
+                    const h = getHours(currentTime);
+                    const m = getMinutes(currentTime);
+                    if (h < START_HOUR || h >= END_HOUR) return null;
+                    const lineTop = ((h - START_HOUR) * 60 + m) / 60 * HOUR_HEIGHT;
+                    return (
+                      <div
+                        className="absolute inset-x-0 z-30 pointer-events-none"
+                        style={{ top: lineTop }}
+                      >
+                        <div className="relative">
+                          <div className="absolute -left-[5px] -top-[4px] h-[10px] w-[10px] rounded-full bg-red-500" />
+                          <div className="h-[2px] w-full bg-red-500" />
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {positioned.map(({ item, col, totalCols }) => {
                     const startMin = (getHours(item.start) - START_HOUR) * 60 + getMinutes(item.start);

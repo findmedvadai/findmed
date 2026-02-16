@@ -2,6 +2,8 @@ import { Outlet } from "react-router-dom";
 import { CalendarDays, Settings, ClipboardList, Inbox, LogOut } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import {
   SidebarProvider,
   Sidebar,
@@ -27,7 +29,21 @@ const navItems = [
 ];
 
 export default function DoctorLayout() {
-  const { signOut } = useAuth();
+  const { signOut, doctorId } = useAuth();
+
+  const { data: doctorName } = useQuery({
+    queryKey: ["doctor-name", doctorId],
+    queryFn: async () => {
+      if (!doctorId) return null;
+      const { data } = await supabase
+        .from("doctors")
+        .select("full_name")
+        .eq("id", doctorId)
+        .maybeSingle();
+      return data?.full_name ?? null;
+    },
+    enabled: !!doctorId,
+  });
 
   return (
     <SidebarProvider>
@@ -35,7 +51,9 @@ export default function DoctorLayout() {
         <Sidebar>
           <SidebarHeader className="p-4">
             <h2 className="text-lg font-bold text-primary">FindMed</h2>
-            <span className="text-xs text-muted-foreground">Portal Doctor</span>
+            <span className="text-xs text-muted-foreground">
+              {doctorName ?? "Portal Doctor"}
+            </span>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
