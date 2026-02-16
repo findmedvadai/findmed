@@ -1,76 +1,59 @@
 
 
-## Crear eventos desde la agenda del doctor + sincronizacion bidireccional con Google Calendar
+## Editar, eliminar y arrastrar eventos de Google Calendar desde la agenda
 
-### Contexto actual
+### Resumen
 
-- La agenda del doctor muestra eventos de Google Calendar (lectura) y citas de la plataforma
-- No existe forma de crear eventos/citas desde la agenda
-- No existe una edge function para crear eventos en Google Calendar
-- Las citas creadas en la plataforma no se sincronizan a Google Calendar
-
-### Cambios necesarios
+Actualmente, al hacer clic en un evento de Google Calendar en la agenda, solo se muestra un enlace para abrirlo en Google. No hay forma de editarlo, eliminarlo ni arrastrarlo a otro horario. Este plan agrega esas 3 funcionalidades para que la agenda funcione como un espejo completo de Google Calendar.
 
 ---
 
-### 1. Nueva Edge Function: `google-calendar-create-event`
+### 1. Dos nuevas backend functions
 
-Crea un evento en el Google Calendar del doctor. Recibe titulo, fecha/hora inicio y fin, y descripcion opcional. Usa el refresh token del doctor para obtener un access token y llama a la API de Google Calendar.
+**`google-calendar-update-event`** - Actualiza un evento existente en Google Calendar (PATCH).
 
-**Archivo:** `supabase/functions/google-calendar-create-event/index.ts`
+- Recibe: `event_id`, `summary` (opcional), `description` (opcional), `start_at`, `end_at`
+- Usa el mismo patron de autenticacion JWT + refresh token
+- Llama a `PATCH /calendars/{calendarId}/events/{eventId}`
 
-**Logica:**
-- Autentica al doctor via JWT (mismo patron que `google-calendar-events`)
-- Obtiene `google_refresh_token_ref` y `google_calendar_id` del doctor
-- Refresca el access token de Google
-- Hace POST a `https://www.googleapis.com/calendar/v3/calendars/{calendarId}/events`
-- Retorna el `event_id` y `htmlLink` del evento creado
+**`google-calendar-delete-event`** - Elimina un evento de Google Calendar.
 
-**Request body:**
-```text
-{
-  "summary": "Titulo del evento",
-  "description": "Descripcion opcional",
-  "start_at": "2026-02-20T09:00:00-06:00",
-  "end_at": "2026-02-20T10:00:00-06:00"
-}
-```
+- Recibe: `event_id`
+- Llama a `DELETE /calendars/{calendarId}/events/{eventId}`
+
+Ambas se registran en `supabase/config.toml` con `verify_jwt = false`.
 
 ---
 
-### 2. Dialog para crear evento: `CreateEventDialog`
+### 2. Editar y eliminar desde el dialog de detalle
 
-**Archivo:** `src/components/doctor/CreateEventDialog.tsx`
+**Modificar `AppointmentDetailDialog.tsx`** para que cuando el evento sea de tipo `google`:
 
-Un dialog modal con formulario para crear un evento rapido:
-- Campo: Titulo (requerido)
-- Campo: Descripcion (opcional)
-- Campos: Fecha, Hora inicio, Hora fin (pre-llenados si el doctor hizo click en un slot especifico)
-- Boton "Crear evento" que llama a la edge function
+- Muestre botones "Editar" y "Eliminar" (en vez de solo el link)
+- "Editar" abre un formulario inline (o reutiliza el CreateEventDialog en modo edicion) con titulo, descripcion, fecha, hora inicio, hora fin pre-llenados
+- "Eliminar" muestra un AlertDialog de confirmacion y llama a `google-calendar-delete-event`
+- Al guardar/eliminar, invalida las queries de Google Calendar para refrescar la agenda
 
-Al guardar exitosamente:
-- Invalida queries de `google-calendar-events` para refrescar la agenda
-- Muestra toast de exito
-- Cierra el dialog
+**Alternativa mas limpia**: Convertir `CreateEventDialog` en `EventDialog` que soporte modo "crear" y modo "editar". En modo editar recibe el `event_id` y los datos actuales, y usa la funcion de update en vez de create.
 
 ---
 
-### 3. Modificar la agenda para permitir crear eventos
+### 3. Drag-and-drop para cambiar horario
 
-**Archivo:** `src/pages/doctor/Agenda.tsx`
+**Modificar `Agenda.tsx`** para agregar arrastre vertical (y opcionalmente horizontal entre dias):
 
-Cambios:
-- Agregar boton "+" en el header para abrir el CreateEventDialog
-- Hacer click en un slot vacio de la cuadricula para abrir el dialog pre-llenado con la fecha/hora correspondiente
-- Estado `createEventDate` para controlar el dialog y pre-llenar valores
+- Solo eventos de tipo `google` son arrastrables (las citas de la plataforma no se pueden mover manualmente segun las reglas de negocio)
+- Al iniciar drag: guardar el item y la posicion Y inicial
+- Durante drag: actualizar visualmente la posicion del evento (CSS transform)
+- Al soltar: calcular la nueva hora basandose en la posicion Y final y el dia (columna) donde se solto
+- Llamar a `google-calendar-update-event` con las nuevas fechas/horas
+- Mostrar toast de exito/error y refrescar la agenda
 
----
-
-### 4. Configuracion de la edge function
-
-**Archivo:** `supabase/config.toml` (se actualiza automaticamente)
-
-Registrar `google-calendar-create-event` con `verify_jwt = false` (la validacion se hace manualmente en el codigo, mismo patron que las demas funciones de Google Calendar).
+**Implementacion tecnica del drag:**
+- Usar `onMouseDown` / `onMouseMove` / `onMouseUp` nativo (no necesita libreria externa)
+- Mantener estado `draggingItem` y `dragOffset` en el componente
+- Renderizar un "ghost" del evento durante el arrastre
+- Snap a intervalos de 15 o 30 minutos al soltar
 
 ---
 
@@ -78,13 +61,16 @@ Registrar `google-calendar-create-event` con `verify_jwt = false` (la validacion
 
 | Archivo | Accion |
 |---|---|
-| `supabase/functions/google-calendar-create-event/index.ts` | Crear (nueva edge function) |
-| `src/components/doctor/CreateEventDialog.tsx` | Crear (nuevo componente) |
-| `src/pages/doctor/Agenda.tsx` | Modificar (agregar boton + y click en slot) |
+| `supabase/functions/google-calendar-update-event/index.ts` | Crear |
+| `supabase/functions/google-calendar-delete-event/index.ts` | Crear |
+| `src/components/doctor/CreateEventDialog.tsx` | Modificar (soportar modo editar con event_id) |
+| `src/components/doctor/AppointmentDetailDialog.tsx` | Modificar (botones editar/eliminar para eventos Google) |
+| `src/pages/doctor/Agenda.tsx` | Modificar (drag-and-drop para eventos Google) |
 
 ### Notas tecnicas
 
-- No se necesitan cambios en la base de datos. Los eventos creados desde la agenda son eventos de Google Calendar puros (tipo "google" en la UI). Cuando el portal del paciente cree citas, esas si se guardaran en la tabla `appointments` Y en Google Calendar.
-- El dialog pre-llena la fecha/hora basandose en donde el doctor haga click en la cuadricula, calculando la hora a partir de la posicion Y del click.
-- Se reutiliza el patron de autenticacion existente (decode JWT manual + service role) de las demas edge functions de Google Calendar.
+- El drag-and-drop se implementa con eventos nativos del mouse, sin dependencias adicionales
+- Solo los eventos de tipo "google" son editables/arrastrables; las citas de la plataforma siguen las reglas actuales (el doctor no puede mover citas manualmente)
+- Para el campo `description` en edicion, se necesita que `google-calendar-events` retorne tambien `description` (ya lo hace)
+- El snap al arrastrar sera de 15 minutos para precision, consistente con Google Calendar
 
