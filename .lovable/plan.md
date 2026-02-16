@@ -1,59 +1,128 @@
 
 
-## Editar, eliminar y arrastrar eventos de Google Calendar desde la agenda
-
-### Resumen
-
-Actualmente, al hacer clic en un evento de Google Calendar en la agenda, solo se muestra un enlace para abrirlo en Google. No hay forma de editarlo, eliminarlo ni arrastrarlo a otro horario. Este plan agrega esas 3 funcionalidades para que la agenda funcione como un espejo completo de Google Calendar.
+## Refinamientos Doctor + Linea de hora actual + Portal del Paciente
 
 ---
 
-### 1. Dos nuevas backend functions
+### 1. Eliminar drag-and-drop de la agenda del doctor
 
-**`google-calendar-update-event`** - Actualiza un evento existente en Google Calendar (PATCH).
+**Archivo:** `src/pages/doctor/Agenda.tsx`
 
-- Recibe: `event_id`, `summary` (opcional), `description` (opcional), `start_at`, `end_at`
-- Usa el mismo patron de autenticacion JWT + refresh token
-- Llama a `PATCH /calendars/{calendarId}/events/{eventId}`
+Remover:
+- Tipo `DragState` (lineas 77-86) y estados `drag`, `dragRef` (lineas 100-101)
+- Funciones `snapMinutes`, `getDayIdxFromX`, `handleMouseDown` (lineas 199-232)
+- `useEffect` completo del mouse move/up (lineas 234-314)
+- Constante `SNAP_MINUTES` (linea 46)
+- `onMouseDown` del evento renderizado (lineas 501-503)
+- Clase `cursor-grab active:cursor-grabbing` del evento (linea 496)
+- Renderizado del "ghost" de arrastre (lineas 520-544)
+- Condicion `if (drag) return;` en el click de columna (linea 459)
+- Condicion `if (isDragging) return null;` en eventos (lineas 481-482)
+- Imports no utilizados: `useCallback`, `addMinutes`
 
-**`google-calendar-delete-event`** - Elimina un evento de Google Calendar.
-
-- Recibe: `event_id`
-- Llama a `DELETE /calendars/{calendarId}/events/{eventId}`
-
-Ambas se registran en `supabase/config.toml` con `verify_jwt = false`.
-
----
-
-### 2. Editar y eliminar desde el dialog de detalle
-
-**Modificar `AppointmentDetailDialog.tsx`** para que cuando el evento sea de tipo `google`:
-
-- Muestre botones "Editar" y "Eliminar" (en vez de solo el link)
-- "Editar" abre un formulario inline (o reutiliza el CreateEventDialog en modo edicion) con titulo, descripcion, fecha, hora inicio, hora fin pre-llenados
-- "Eliminar" muestra un AlertDialog de confirmacion y llama a `google-calendar-delete-event`
-- Al guardar/eliminar, invalida las queries de Google Calendar para refrescar la agenda
-
-**Alternativa mas limpia**: Convertir `CreateEventDialog` en `EventDialog` que soporte modo "crear" y modo "editar". En modo editar recibe el `event_id` y los datos actuales, y usa la funcion de update en vez de create.
+La edicion y eliminacion de eventos Google se mantienen intactas (funcionan via el dialog de detalle + CreateEventDialog en modo edicion).
 
 ---
 
-### 3. Drag-and-drop para cambiar horario
+### 2. Nombre del doctor en el sidebar
 
-**Modificar `Agenda.tsx`** para agregar arrastre vertical (y opcionalmente horizontal entre dias):
+**Archivo:** `src/components/layouts/DoctorLayout.tsx`
 
-- Solo eventos de tipo `google` son arrastrables (las citas de la plataforma no se pueden mover manualmente segun las reglas de negocio)
-- Al iniciar drag: guardar el item y la posicion Y inicial
-- Durante drag: actualizar visualmente la posicion del evento (CSS transform)
-- Al soltar: calcular la nueva hora basandose en la posicion Y final y el dia (columna) donde se solto
-- Llamar a `google-calendar-update-event` con las nuevas fechas/horas
-- Mostrar toast de exito/error y refrescar la agenda
+- Importar `useQuery` y `supabase`
+- Usar `useAuth()` para obtener `doctorId`
+- Hacer query a `doctors` para obtener `full_name` del doctor logueado
+- Reemplazar el texto "Portal Doctor" por el nombre del doctor (ej: "Dr. Juan Perez")
+- Mantener "FindMed" como titulo principal
 
-**Implementacion tecnica del drag:**
-- Usar `onMouseDown` / `onMouseMove` / `onMouseUp` nativo (no necesita libreria externa)
-- Mantener estado `draggingItem` y `dragOffset` en el componente
-- Renderizar un "ghost" del evento durante el arrastre
-- Snap a intervalos de 15 o 30 minutos al soltar
+---
+
+### 3. Linea roja de hora actual
+
+Agregar un indicador visual en tiempo real que muestre la hora actual como una linea roja horizontal con un circulo rojo en el extremo izquierdo. Solo se muestra en la columna del dia actual.
+
+**Archivos a modificar:**
+- `src/pages/doctor/Agenda.tsx`
+- `src/pages/admin/Calendario.tsx`
+
+**Logica:**
+- Estado `currentTime` actualizado cada 60 segundos via `setInterval`
+- Posicion vertical: `((hora - START_HOUR) * 60 + minutos) / 60 * HOUR_HEIGHT`
+- Solo renderizar si la columna corresponde al dia de hoy y la hora esta dentro del rango visible (7 AM - 9 PM)
+- Estilo: linea roja de 2px con circulo rojo de 10px en el borde izquierdo, `z-index: 30`
+
+---
+
+### 4. Portal del Paciente
+
+#### Flujo corregido
+
+El flujo real es:
+1. El webhook de triage (`triage-webhook`) recibe: `doctor_id`, `patient_name`, `patient_phone`, `symptoms`
+2. El webhook genera un token de 32 caracteres y crea una `reservation_session`
+3. El webhook construye la URL: `/reserva?token=TOKEN`
+4. El paciente abre la URL
+
+**Lo que ve el paciente (correccion):**
+- Nombre del doctor asignado
+- Direccion del doctor (campo `address` de la tabla `doctors`)
+- Calendario para elegir dia y horario disponible
+- El paciente NO ve los sintomas
+
+#### 4a. Ruta `/reserva` - Seleccion de horario
+
+**Archivo nuevo:** `src/pages/patient/Reserva.tsx`
+
+Pantalla con:
+- Header con nombre del doctor y su direccion
+- Selector de fecha (calendario tipo date picker)
+- Lista de horarios disponibles para la fecha seleccionada
+- Al seleccionar horario, confirmacion y creacion de la cita
+
+**Backend function nueva:** `reserve-validate`
+- Recibe `token`
+- Valida contra `reservation_sessions` (no expirado, no usado)
+- Retorna: `doctor_name`, `doctor_address`, `patient_name`, `doctor_id`, `session_id`, `patient_id`, `symptoms` (para uso interno, no se muestra)
+
+**Backend function nueva:** `reserve-slots`
+- Recibe `doctor_id` y `date`
+- Consulta `doctor_weekly_availability` y `doctor_schedule_settings` para duracion de citas
+- Consulta `doctor_date_overrides` para ver si el dia esta bloqueado
+- Consulta `appointments` existentes para ese dia
+- Consulta Google Calendar del doctor para eventos que bloquean horarios
+- Retorna array de slots disponibles (ej: `["09:00", "09:30", "10:00", ...]`)
+
+**Backend function nueva:** `reserve-create`
+- Recibe `session_id`, `slot_start` (hora elegida)
+- Calcula `end_at` basandose en `appointment_duration_minutes` del doctor
+- Crea el registro en `appointments` con `status = 'scheduled'`
+- Crea el evento en Google Calendar del doctor (via refresh token)
+- Marca la `reservation_session` como `used_at = now()`
+- Genera un `appointment_manage_token` con expiracion de 12 horas
+- Retorna la URL de gestion (`/gestionar?token=...`) y detalles de la cita
+
+#### 4b. Ruta `/gestionar` - Gestion de cita
+
+**Archivo nuevo:** `src/pages/patient/Gestionar.tsx`
+
+Muestra:
+- Nombre del doctor
+- Fecha y hora de la cita
+- Opcion de cancelar (con confirmacion)
+
+**Backend function nueva:** `manage-validate`
+- Recibe `token`, valida contra `appointment_manage_tokens` (no expirado)
+- Retorna detalles de la cita (doctor, fecha, hora, status)
+
+**Backend function nueva:** `manage-cancel`
+- Recibe `token`
+- Actualiza el status de la cita a `cancelled` con `cancel_reason = 'patient'`
+- Elimina el evento de Google Calendar del doctor
+
+#### 4c. Rutas en App.tsx
+
+Agregar rutas publicas (sin ProtectedRoute):
+- `/reserva` -> `Reserva`
+- `/gestionar` -> `Gestionar`
 
 ---
 
@@ -61,16 +130,23 @@ Ambas se registran en `supabase/config.toml` con `verify_jwt = false`.
 
 | Archivo | Accion |
 |---|---|
-| `supabase/functions/google-calendar-update-event/index.ts` | Crear |
-| `supabase/functions/google-calendar-delete-event/index.ts` | Crear |
-| `src/components/doctor/CreateEventDialog.tsx` | Modificar (soportar modo editar con event_id) |
-| `src/components/doctor/AppointmentDetailDialog.tsx` | Modificar (botones editar/eliminar para eventos Google) |
-| `src/pages/doctor/Agenda.tsx` | Modificar (drag-and-drop para eventos Google) |
+| `src/pages/doctor/Agenda.tsx` | Modificar (quitar drag, agregar linea roja) |
+| `src/pages/admin/Calendario.tsx` | Modificar (agregar linea roja) |
+| `src/components/layouts/DoctorLayout.tsx` | Modificar (nombre del doctor) |
+| `src/pages/patient/Reserva.tsx` | Crear |
+| `src/pages/patient/Gestionar.tsx` | Crear |
+| `src/App.tsx` | Modificar (agregar rutas publicas) |
+| `supabase/functions/reserve-validate/index.ts` | Crear |
+| `supabase/functions/reserve-slots/index.ts` | Crear |
+| `supabase/functions/reserve-create/index.ts` | Crear |
+| `supabase/functions/manage-validate/index.ts` | Crear |
+| `supabase/functions/manage-cancel/index.ts` | Crear |
 
 ### Notas tecnicas
 
-- El drag-and-drop se implementa con eventos nativos del mouse, sin dependencias adicionales
-- Solo los eventos de tipo "google" son editables/arrastrables; las citas de la plataforma siguen las reglas actuales (el doctor no puede mover citas manualmente)
-- Para el campo `description` en edicion, se necesita que `google-calendar-events` retorne tambien `description` (ya lo hace)
-- El snap al arrastrar sera de 15 minutos para precision, consistente con Google Calendar
+- `reserve-slots` usa el `google_refresh_token_ref` del doctor para consultar Google Calendar y evitar conflictos con eventos existentes
+- Las funciones del portal del paciente usan `verify_jwt = false` y validan por token, no por JWT
+- La linea roja usa `setInterval` de 60 segundos; se limpia con cleanup del `useEffect`
+- El token de reserva es de un solo uso (12h vigencia); el token de gestion permite multiples usos dentro de 12h
+- `reserve-create` sincroniza con Google Calendar del doctor automaticamente
 
