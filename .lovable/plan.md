@@ -1,152 +1,98 @@
 
+## Correcciones del Portal del Paciente
 
-## Refinamientos Doctor + Linea de hora actual + Portal del Paciente
-
----
-
-### 1. Eliminar drag-and-drop de la agenda del doctor
-
-**Archivo:** `src/pages/doctor/Agenda.tsx`
-
-Remover:
-- Tipo `DragState` (lineas 77-86) y estados `drag`, `dragRef` (lineas 100-101)
-- Funciones `snapMinutes`, `getDayIdxFromX`, `handleMouseDown` (lineas 199-232)
-- `useEffect` completo del mouse move/up (lineas 234-314)
-- Constante `SNAP_MINUTES` (linea 46)
-- `onMouseDown` del evento renderizado (lineas 501-503)
-- Clase `cursor-grab active:cursor-grabbing` del evento (linea 496)
-- Renderizado del "ghost" de arrastre (lineas 520-544)
-- Condicion `if (drag) return;` en el click de columna (linea 459)
-- Condicion `if (isDragging) return null;` en eventos (lineas 481-482)
-- Imports no utilizados: `useCallback`, `addMinutes`
-
-La edicion y eliminacion de eventos Google se mantienen intactas (funcionan via el dialog de detalle + CreateEventDialog en modo edicion).
+Se identificaron 4 bugs principales y una funcionalidad faltante. Aqui esta el diagnostico y las correcciones.
 
 ---
 
-### 2. Nombre del doctor en el sidebar
+### Bug 1: Slots no excluyen eventos de Google Calendar
 
-**Archivo:** `src/components/layouts/DoctorLayout.tsx`
+**Causa raiz:** En `reserve-slots`, los eventos de Google Calendar vienen con timezone (ej: `"2026-02-17T09:00:00-06:00"`). Al hacer `new Date(evt.start).getHours()`, Deno (que corre en UTC) devuelve la hora UTC, no la hora local. Un evento a las 9:00 AM Mexico = 15:00 UTC, asi que `getHours()` retorna 15 en vez de 9, y la comparacion contra el slot "09:00" (minuto 540) falla.
 
-- Importar `useQuery` y `supabase`
-- Usar `useAuth()` para obtener `doctorId`
-- Hacer query a `doctors` para obtener `full_name` del doctor logueado
-- Reemplazar el texto "Portal Doctor" por el nombre del doctor (ej: "Dr. Juan Perez")
-- Mantener "FindMed" como titulo principal
+**Solucion:** Extraer la hora local directamente del string `dateTime` del evento de Google (parsear los primeros caracteres `HH:MM` del campo `dateTime`) en lugar de usar `getHours()` del objeto Date.
+
+**Archivo:** `supabase/functions/reserve-slots/index.ts` (lineas 187-195)
 
 ---
 
-### 3. Linea roja de hora actual
+### Bug 2: Evento no se crea en Google Calendar
 
-Agregar un indicador visual en tiempo real que muestre la hora actual como una linea roja horizontal con un circulo rojo en el extremo izquierdo. Solo se muestra en la columna del dia actual.
+**Causa raiz:** En `reserve-create`, `startAt` es `"2026-02-17T16:00:00"` (sin timezone) pero `endAt` usa `endDate.toISOString()` que produce `"2026-02-17T17:00:00.000Z"` (con Z = UTC). Al enviarlo a Google Calendar:
+- `start.dateTime = "2026-02-17T16:00:00"` con `timeZone: "America/Mexico_City"` = 16:00 Mexico
+- `end.dateTime = "2026-02-17T17:00:00.000Z"` = 17:00 UTC = 11:00 Mexico
+
+Google interpreta que el evento empieza a las 16:00 y termina a las 11:00 (antes del inicio), lo cual probablemente causa un error silencioso.
+
+**Solucion:** Formatear `endAt` de la misma manera que `startAt`, como string plano sin `Z`:
+
+```text
+// En vez de:
+const endAt = endDate.toISOString();
+
+// Usar:
+const endHH = String(endDate.getUTCHours()).padStart(2, "0");
+const endMM = String(endDate.getUTCMinutes()).padStart(2, "0");
+const endAt = `${date}T${endHH}:${endMM}:00`;
+```
+
+Y pasar `timeZone: "America/Mexico_City"` tambien en el objeto `end` del evento de Google Calendar.
+
+**Archivo:** `supabase/functions/reserve-create/index.ts` (lineas 93-97, 155-156)
+
+---
+
+### Bug 3: Horario incorrecto en pantalla de confirmacion (16:00 - 11:00)
+
+**Causa raiz:** Mismo problema del Bug 2. El frontend recibe `start_at = "2026-02-17T16:00:00"` (sin Z, el browser lo interpreta como hora local = 16:00) y `end_at = "2026-02-17T17:00:00.000Z"` (con Z, el browser lo convierte a hora local Mexico = 11:00). Por eso muestra "16:00 - 11:00".
+
+**Solucion:** Se resuelve automaticamente con el fix del Bug 2 (formatear `endAt` igual que `startAt`).
+
+---
+
+### Bug 4: Pagina Gestionar - informacion incorrecta
+
+Varios sub-problemas:
+
+**4a. Horario incorrecto (10:00 - 11:00 en vez de 16:00 - 17:00):**
+La columna `start_at` en la BD es `timestamp with time zone` y almacena `2026-02-17 16:00:00+00` (UTC). Cuando el frontend recibe esto como ISO string con Z, lo convierte a hora local Mexico (-6h) = 10:00. Necesitamos que `manage-validate` retorne las horas en el timezone del doctor, no en UTC.
+
+**Solucion:** En `manage-validate`, consultar el timezone del doctor y formatear `start_at`/`end_at` como strings sin timezone (hora local del doctor).
+
+**4b. Estado dice "Activa" en vez de "Reservada":**
+El status en la BD es `scheduled` pero la UI muestra "Activa".
+
+**Solucion:** En `Gestionar.tsx`, mapear los estados: `scheduled` -> "Reservada", `confirmed` -> "Confirmada", `cancelled` -> "Cancelada", `completed` -> "Completada".
+
+**4c. No aparece el nombre del paciente:**
+`manage-validate` no retorna el nombre del paciente.
+
+**Solucion:** En `manage-validate`, hacer join con `patients` via `appointment.patient_id` y retornar `patient_name`.
+
+**4d. Falta funcionalidad de reagendar:**
+No existe ni la UI ni el backend para que el paciente pueda reagendar su cita.
+
+**Solucion:** 
+- Crear nueva edge function `manage-reschedule` que:
+  1. Valida el token
+  2. Cancela la cita actual (y elimina el evento de Google Calendar)
+  3. Crea una nueva cita en el horario elegido (y crea nuevo evento en Google Calendar)
+  4. Actualiza el manage token para apuntar a la nueva cita
+- En `Gestionar.tsx`, agregar boton "Reagendar cita" que muestra el mismo selector de fecha/hora del portal de reserva, reutilizando `reserve-slots` para obtener horarios disponibles.
 
 **Archivos a modificar:**
-- `src/pages/doctor/Agenda.tsx`
-- `src/pages/admin/Calendario.tsx`
-
-**Logica:**
-- Estado `currentTime` actualizado cada 60 segundos via `setInterval`
-- Posicion vertical: `((hora - START_HOUR) * 60 + minutos) / 60 * HOUR_HEIGHT`
-- Solo renderizar si la columna corresponde al dia de hoy y la hora esta dentro del rango visible (7 AM - 9 PM)
-- Estilo: linea roja de 2px con circulo rojo de 10px en el borde izquierdo, `z-index: 30`
+- `supabase/functions/manage-validate/index.ts` - agregar patient_name, formatear horarios
+- `src/pages/patient/Gestionar.tsx` - mapear estados, mostrar paciente, agregar reagendamiento
+- `supabase/functions/manage-reschedule/index.ts` - crear nueva funcion
 
 ---
 
-### 4. Portal del Paciente
+### Resumen de cambios
 
-#### Flujo corregido
-
-El flujo real es:
-1. El webhook de triage (`triage-webhook`) recibe: `doctor_id`, `patient_name`, `patient_phone`, `symptoms`
-2. El webhook genera un token de 32 caracteres y crea una `reservation_session`
-3. El webhook construye la URL: `/reserva?token=TOKEN`
-4. El paciente abre la URL
-
-**Lo que ve el paciente (correccion):**
-- Nombre del doctor asignado
-- Direccion del doctor (campo `address` de la tabla `doctors`)
-- Calendario para elegir dia y horario disponible
-- El paciente NO ve los sintomas
-
-#### 4a. Ruta `/reserva` - Seleccion de horario
-
-**Archivo nuevo:** `src/pages/patient/Reserva.tsx`
-
-Pantalla con:
-- Header con nombre del doctor y su direccion
-- Selector de fecha (calendario tipo date picker)
-- Lista de horarios disponibles para la fecha seleccionada
-- Al seleccionar horario, confirmacion y creacion de la cita
-
-**Backend function nueva:** `reserve-validate`
-- Recibe `token`
-- Valida contra `reservation_sessions` (no expirado, no usado)
-- Retorna: `doctor_name`, `doctor_address`, `patient_name`, `doctor_id`, `session_id`, `patient_id`, `symptoms` (para uso interno, no se muestra)
-
-**Backend function nueva:** `reserve-slots`
-- Recibe `doctor_id` y `date`
-- Consulta `doctor_weekly_availability` y `doctor_schedule_settings` para duracion de citas
-- Consulta `doctor_date_overrides` para ver si el dia esta bloqueado
-- Consulta `appointments` existentes para ese dia
-- Consulta Google Calendar del doctor para eventos que bloquean horarios
-- Retorna array de slots disponibles (ej: `["09:00", "09:30", "10:00", ...]`)
-
-**Backend function nueva:** `reserve-create`
-- Recibe `session_id`, `slot_start` (hora elegida)
-- Calcula `end_at` basandose en `appointment_duration_minutes` del doctor
-- Crea el registro en `appointments` con `status = 'scheduled'`
-- Crea el evento en Google Calendar del doctor (via refresh token)
-- Marca la `reservation_session` como `used_at = now()`
-- Genera un `appointment_manage_token` con expiracion de 12 horas
-- Retorna la URL de gestion (`/gestionar?token=...`) y detalles de la cita
-
-#### 4b. Ruta `/gestionar` - Gestion de cita
-
-**Archivo nuevo:** `src/pages/patient/Gestionar.tsx`
-
-Muestra:
-- Nombre del doctor
-- Fecha y hora de la cita
-- Opcion de cancelar (con confirmacion)
-
-**Backend function nueva:** `manage-validate`
-- Recibe `token`, valida contra `appointment_manage_tokens` (no expirado)
-- Retorna detalles de la cita (doctor, fecha, hora, status)
-
-**Backend function nueva:** `manage-cancel`
-- Recibe `token`
-- Actualiza el status de la cita a `cancelled` con `cancel_reason = 'patient'`
-- Elimina el evento de Google Calendar del doctor
-
-#### 4c. Rutas en App.tsx
-
-Agregar rutas publicas (sin ProtectedRoute):
-- `/reserva` -> `Reserva`
-- `/gestionar` -> `Gestionar`
-
----
-
-### Resumen de archivos
-
-| Archivo | Accion |
+| Archivo | Cambio |
 |---|---|
-| `src/pages/doctor/Agenda.tsx` | Modificar (quitar drag, agregar linea roja) |
-| `src/pages/admin/Calendario.tsx` | Modificar (agregar linea roja) |
-| `src/components/layouts/DoctorLayout.tsx` | Modificar (nombre del doctor) |
-| `src/pages/patient/Reserva.tsx` | Crear |
-| `src/pages/patient/Gestionar.tsx` | Crear |
-| `src/App.tsx` | Modificar (agregar rutas publicas) |
-| `supabase/functions/reserve-validate/index.ts` | Crear |
-| `supabase/functions/reserve-slots/index.ts` | Crear |
-| `supabase/functions/reserve-create/index.ts` | Crear |
-| `supabase/functions/manage-validate/index.ts` | Crear |
-| `supabase/functions/manage-cancel/index.ts` | Crear |
-
-### Notas tecnicas
-
-- `reserve-slots` usa el `google_refresh_token_ref` del doctor para consultar Google Calendar y evitar conflictos con eventos existentes
-- Las funciones del portal del paciente usan `verify_jwt = false` y validan por token, no por JWT
-- La linea roja usa `setInterval` de 60 segundos; se limpia con cleanup del `useEffect`
-- El token de reserva es de un solo uso (12h vigencia); el token de gestion permite multiples usos dentro de 12h
-- `reserve-create` sincroniza con Google Calendar del doctor automaticamente
-
+| `supabase/functions/reserve-slots/index.ts` | Parsear hora local de Google events directamente del string dateTime |
+| `supabase/functions/reserve-create/index.ts` | Formatear endAt sin Z, pasar timeZone en start y end para Google Calendar |
+| `supabase/functions/manage-validate/index.ts` | Retornar patient_name, formatear horarios en timezone del doctor |
+| `supabase/functions/manage-reschedule/index.ts` | Crear (cancela cita actual + crea nueva + sync Google Calendar) |
+| `src/pages/patient/Gestionar.tsx` | Mostrar nombre paciente, mapear estados en espanol, agregar flujo de reagendamiento |
+| `supabase/config.toml` | Agregar entrada para manage-reschedule con verify_jwt = false |
