@@ -15,7 +15,7 @@ import {
   getMinutes,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { CalendarDays } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog, { type CalendarItem } from "@/components/doctor/AppointmentDetailDialog";
 import DayHeaderPopover from "@/components/doctor/DayHeaderPopover";
+import CreateEventDialog from "@/components/doctor/CreateEventDialog";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -79,6 +80,9 @@ export default function Agenda() {
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
+  const [createEventOpen, setCreateEventOpen] = useState(false);
+  const [createEventDate, setCreateEventDate] = useState<Date | undefined>();
+  const [createEventHour, setCreateEventHour] = useState<number | undefined>();
 
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
   const weekKey = format(weekStart, "yyyy-MM-dd");
@@ -223,6 +227,19 @@ export default function Agenda() {
           <h1 className="text-xl font-bold text-foreground capitalize">{monthLabel}</h1>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            variant="default"
+            size="icon"
+            onClick={() => {
+              setCreateEventDate(undefined);
+              setCreateEventHour(undefined);
+              setCreateEventOpen(true);
+            }}
+            className="h-8 w-8"
+            title="Crear evento"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
           <Button variant="outline" size="icon" onClick={goToPrev} className="h-8 w-8">
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -324,6 +341,15 @@ export default function Agenda() {
                 className={`relative border-l border-border ${
                   isToday(day) ? "bg-primary/5" : ""
                 }`}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const y = e.clientY - rect.top;
+                  const hour = START_HOUR + y / HOUR_HEIGHT;
+                  const snappedHour = Math.floor(hour * 2) / 2; // snap to 30min
+                  setCreateEventDate(day);
+                  setCreateEventHour(snappedHour);
+                  setCreateEventOpen(true);
+                }}
               >
                 {/* Hour lines */}
                 {Array.from({ length: TOTAL_HOURS }, (_, i) => (
@@ -351,7 +377,10 @@ export default function Agenda() {
                       <div
                         key={item.id}
                         className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)}`}
-                        onClick={() => setSelectedItem(item)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedItem(item);
+                        }}
                         style={{
                           top: Math.max(0, top),
                           height: Math.max(15, height),
@@ -378,6 +407,13 @@ export default function Agenda() {
         open={!!selectedItem}
         onClose={() => setSelectedItem(null)}
         doctorId={doctorId ?? ""}
+      />
+
+      <CreateEventDialog
+        open={createEventOpen}
+        onClose={() => setCreateEventOpen(false)}
+        defaultDate={createEventDate}
+        defaultStartHour={createEventHour}
       />
     </div>
   );
