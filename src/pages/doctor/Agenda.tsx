@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   format,
@@ -13,7 +13,6 @@ import {
   differenceInMinutes,
   getHours,
   getMinutes,
-  addMinutes,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
@@ -43,7 +42,6 @@ const START_HOUR = 7;
 const END_HOUR = 21;
 const HOUR_HEIGHT = 36;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
-const SNAP_MINUTES = 15;
 
 function computeOverlapColumns(items: CalendarItem[]) {
   const sorted = [...items].sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -74,17 +72,6 @@ function computeOverlapColumns(items: CalendarItem[]) {
   return result;
 }
 
-interface DragState {
-  item: CalendarItem;
-  originDayIdx: number;
-  originStartMinutes: number;
-  currentDayIdx: number;
-  currentStartMinutes: number;
-  durationMinutes: number;
-  startY: number;
-  startX: number;
-}
-
 export default function Agenda() {
   const { doctorId } = useAuth();
   const queryClient = useQueryClient();
@@ -97,8 +84,14 @@ export default function Agenda() {
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createEventDate, setCreateEventDate] = useState<Date | undefined>();
   const [createEventHour, setCreateEventHour] = useState<number | undefined>();
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const dragRef = useRef<DragState | null>(null);
+
+  // Current time for red line indicator
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
   const weekKey = format(weekStart, "yyyy-MM-dd");
@@ -195,124 +188,6 @@ export default function Agenda() {
     }
   }, []);
 
-  // --- Drag-and-drop ---
-  const snapMinutes = (minutes: number) =>
-    Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
-
-  const getDayIdxFromX = useCallback((clientX: number): number => {
-    if (!gridRef.current) return 0;
-    const gridRect = gridRef.current.getBoundingClientRect();
-    const timeColWidth = 48; // 3rem = 48px
-    const dayAreaWidth = gridRect.width - timeColWidth;
-    const x = clientX - gridRect.left - timeColWidth;
-    const dayIdx = Math.floor((x / dayAreaWidth) * 7);
-    return Math.max(0, Math.min(6, dayIdx));
-  }, []);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent, item: CalendarItem, dayIdx: number) => {
-    if (item.type !== "google") return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    const durationMinutes = differenceInMinutes(item.end, item.start);
-    const startMinutes = (getHours(item.start) - START_HOUR) * 60 + getMinutes(item.start);
-
-    const state: DragState = {
-      item,
-      originDayIdx: dayIdx,
-      originStartMinutes: startMinutes,
-      currentDayIdx: dayIdx,
-      currentStartMinutes: startMinutes,
-      durationMinutes,
-      startY: e.clientY,
-      startX: e.clientX,
-    };
-    dragRef.current = state;
-    setDrag(state);
-  }, []);
-
-  useEffect(() => {
-    if (!drag) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!dragRef.current) return;
-      const dy = e.clientY - dragRef.current.startY;
-      const deltaMinutes = (dy / HOUR_HEIGHT) * 60;
-      const newStartMinutes = snapMinutes(dragRef.current.originStartMinutes + deltaMinutes);
-      const clampedStart = Math.max(0, Math.min(
-        (TOTAL_HOURS * 60) - dragRef.current.durationMinutes,
-        newStartMinutes
-      ));
-      const newDayIdx = getDayIdxFromX(e.clientX);
-
-      const updated = {
-        ...dragRef.current,
-        currentStartMinutes: clampedStart,
-        currentDayIdx: newDayIdx,
-      };
-      dragRef.current = updated;
-      setDrag(updated);
-    };
-
-    const handleMouseUp = async () => {
-      const state = dragRef.current;
-      dragRef.current = null;
-      setDrag(null);
-      if (!state) return;
-
-      const moved =
-        state.currentStartMinutes !== state.originStartMinutes ||
-        state.currentDayIdx !== state.originDayIdx;
-      if (!moved) return;
-
-      // Calculate new start/end
-      const newDay = addDays(weekStart, state.currentDayIdx);
-      const newStart = addMinutes(
-        new Date(newDay.getFullYear(), newDay.getMonth(), newDay.getDate(), START_HOUR),
-        state.currentStartMinutes
-      );
-      const newEnd = addMinutes(newStart, state.durationMinutes);
-
-      try {
-        const session = await supabase.auth.getSession();
-        const token = session.data.session?.access_token;
-        if (!token) { toast.error("No autenticado"); return; }
-
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-        const res = await fetch(`${supabaseUrl}/functions/v1/google-calendar-update-event`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            apikey: anonKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            event_id: state.item.id,
-            start_at: format(newStart, "yyyy-MM-dd'T'HH:mm:ss"),
-            end_at: format(newEnd, "yyyy-MM-dd'T'HH:mm:ss"),
-          }),
-        });
-
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || "Error al mover evento");
-
-        toast.success("Evento movido");
-        queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
-      } catch (err: any) {
-        toast.error(err.message || "Error al mover evento");
-      }
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [drag, weekStart, getDayIdxFromX, queryClient]);
-
   const goToPrev = () => setWeekStart((w) => subWeeks(w, 1));
   const goToNext = () => setWeekStart((w) => addWeeks(w, 1));
   const goToToday = () => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 0 }));
@@ -335,6 +210,14 @@ export default function Agenda() {
     if (item.status === "cancelled") return "bg-destructive/60 text-destructive-foreground";
     return "bg-muted text-muted-foreground";
   }
+
+  // Current time line position
+  const currentTimeTop = useMemo(() => {
+    const h = getHours(currentTime);
+    const m = getMinutes(currentTime);
+    if (h < START_HOUR || h >= END_HOUR) return null;
+    return ((h - START_HOUR) * 60 + m) / 60 * HOUR_HEIGHT;
+  }, [currentTime]);
 
   return (
     <div className="flex h-full flex-col gap-2">
@@ -456,7 +339,6 @@ export default function Agenda() {
                 key={day.toISOString()}
                 className={`relative border-l border-border ${isToday(day) ? "bg-primary/5" : ""}`}
                 onClick={(e) => {
-                  if (drag) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const y = e.clientY - rect.top;
                   const hour = START_HOUR + y / HOUR_HEIGHT;
@@ -475,12 +357,21 @@ export default function Agenda() {
                   />
                 ))}
 
+                {/* Current time red line */}
+                {isToday(day) && currentTimeTop !== null && (
+                  <div
+                    className="absolute inset-x-0 z-30 pointer-events-none"
+                    style={{ top: currentTimeTop }}
+                  >
+                    <div className="relative">
+                      <div className="absolute -left-[5px] -top-[4px] h-[10px] w-[10px] rounded-full bg-red-500" />
+                      <div className="h-[2px] w-full bg-red-500" />
+                    </div>
+                  </div>
+                )}
+
                 {/* Events */}
                 {positioned.map(({ item, col, totalCols }) => {
-                  // If this item is being dragged, hide it from its original position
-                  const isDragging = drag?.item.id === item.id;
-                  if (isDragging) return null;
-
                   const startMinutes =
                     (getHours(item.start) - START_HOUR) * 60 + getMinutes(item.start);
                   const duration = Math.max(15, differenceInMinutes(item.end, item.start));
@@ -488,18 +379,14 @@ export default function Agenda() {
                   const height = (duration / 60) * HOUR_HEIGHT;
                   const widthPercent = 100 / totalCols;
                   const leftPercent = col * widthPercent;
-                  const isGoogleEvent = item.type === "google";
 
                   return (
                     <div
                       key={item.id}
-                      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)} ${isGoogleEvent ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedItem(item);
-                      }}
-                      onMouseDown={(e) => {
-                        if (isGoogleEvent) handleMouseDown(e, item, dayIdx);
                       }}
                       style={{
                         top: Math.max(0, top),
@@ -516,32 +403,6 @@ export default function Agenda() {
                     </div>
                   );
                 })}
-
-                {/* Drag ghost in this column */}
-                {drag && drag.currentDayIdx === dayIdx && (
-                  <div
-                    className="absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight bg-primary/60 text-primary-foreground ring-2 ring-primary pointer-events-none opacity-80 z-50"
-                    style={{
-                      top: (drag.currentStartMinutes / 60) * HOUR_HEIGHT,
-                      height: (drag.durationMinutes / 60) * HOUR_HEIGHT,
-                      left: "1px",
-                      right: "1px",
-                    }}
-                  >
-                    <div className="font-semibold truncate">{drag.item.title}</div>
-                    <div className="truncate opacity-80">
-                      {format(
-                        addMinutes(new Date(2000, 0, 1, START_HOUR), drag.currentStartMinutes),
-                        "HH:mm"
-                      )}
-                      {" - "}
-                      {format(
-                        addMinutes(new Date(2000, 0, 1, START_HOUR), drag.currentStartMinutes + drag.durationMinutes),
-                        "HH:mm"
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })}
