@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   format,
   startOfWeek,
@@ -13,6 +13,7 @@ import {
   differenceInMinutes,
   getHours,
   getMinutes,
+  addMinutes,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
@@ -21,6 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CalendarDays } from "lucide-react";
+import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog, { type CalendarItem } from "@/components/doctor/AppointmentDetailDialog";
 import DayHeaderPopover from "@/components/doctor/DayHeaderPopover";
@@ -41,12 +43,11 @@ const START_HOUR = 7;
 const END_HOUR = 21;
 const HOUR_HEIGHT = 36;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
+const SNAP_MINUTES = 15;
 
 function computeOverlapColumns(items: CalendarItem[]) {
-  // Sort by start time
   const sorted = [...items].sort((a, b) => a.start.getTime() - b.start.getTime());
   const result: { item: CalendarItem; col: number; totalCols: number }[] = [];
-
   const groups: CalendarItem[][] = [];
   let currentGroup: CalendarItem[] = [];
   let groupEnd = 0;
@@ -73,16 +74,31 @@ function computeOverlapColumns(items: CalendarItem[]) {
   return result;
 }
 
+interface DragState {
+  item: CalendarItem;
+  originDayIdx: number;
+  originStartMinutes: number;
+  currentDayIdx: number;
+  currentStartMinutes: number;
+  durationMinutes: number;
+  startY: number;
+  startX: number;
+}
+
 export default function Agenda() {
   const { doctorId } = useAuth();
+  const queryClient = useQueryClient();
   const [weekStart, setWeekStart] = useState(() =>
     startOfWeek(new Date(), { weekStartsOn: 0 })
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createEventDate, setCreateEventDate] = useState<Date | undefined>();
   const [createEventHour, setCreateEventHour] = useState<number | undefined>();
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
 
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
   const weekKey = format(weekStart, "yyyy-MM-dd");
@@ -92,8 +108,7 @@ export default function Agenda() {
     [weekStart]
   );
 
-  // Local appointments for the week
-  const { data: appointments, isLoading } = useQuery({
+  const { data: appointments } = useQuery({
     queryKey: ["doctor-appointments", doctorId, weekKey],
     queryFn: async () => {
       if (!doctorId) return [];
@@ -104,34 +119,24 @@ export default function Agenda() {
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
         .order("start_at", { ascending: true });
-
       if (error) throw error;
       return data ?? [];
     },
     enabled: !!doctorId,
   });
 
-  // Google Calendar events for the week
   const { data: googleEvents } = useQuery({
     queryKey: ["google-calendar-events", doctorId, weekKey],
     queryFn: async () => {
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) return [];
-
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
       const response = await fetch(
         `${supabaseUrl}/functions/v1/google-calendar-events?timeMin=${encodeURIComponent(weekStart.toISOString())}&timeMax=${encodeURIComponent(weekEnd.toISOString())}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            apikey: anonKey,
-          },
-        }
+        { headers: { Authorization: `Bearer ${token}`, apikey: anonKey } }
       );
-
       if (!response.ok) return [];
       const data = await response.json();
       return (data.events || []) as GoogleEvent[];
@@ -140,10 +145,8 @@ export default function Agenda() {
     refetchInterval: 60_000,
   });
 
-  // Build calendar items
   const calendarItems = useMemo(() => {
     const items: CalendarItem[] = [];
-
     for (const appt of appointments || []) {
       const patient = appt.patients as { full_name: string; phone: string } | null;
       items.push({
@@ -158,7 +161,6 @@ export default function Agenda() {
         doctorNotes: appt.doctor_notes ?? undefined,
       });
     }
-
     const appointmentIds = new Set((appointments || []).map((a) => a.id));
     for (const e of googleEvents || []) {
       if (appointmentIds.has(e.id)) continue;
@@ -169,13 +171,12 @@ export default function Agenda() {
         end: parseISO(e.end),
         title: e.summary,
         htmlLink: e.htmlLink,
+        description: e.description ?? undefined,
       });
     }
-
     return items;
   }, [appointments, googleEvents]);
 
-  // Group items by day index (0-6)
   const itemsByDay = useMemo(() => {
     const map: Record<number, CalendarItem[]> = {};
     for (let i = 0; i < 7; i++) map[i] = [];
@@ -186,15 +187,131 @@ export default function Agenda() {
     return map;
   }, [calendarItems, weekDays]);
 
-  // Auto-scroll to current hour on mount
   useEffect(() => {
     const now = new Date();
     const currentHour = getHours(now);
     if (scrollRef.current && currentHour >= START_HOUR && currentHour <= END_HOUR) {
-      const scrollTop = (currentHour - START_HOUR - 1) * HOUR_HEIGHT;
-      scrollRef.current.scrollTop = Math.max(0, scrollTop);
+      scrollRef.current.scrollTop = Math.max(0, (currentHour - START_HOUR - 1) * HOUR_HEIGHT);
     }
   }, []);
+
+  // --- Drag-and-drop ---
+  const snapMinutes = (minutes: number) =>
+    Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
+
+  const getDayIdxFromX = useCallback((clientX: number): number => {
+    if (!gridRef.current) return 0;
+    const gridRect = gridRef.current.getBoundingClientRect();
+    const timeColWidth = 48; // 3rem = 48px
+    const dayAreaWidth = gridRect.width - timeColWidth;
+    const x = clientX - gridRect.left - timeColWidth;
+    const dayIdx = Math.floor((x / dayAreaWidth) * 7);
+    return Math.max(0, Math.min(6, dayIdx));
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent, item: CalendarItem, dayIdx: number) => {
+    if (item.type !== "google") return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const durationMinutes = differenceInMinutes(item.end, item.start);
+    const startMinutes = (getHours(item.start) - START_HOUR) * 60 + getMinutes(item.start);
+
+    const state: DragState = {
+      item,
+      originDayIdx: dayIdx,
+      originStartMinutes: startMinutes,
+      currentDayIdx: dayIdx,
+      currentStartMinutes: startMinutes,
+      durationMinutes,
+      startY: e.clientY,
+      startX: e.clientX,
+    };
+    dragRef.current = state;
+    setDrag(state);
+  }, []);
+
+  useEffect(() => {
+    if (!drag) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const dy = e.clientY - dragRef.current.startY;
+      const deltaMinutes = (dy / HOUR_HEIGHT) * 60;
+      const newStartMinutes = snapMinutes(dragRef.current.originStartMinutes + deltaMinutes);
+      const clampedStart = Math.max(0, Math.min(
+        (TOTAL_HOURS * 60) - dragRef.current.durationMinutes,
+        newStartMinutes
+      ));
+      const newDayIdx = getDayIdxFromX(e.clientX);
+
+      const updated = {
+        ...dragRef.current,
+        currentStartMinutes: clampedStart,
+        currentDayIdx: newDayIdx,
+      };
+      dragRef.current = updated;
+      setDrag(updated);
+    };
+
+    const handleMouseUp = async () => {
+      const state = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      if (!state) return;
+
+      const moved =
+        state.currentStartMinutes !== state.originStartMinutes ||
+        state.currentDayIdx !== state.originDayIdx;
+      if (!moved) return;
+
+      // Calculate new start/end
+      const newDay = addDays(weekStart, state.currentDayIdx);
+      const newStart = addMinutes(
+        new Date(newDay.getFullYear(), newDay.getMonth(), newDay.getDate(), START_HOUR),
+        state.currentStartMinutes
+      );
+      const newEnd = addMinutes(newStart, state.durationMinutes);
+
+      try {
+        const session = await supabase.auth.getSession();
+        const token = session.data.session?.access_token;
+        if (!token) { toast.error("No autenticado"); return; }
+
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+        const res = await fetch(`${supabaseUrl}/functions/v1/google-calendar-update-event`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            apikey: anonKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            event_id: state.item.id,
+            start_at: format(newStart, "yyyy-MM-dd'T'HH:mm:ss"),
+            end_at: format(newEnd, "yyyy-MM-dd'T'HH:mm:ss"),
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || "Error al mover evento");
+
+        toast.success("Evento movido");
+        queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
+      } catch (err: any) {
+        toast.error(err.message || "Error al mover evento");
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [drag, weekStart, getDayIdxFromX, queryClient]);
 
   const goToPrev = () => setWeekStart((w) => subWeeks(w, 1));
   const goToNext = () => setWeekStart((w) => addWeeks(w, 1));
@@ -290,7 +407,7 @@ export default function Agenda() {
 
       {/* Day headers */}
       <div className="grid grid-cols-[3rem_repeat(7,1fr)] border-b border-border">
-        <div /> {/* spacer for time column */}
+        <div />
         {weekDays.map((day) => (
           <DayHeaderPopover key={day.toISOString()} day={day} doctorId={doctorId ?? ""}>
             <button className="flex flex-col items-center py-1 hover:bg-accent/50 rounded transition-colors cursor-pointer">
@@ -299,9 +416,7 @@ export default function Agenda() {
               </span>
               <span
                 className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
-                  isToday(day)
-                    ? "bg-primary text-primary-foreground"
-                    : "text-foreground"
+                  isToday(day) ? "bg-primary text-primary-foreground" : "text-foreground"
                 }`}
               >
                 {format(day, "d")}
@@ -314,6 +429,7 @@ export default function Agenda() {
       {/* Grid */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         <div
+          ref={gridRef}
           className="grid grid-cols-[3rem_repeat(7,1fr)]"
           style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
         >
@@ -338,14 +454,13 @@ export default function Agenda() {
             return (
               <div
                 key={day.toISOString()}
-                className={`relative border-l border-border ${
-                  isToday(day) ? "bg-primary/5" : ""
-                }`}
+                className={`relative border-l border-border ${isToday(day) ? "bg-primary/5" : ""}`}
                 onClick={(e) => {
+                  if (drag) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const y = e.clientY - rect.top;
                   const hour = START_HOUR + y / HOUR_HEIGHT;
-                  const snappedHour = Math.floor(hour * 2) / 2; // snap to 30min
+                  const snappedHour = Math.floor(hour * 2) / 2;
                   setCreateEventDate(day);
                   setCreateEventHour(snappedHour);
                   setCreateEventOpen(true);
@@ -362,40 +477,71 @@ export default function Agenda() {
 
                 {/* Events */}
                 {positioned.map(({ item, col, totalCols }) => {
+                  // If this item is being dragged, hide it from its original position
+                  const isDragging = drag?.item.id === item.id;
+                  if (isDragging) return null;
+
                   const startMinutes =
                     (getHours(item.start) - START_HOUR) * 60 + getMinutes(item.start);
-                  const duration = Math.max(
-                    15,
-                    differenceInMinutes(item.end, item.start)
-                  );
+                  const duration = Math.max(15, differenceInMinutes(item.end, item.start));
                   const top = (startMinutes / 60) * HOUR_HEIGHT;
                   const height = (duration / 60) * HOUR_HEIGHT;
                   const widthPercent = 100 / totalCols;
                   const leftPercent = col * widthPercent;
+                  const isGoogleEvent = item.type === "google";
 
-                    return (
-                      <div
-                        key={item.id}
-                        className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedItem(item);
-                        }}
-                        style={{
-                          top: Math.max(0, top),
-                          height: Math.max(15, height),
-                          left: `calc(${leftPercent}% + 1px)`,
-                          width: `calc(${widthPercent}% - 2px)`,
-                        }}
-                        title={`${item.title}\n${format(item.start, "HH:mm")} - ${format(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
-                      >
-                        <div className="font-semibold truncate">{item.title}</div>
-                        <div className="truncate opacity-80">
-                          {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
-                        </div>
+                  return (
+                    <div
+                      key={item.id}
+                      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)} ${isGoogleEvent ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedItem(item);
+                      }}
+                      onMouseDown={(e) => {
+                        if (isGoogleEvent) handleMouseDown(e, item, dayIdx);
+                      }}
+                      style={{
+                        top: Math.max(0, top),
+                        height: Math.max(15, height),
+                        left: `calc(${leftPercent}% + 1px)`,
+                        width: `calc(${widthPercent}% - 2px)`,
+                      }}
+                      title={`${item.title}\n${format(item.start, "HH:mm")} - ${format(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
+                    >
+                      <div className="font-semibold truncate">{item.title}</div>
+                      <div className="truncate opacity-80">
+                        {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
                       </div>
-                    );
+                    </div>
+                  );
                 })}
+
+                {/* Drag ghost in this column */}
+                {drag && drag.currentDayIdx === dayIdx && (
+                  <div
+                    className="absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight bg-primary/60 text-primary-foreground ring-2 ring-primary pointer-events-none opacity-80 z-50"
+                    style={{
+                      top: (drag.currentStartMinutes / 60) * HOUR_HEIGHT,
+                      height: (drag.durationMinutes / 60) * HOUR_HEIGHT,
+                      left: "1px",
+                      right: "1px",
+                    }}
+                  >
+                    <div className="font-semibold truncate">{drag.item.title}</div>
+                    <div className="truncate opacity-80">
+                      {format(
+                        addMinutes(new Date(2000, 0, 1, START_HOUR), drag.currentStartMinutes),
+                        "HH:mm"
+                      )}
+                      {" - "}
+                      {format(
+                        addMinutes(new Date(2000, 0, 1, START_HOUR), drag.currentStartMinutes + drag.durationMinutes),
+                        "HH:mm"
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
+import CreateEventDialog from "./CreateEventDialog";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -40,6 +41,7 @@ export interface CalendarItem {
   symptoms?: string;
   doctorNotes?: string;
   htmlLink?: string;
+  description?: string;
 }
 
 interface Props {
@@ -67,9 +69,15 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState("");
   const [editingNotes, setEditingNotes] = useState(false);
+  const [editEventOpen, setEditEventOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
+  };
+
+  const invalidateGoogle = () => {
+    queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
   };
 
   const cancelMutation = useMutation({
@@ -120,6 +128,40 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     onError: () => toast.error("Error al guardar notas"),
   });
 
+  const handleDeleteGoogleEvent = async () => {
+    if (!item) return;
+    setDeleting(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) { toast.error("No autenticado"); return; }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+      const res = await fetch(`${supabaseUrl}/functions/v1/google-calendar-delete-event`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: anonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ event_id: item.id }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Error al eliminar");
+
+      toast.success("Evento eliminado de Google Calendar");
+      invalidateGoogle();
+      onClose();
+    } catch (err: any) {
+      toast.error(err.message || "Error al eliminar evento");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (!item) return null;
 
   const isGoogle = item.type === "google";
@@ -140,126 +182,184 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {item.title}
-            {!isGoogle && item.status && (
-              <Badge className={STATUS_STYLES[item.status]}>{STATUS_LABELS[item.status]}</Badge>
-            )}
-          </DialogTitle>
-          <DialogDescription>
-            {format(item.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open && !editEventOpen} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {item.title}
+              {!isGoogle && item.status && (
+                <Badge className={STATUS_STYLES[item.status]}>{STATUS_LABELS[item.status]}</Badge>
+              )}
+              {isGoogle && (
+                <Badge variant="outline" className="text-xs">Google</Badge>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {format(item.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-3 text-sm">
-          <div>
-            <span className="text-muted-foreground">Horario: </span>
-            <span className="font-medium">
-              {format(item.start, "HH:mm")} – {format(item.end, "HH:mm")}
-            </span>
+          <div className="space-y-3 text-sm">
+            <div>
+              <span className="text-muted-foreground">Horario: </span>
+              <span className="font-medium">
+                {format(item.start, "HH:mm")} – {format(item.end, "HH:mm")}
+              </span>
+            </div>
+
+            {!isGoogle && item.symptoms && (
+              <div>
+                <span className="text-muted-foreground">Síntomas: </span>
+                <span>{item.symptoms}</span>
+              </div>
+            )}
+
+            {isGoogle && item.description && (
+              <div>
+                <span className="text-muted-foreground">Descripción: </span>
+                <span>{item.description}</span>
+              </div>
+            )}
+
+            {!isGoogle && item.doctorNotes && !editingNotes && (
+              <div>
+                <span className="text-muted-foreground">Notas médicas: </span>
+                <span>{item.doctorNotes}</span>
+              </div>
+            )}
+
+            {isGoogle && item.htmlLink && (
+              <a
+                href={item.htmlLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline text-xs"
+              >
+                Abrir en Google Calendar
+              </a>
+            )}
           </div>
 
-          {!isGoogle && item.symptoms && (
-            <div>
-              <span className="text-muted-foreground">Síntomas: </span>
-              <span>{item.symptoms}</span>
+          {/* Edit notes for completed appointments */}
+          {canEditNotes && editingNotes && (
+            <div className="space-y-2">
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Escribe las notas médicas..."
+                rows={4}
+              />
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" size="sm" onClick={() => setEditingNotes(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={notesMutation.isPending}
+                  onClick={() => notesMutation.mutate({ id: item.id, doctorNotes: notes })}
+                >
+                  Guardar notas
+                </Button>
+              </div>
             </div>
           )}
 
-          {!isGoogle && item.doctorNotes && !editingNotes && (
-            <div>
-              <span className="text-muted-foreground">Notas médicas: </span>
-              <span>{item.doctorNotes}</span>
-            </div>
-          )}
-
-          {isGoogle && item.htmlLink && (
-            <a
-              href={item.htmlLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary underline text-xs"
-            >
-              Abrir en Google Calendar
-            </a>
-          )}
-        </div>
-
-        {/* Edit notes for completed appointments */}
-        {canEditNotes && editingNotes && (
-          <div className="space-y-2">
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Escribe las notas médicas..."
-              rows={4}
-            />
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" size="sm" onClick={() => setEditingNotes(false)}>
-                Cancelar
+          {/* Actions for Google events */}
+          {isGoogle && (
+            <div className="flex gap-2 justify-end pt-2">
+              <Button variant="outline" size="sm" onClick={() => setEditEventOpen(true)}>
+                Editar
               </Button>
-              <Button
-                size="sm"
-                disabled={notesMutation.isPending}
-                onClick={() => notesMutation.mutate({ id: item.id, doctorNotes: notes })}
-              >
-                Guardar notas
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        {!isGoogle && (
-          <div className="flex gap-2 justify-end pt-2">
-            {canEditNotes && !editingNotes && (
-              <Button variant="outline" size="sm" onClick={startEditNotes}>
-                Editar notas
-              </Button>
-            )}
-
-            {canComplete && (
-              <Button
-                size="sm"
-                disabled={completeMutation.isPending}
-                onClick={() => completeMutation.mutate(item.id)}
-              >
-                Completar
-              </Button>
-            )}
-
-            {canCancel && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="destructive" size="sm">
-                    Cancelar cita
+                    Eliminar
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
+                    <AlertDialogTitle>¿Eliminar este evento?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Esta acción no se puede deshacer. El paciente será notificado de la cancelación.
+                      Se eliminará de tu Google Calendar. Esta acción no se puede deshacer.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Volver</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => cancelMutation.mutate(item.id)}
-                      disabled={cancelMutation.isPending}
-                    >
-                      Sí, cancelar
+                    <AlertDialogAction onClick={handleDeleteGoogleEvent} disabled={deleting}>
+                      {deleting ? "Eliminando..." : "Sí, eliminar"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-            )}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+            </div>
+          )}
+
+          {/* Actions for appointments */}
+          {!isGoogle && (
+            <div className="flex gap-2 justify-end pt-2">
+              {canEditNotes && !editingNotes && (
+                <Button variant="outline" size="sm" onClick={startEditNotes}>
+                  Editar notas
+                </Button>
+              )}
+              {canComplete && (
+                <Button
+                  size="sm"
+                  disabled={completeMutation.isPending}
+                  onClick={() => completeMutation.mutate(item.id)}
+                >
+                  Completar
+                </Button>
+              )}
+              {canCancel && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="sm">
+                      Cancelar cita
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Esta acción no se puede deshacer. El paciente será notificado de la cancelación.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Volver</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => cancelMutation.mutate(item.id)}
+                        disabled={cancelMutation.isPending}
+                      >
+                        Sí, cancelar
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit event dialog (for Google events) */}
+      {isGoogle && (
+        <CreateEventDialog
+          open={editEventOpen}
+          onClose={() => {
+            setEditEventOpen(false);
+            onClose();
+          }}
+          editEvent={{
+            id: item.id,
+            summary: item.title,
+            description: item.description,
+            start: item.start,
+            end: item.end,
+          }}
+        />
+      )}
+    </>
   );
 }

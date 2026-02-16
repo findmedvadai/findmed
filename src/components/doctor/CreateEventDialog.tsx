@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -20,6 +20,14 @@ interface CreateEventDialogProps {
   onClose: () => void;
   defaultDate?: Date;
   defaultStartHour?: number;
+  /** If provided, the dialog is in "edit" mode */
+  editEvent?: {
+    id: string;
+    summary: string;
+    description?: string;
+    start: Date;
+    end: Date;
+  };
 }
 
 export default function CreateEventDialog({
@@ -27,30 +35,46 @@ export default function CreateEventDialog({
   onClose,
   defaultDate,
   defaultStartHour,
+  editEvent,
 }: CreateEventDialogProps) {
   const queryClient = useQueryClient();
-
-  const initialDate = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
-  const initialStart = defaultStartHour !== undefined
-    ? `${String(Math.floor(defaultStartHour)).padStart(2, "0")}:${String(Math.round((defaultStartHour % 1) * 60)).padStart(2, "0")}`
-    : "09:00";
-  const initialEndHour = defaultStartHour !== undefined ? defaultStartHour + 1 : 10;
-  const initialEnd = `${String(Math.floor(initialEndHour)).padStart(2, "0")}:${String(Math.round((initialEndHour % 1) * 60)).padStart(2, "0")}`;
+  const isEdit = !!editEvent;
 
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
-  const [date, setDate] = useState(initialDate);
-  const [startTime, setStartTime] = useState(initialStart);
-  const [endTime, setEndTime] = useState(initialEnd);
+  const [date, setDate] = useState("");
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("10:00");
   const [submitting, setSubmitting] = useState(false);
 
-  // Reset form when dialog opens with new defaults
-  const handleOpenChange = (isOpen: boolean) => {
-    if (!isOpen) {
-      onClose();
+  // Reset form when dialog opens
+  useEffect(() => {
+    if (!open) return;
+
+    if (editEvent) {
+      setSummary(editEvent.summary);
+      setDescription(editEvent.description ?? "");
+      setDate(format(editEvent.start, "yyyy-MM-dd"));
+      setStartTime(format(editEvent.start, "HH:mm"));
+      setEndTime(format(editEvent.end, "HH:mm"));
+    } else {
       setSummary("");
       setDescription("");
+      const d = defaultDate ?? new Date();
+      setDate(format(d, "yyyy-MM-dd"));
+      const sh = defaultStartHour ?? 9;
+      setStartTime(
+        `${String(Math.floor(sh)).padStart(2, "0")}:${String(Math.round((sh % 1) * 60)).padStart(2, "0")}`
+      );
+      const eh = (defaultStartHour ?? 9) + 1;
+      setEndTime(
+        `${String(Math.floor(eh)).padStart(2, "0")}:${String(Math.round((eh % 1) * 60)).padStart(2, "0")}`
+      );
     }
+  }, [open, editEvent, defaultDate, defaultStartHour]);
+
+  const handleOpenChange = (isOpen: boolean) => {
+    if (!isOpen) onClose();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -68,38 +92,48 @@ export default function CreateEventDialog({
 
       const startAt = `${date}T${startTime}:00`;
       const endAt = `${date}T${endTime}:00`;
-
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-      const res = await fetch(
-        `${supabaseUrl}/functions/v1/google-calendar-create-event`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            apikey: anonKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
+      const endpoint = isEdit
+        ? `${supabaseUrl}/functions/v1/google-calendar-update-event`
+        : `${supabaseUrl}/functions/v1/google-calendar-create-event`;
+
+      const payload = isEdit
+        ? {
+            event_id: editEvent!.id,
             summary: summary.trim(),
             description: description.trim() || undefined,
             start_at: startAt,
             end_at: endAt,
-          }),
-        }
-      );
+          }
+        : {
+            summary: summary.trim(),
+            description: description.trim() || undefined,
+            start_at: startAt,
+            end_at: endAt,
+          };
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: anonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
       const data = await res.json();
       if (!res.ok || data.error) {
-        throw new Error(data.error || "Error al crear evento");
+        throw new Error(data.error || (isEdit ? "Error al actualizar evento" : "Error al crear evento"));
       }
 
-      toast.success("Evento creado en Google Calendar");
+      toast.success(isEdit ? "Evento actualizado" : "Evento creado en Google Calendar");
       queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
-      handleOpenChange(false);
+      onClose();
     } catch (err: any) {
-      toast.error(err.message || "Error al crear evento");
+      toast.error(err.message || "Error al guardar evento");
     } finally {
       setSubmitting(false);
     }
@@ -109,9 +143,11 @@ export default function CreateEventDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Crear evento</DialogTitle>
+          <DialogTitle>{isEdit ? "Editar evento" : "Crear evento"}</DialogTitle>
           <DialogDescription>
-            Se creará en tu Google Calendar conectado.
+            {isEdit
+              ? "Se actualizará en tu Google Calendar conectado."
+              : "Se creará en tu Google Calendar conectado."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -168,11 +204,13 @@ export default function CreateEventDialog({
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={submitting}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
             <Button type="submit" disabled={submitting || !summary.trim()}>
-              {submitting ? "Creando..." : "Crear evento"}
+              {submitting
+                ? isEdit ? "Guardando..." : "Creando..."
+                : isEdit ? "Guardar cambios" : "Crear evento"}
             </Button>
           </div>
         </form>
