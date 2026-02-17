@@ -41,10 +41,45 @@ Deno.serve(async (req) => {
     });
   }
 
+  // --- API Key validation ---
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const rawKey = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+
+  if (!rawKey.startsWith("fm_")) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+
+  // Hash the raw key and verify against api_keys table
+  const encoded = new TextEncoder().encode(rawKey);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
+  const keyHash = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  const { data: apiKey } = await supabase
+    .from("api_keys")
+    .select("id")
+    .eq("key_hash", keyHash)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Update last_used_at (fire-and-forget)
+  supabase.from("api_keys").update({ last_used_at: new Date().toISOString() } as any).eq("id", apiKey.id).then(() => {});
 
   let body: {
     doctor_id: string;
