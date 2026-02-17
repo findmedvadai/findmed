@@ -2,6 +2,9 @@ import { Outlet } from "react-router-dom";
 import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import {
   SidebarProvider,
   Sidebar,
@@ -34,6 +37,34 @@ const settingsItems = [
 
 export default function AdminLayout() {
   const { signOut } = useAuth();
+  const queryClient = useQueryClient();
+
+  const { data: unreadCount = 0 } = useQuery({
+    queryKey: ["admin-unread-notifications"],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .in("recipient_role", ["admin", "superadmin"])
+        .eq("is_read", false);
+      return count ?? 0;
+    },
+  });
+
+  // Realtime: refresh count when notifications change
+  useEffect(() => {
+    const channel = supabase
+      .channel("admin-notifications-badge")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications" },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["admin-unread-notifications"] });
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [queryClient]);
 
   return (
     <SidebarProvider>
@@ -58,6 +89,9 @@ export default function AdminLayout() {
                         >
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
+                          {item.url === "/admin/inbox" && unreadCount > 0 && (
+                            <span className="ml-auto h-2 w-2 rounded-full bg-destructive" />
+                          )}
                         </NavLink>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
