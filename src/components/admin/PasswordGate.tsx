@@ -9,6 +9,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Lock } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 const STORAGE_KEY = "findmed_settings_unlocked";
 const PASSWORD = "Vadai123!";
@@ -19,15 +20,26 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    if (sessionStorage.getItem(STORAGE_KEY) === "true") {
-      setUnlocked(true);
-    }
+    supabase.auth.getSession().then(({ data }) => {
+      const sessionId = data.session?.access_token ?? null;
+      if (!sessionId) return;
+      try {
+        const stored = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "{}");
+        if (stored.unlocked && stored.sessionId === sessionId) {
+          setUnlocked(true);
+        }
+      } catch {
+        // ignore malformed storage
+      }
+    });
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (input === PASSWORD) {
-      sessionStorage.setItem(STORAGE_KEY, "true");
+      const { data } = await supabase.auth.getSession();
+      const sessionId = data.session?.access_token ?? "";
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ unlocked: true, sessionId }));
       setUnlocked(true);
       setError(false);
     } else {

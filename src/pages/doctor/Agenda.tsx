@@ -107,7 +107,7 @@ export default function Agenda() {
       if (!doctorId) return [];
       const { data, error } = await supabase
         .from("appointments")
-        .select("id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
+        .select("id, google_event_id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
         .eq("doctor_id", doctorId)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
@@ -155,9 +155,11 @@ export default function Agenda() {
         doctorNotes: appt.doctor_notes ?? undefined,
       });
     }
-    const appointmentIds = new Set((appointments || []).map((a) => a.id));
+    const googleEventIds = new Set(
+      (appointments || []).map((a) => a.google_event_id).filter(Boolean)
+    );
     for (const e of googleEvents || []) {
-      if (appointmentIds.has(e.id)) continue;
+      if (googleEventIds.has(e.id)) continue;
       items.push({
         id: e.id,
         type: "google",
