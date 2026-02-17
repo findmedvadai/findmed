@@ -1,65 +1,86 @@
 
-## Agregar autenticación por API Key al triage-webhook
+## Corrección de dos bugs en el flujo de agendamiento
 
-### Problema actual
-`triage-webhook` está completamente abierto. Cualquiera que conozca la URL puede crear pacientes y sesiones de reserva falsas. El sistema de API Keys ya existe en la base de datos pero no se usa para proteger los endpoints.
+### Diagnóstico
 
-### Solución
-Modificar `triage-webhook/index.ts` para que valide el header `Authorization: Bearer <api_key>` contra la tabla `api_keys` antes de procesar la solicitud. También se actualizará el timestamp `last_used_at` de la key al usarla.
+#### Bug 1: Hora incorrecta (se eligió 14:00 pero aparece 08:00)
+
+**Causa raíz — inconsistencia de zona horaria:**
+
+La función `reserve-create` guarda la cita como:
+```
+startAt = "2026-02-18T14:00:00"  // sin zona horaria
+```
+
+Al insertar en PostgreSQL (columna `timestamp with time zone`), el servidor Supabase corre en UTC, por lo que interpreta ese string como **14:00 UTC** y lo almacena como `2026-02-18 14:00:00+00`.
+
+Al leerlo en el navegador del médico en México (UTC-6):
+- `new Date("2026-02-18 14:00:00+00")` → convierte a local → **08:00 AM**
+- `format(parseISO(...), "HH:mm")` → muestra **08:00**
+
+El paciente ve 14:00 en la pantalla de confirmación porque lee el string crudo del response de la función (sin `+00`), que el navegador interpreta como hora local.
+
+**La solución:** Agregar el offset de México Ciudad (`-06:00`) al guardar, de modo que `"2026-02-18T14:00:00-06:00"` se almacene como `2026-02-18 20:00:00+00` en la DB y cuando el navegador lo lea, lo convierta de UTC+0 → México UTC-6 → **14:00 local**, que es lo correcto.
+
+#### Bug 2: "Paciente desconocido"
+
+**Causa raíz — el join con `patients` no devuelve datos:**
+
+En `Agenda.tsx`, la query hace:
+```typescript
+.select("id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
+```
+
+Este join funciona si existe una foreign key de `appointments.patient_id → patients.id`. Sin embargo, al leer la DB directamente sí se ve el nombre correcto. El problema es que la RLS de la tabla `patients` solo permite acceso a admins:
+
+```
+Policy: "Admin can manage patients" — Command: ALL — USING: is_admin_or_superadmin(auth.uid())
+Policy: "Admin can read patients"   — Command: SELECT — USING: is_admin_or_superadmin(auth.uid())
+```
+
+**El doctor NO tiene permiso de SELECT en la tabla `patients`.** Por lo tanto, cuando Supabase ejecuta el join embebido, los datos de `patients` retornan `null` para usuarios con rol `doctor`. El resultado es que `patient?.full_name` es `null` → se muestra `"Paciente desconocido"`.
+
+**La solución:** Agregar una política RLS que permita al doctor leer los pacientes asociados a sus propias citas.
 
 ---
 
-### Cambios tecnicos
+### Plan de implementación
 
-**`supabase/functions/triage-webhook/index.ts`**
+#### Cambio 1: Fix de zona horaria en `reserve-create`
 
-Agregar al inicio del handler (despues del check de OPTIONS/POST), antes de procesar el body:
-
-1. Leer el header `Authorization` de la request
-2. Verificar que tenga el formato `Bearer fm_...`
-3. Calcular el SHA-256 hash de la clave recibida
-4. Consultar la tabla `api_keys` donde `key_hash = hash AND is_active = true`
-5. Si no se encuentra: responder `401 Unauthorized`
-6. Si se encuentra: actualizar `last_used_at = now()` y continuar con el flujo normal
+Modificar la función `supabase/functions/reserve-create/index.ts` para que al construir `startAt` y `endAt` se incluya el offset de México City (`-06:00`):
 
 ```
-Header requerido en n8n:
-Authorization: Bearer fm_TU_API_KEY_AQUI
+// Antes:
+const startAt = `${date}T${slot_start}:00`;
+const endAt   = `${date}T${endHH}:${endMM}:00`;
+
+// Después:
+const startAt = `${date}T${slot_start}:00-06:00`;
+const endAt   = `${date}T${endHH}:${endMM}:00-06:00`;
 ```
 
----
+Esto garantiza que PostgreSQL almacene la hora correcta y que el navegador la muestre igual en cualquier zona horaria.
 
-### Configuracion en n8n
+También hay que aplicar el mismo fix en `supabase/functions/manage-reschedule/index.ts` para que reagendar tampoco tenga este problema.
 
-Una vez implementado, en el nodo HTTP Request de n8n que llama al triage-webhook, agregar:
+#### Cambio 2: Política RLS para que el doctor pueda leer sus pacientes
 
-- **Authentication**: Header Auth
-- **Name**: `Authorization`
-- **Value**: `Bearer fm_XXXXXXXXXXXXXXXX` (la API Key generada en la plataforma)
+Agregar una migration con la siguiente policy en la tabla `patients`:
 
----
-
-### Flujo completo
-
-```text
-n8n bot termina triaje
-      |
-      v
-HTTP POST a triage-webhook
-  Headers:
-    Authorization: Bearer fm_abc123...
-    Content-Type: application/json
-  Body:
-    { doctor_id, patient_name, patient_phone, symptoms }
-      |
-      v
-triage-webhook valida API Key
-  -> hash(fm_abc123...) == key_hash en BD?
-  -> is_active == true?
-      |
-    Si no -> 401 Unauthorized
-    Si si -> procesa y retorna reserve_url
+```sql
+CREATE POLICY "Doctor can read own patients"
+  ON public.patients
+  FOR SELECT
+  USING (
+    id IN (
+      SELECT patient_id FROM public.appointments
+      WHERE doctor_id = get_doctor_id_for_user(auth.uid())
+    )
+  );
 ```
+
+Esto permite al doctor leer únicamente los pacientes que tienen citas con él, sin exponer otros pacientes del sistema.
 
 ---
 
@@ -67,6 +88,13 @@ triage-webhook valida API Key
 
 | Archivo | Cambio |
 |---|---|
-| `supabase/functions/triage-webhook/index.ts` | Agregar validacion de API Key por header Authorization |
+| `supabase/functions/reserve-create/index.ts` | Agregar offset `-06:00` a `startAt` y `endAt` |
+| `supabase/functions/manage-reschedule/index.ts` | Agregar offset `-06:00` a `startAt` y `endAt` |
+| Migration SQL | Nueva policy RLS en `patients` para doctores |
 
-Un cambio pequeno y puntual. No requiere migracion de base de datos ya que la tabla `api_keys` ya existe con los campos necesarios (`key_hash`, `is_active`, `last_used_at`).
+---
+
+### Notas técnicas
+
+- El offset `-06:00` corresponde a **America/Mexico_City** en horario estándar. En horario de verano (CST → CDT) el offset cambia a `-05:00`. Si se necesita precisión total, se puede usar la librería de Temporal/Intl para obtener el offset real en la fecha dada, pero para esta aplicación el offset fijo es suficiente por ahora.
+- El join embebido de Supabase (`patients(full_name, phone)`) evalúa RLS en el contexto del usuario autenticado, por eso el doctor no ve los datos a pesar de que la cita sí le pertenece.
