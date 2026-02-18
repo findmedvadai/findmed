@@ -11,10 +11,21 @@ import {
   isToday,
   parseISO,
   differenceInMinutes,
-  getHours,
-  getMinutes,
 } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
+
+const MEXICO_TZ = "America/Mexico_City";
+
+function getMexicoHours(date: Date): number {
+  return toZonedTime(date, MEXICO_TZ).getHours();
+}
+function getMexicoMinutes(date: Date): number {
+  return toZonedTime(date, MEXICO_TZ).getMinutes();
+}
+function formatMexicoTime(date: Date, fmt: string): string {
+  return format(toZonedTime(date, MEXICO_TZ), fmt);
+}
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -185,7 +196,7 @@ export default function Agenda() {
 
   useEffect(() => {
     const now = new Date();
-    const currentHour = getHours(now);
+    const currentHour = getMexicoHours(now);
     if (scrollRef.current && currentHour >= START_HOUR && currentHour <= END_HOUR) {
       scrollRef.current.scrollTop = Math.max(0, (currentHour - START_HOUR - 1) * HOUR_HEIGHT);
     }
@@ -215,8 +226,8 @@ export default function Agenda() {
 
   // Current time line position
   const currentTimeTop = useMemo(() => {
-    const h = getHours(currentTime);
-    const m = getMinutes(currentTime);
+    const h = getMexicoHours(currentTime);
+    const m = getMexicoMinutes(currentTime);
     if (h < START_HOUR || h >= END_HOUR) return null;
     return ((h - START_HOUR) * 60 + m) / 60 * HOUR_HEIGHT;
   }, [currentTime]);
@@ -375,7 +386,7 @@ export default function Agenda() {
                 {/* Events */}
                 {positioned.map(({ item, col, totalCols }) => {
                   const startMinutes =
-                    (getHours(item.start) - START_HOUR) * 60 + getMinutes(item.start);
+                    (getMexicoHours(item.start) - START_HOUR) * 60 + getMexicoMinutes(item.start);
                   const duration = Math.max(15, differenceInMinutes(item.end, item.start));
                   const top = (startMinutes / 60) * HOUR_HEIGHT;
                   const height = (duration / 60) * HOUR_HEIGHT;
@@ -396,11 +407,11 @@ export default function Agenda() {
                         left: `calc(${leftPercent}% + 1px)`,
                         width: `calc(${widthPercent}% - 2px)`,
                       }}
-                      title={`${item.title}\n${format(item.start, "HH:mm")} - ${format(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
+                       title={`${item.title}\n${formatMexicoTime(item.start, "HH:mm")} - ${formatMexicoTime(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
                     >
                       <div className="font-semibold truncate">{item.title}</div>
                       <div className="truncate opacity-80">
-                        {format(item.start, "HH:mm")} - {format(item.end, "HH:mm")}
+                        {formatMexicoTime(item.start, "HH:mm")} - {formatMexicoTime(item.end, "HH:mm")}
                       </div>
                     </div>
                   );
