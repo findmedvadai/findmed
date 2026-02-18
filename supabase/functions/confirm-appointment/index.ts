@@ -23,7 +23,7 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  let body: { appointment_id?: string; patient_phone?: string };
+  let body: { appointment_id?: string; patient_phone?: string; manage_token?: string };
   try {
     body = await req.json();
   } catch {
@@ -33,29 +33,54 @@ Deno.serve(async (req) => {
     });
   }
 
-  const { appointment_id, patient_phone } = body;
-  if (!appointment_id && !patient_phone) {
+  const { appointment_id, patient_phone, manage_token } = body;
+  if (!appointment_id && !patient_phone && !manage_token) {
     return new Response(
-      JSON.stringify({ error: "appointment_id o patient_phone requerido" }),
+      JSON.stringify({ error: "appointment_id, patient_phone o manage_token requerido" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+
+  let resolvedAppointmentId: string | undefined = appointment_id;
+
+  // Resolve via manage_token if provided
+  if (manage_token && !resolvedAppointmentId) {
+    const { data: tokenRow } = await supabase
+      .from("appointment_manage_tokens")
+      .select("appointment_id, expires_at")
+      .eq("token", manage_token)
+      .maybeSingle();
+
+    if (!tokenRow) {
+      return new Response(JSON.stringify({ error: "Token inválido" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (new Date(tokenRow.expires_at) < new Date()) {
+      return new Response(JSON.stringify({ error: "Este enlace ha expirado" }), {
+        status: 410,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    resolvedAppointmentId = tokenRow.appointment_id;
   }
 
   let appointmentQuery = supabase
     .from("appointments")
     .select("id, status, doctor_id, patient_id, start_at");
 
-  if (appointment_id) {
-    appointmentQuery = appointmentQuery.eq("id", appointment_id);
+  if (resolvedAppointmentId) {
+    appointmentQuery = appointmentQuery.eq("id", resolvedAppointmentId);
   } else {
     // Find by patient phone - get the latest scheduled appointment
-    const { data: patient } = await supabase
+    const { data: patientRow } = await supabase
       .from("patients")
       .select("id")
       .eq("phone", patient_phone!)
       .maybeSingle();
 
-    if (!patient) {
+    if (!patientRow) {
       return new Response(JSON.stringify({ error: "Paciente no encontrado" }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -63,7 +88,7 @@ Deno.serve(async (req) => {
     }
 
     appointmentQuery = appointmentQuery
-      .eq("patient_id", patient.id)
+      .eq("patient_id", patientRow.id)
       .eq("status", "scheduled")
       .order("start_at", { ascending: true })
       .limit(1);
@@ -99,10 +124,10 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Get patient name for notification
+  // Get patient info for notification
   const { data: patient } = await supabase
     .from("patients")
-    .select("full_name")
+    .select("full_name, phone")
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
@@ -116,25 +141,45 @@ Deno.serve(async (req) => {
     body: `${patient?.full_name ?? "Paciente"} confirmó su cita del ${appointment.start_at?.split("T")[0] ?? ""}`,
   });
 
-  // Dispatch webhook
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  // Dispatch webhooks (fire-and-forget)
   try {
-    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch-webhook`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-      },
-      body: JSON.stringify({
-        event_type: "appointment.confirmed",
-        payload: {
-          appointment_id: appointment.id,
-          patient_name: patient?.full_name,
-          start_at: appointment.start_at,
-        },
+    await Promise.all([
+      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          event_type: "appointment.confirmed",
+          payload: {
+            appointment_id: appointment.id,
+            patient_name: patient?.full_name,
+            patient_phone: patient?.phone ?? null,
+            start_at: appointment.start_at,
+            confirmed_at: new Date().toISOString(),
+          },
+        }),
       }),
-    });
+      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          event_type: "appointment.status_changed",
+          payload: {
+            appointment_id: appointment.id,
+            patient_phone: patient?.phone ?? null,
+            patient_name: patient?.full_name ?? null,
+            previous_status: "scheduled",
+            new_status: "confirmed",
+            start_at: appointment.start_at,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      }),
+    ]);
   } catch (e) {
-    console.error("Error dispatching webhook:", e);
+    console.error("Error dispatching webhooks:", e);
   }
 
   return new Response(
