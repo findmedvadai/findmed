@@ -49,6 +49,8 @@ export default function Gestionar() {
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelled, setCancelled] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
 
   // Reschedule state
   const [showReschedule, setShowReschedule] = useState(false);
@@ -100,6 +102,30 @@ export default function Gestionar() {
       .catch(() => setSlots([]))
       .finally(() => setLoadingSlots(false));
   }, [selectedDate, appointment]);
+
+  const handleConfirm = async () => {
+    if (!token) return;
+    setConfirming(true);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/confirm-appointment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
+        body: JSON.stringify({ manage_token: token }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        toast.error(data.error);
+      } else {
+        setConfirmed(true);
+        setAppointment((prev) => prev ? { ...prev, status: "confirmed" } : prev);
+        toast.success("¡Cita confirmada exitosamente!");
+      }
+    } catch {
+      toast.error("Error al confirmar la cita");
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   const handleCancel = async () => {
     if (!token) return;
@@ -235,7 +261,7 @@ export default function Gestionar() {
                     <XCircle className="h-4 w-4" /> {STATUS_LABELS.cancelled}
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1 text-green-600">
+                  <span className="flex items-center gap-1 text-confirmed">{/* confirmed status color */}
                     <CheckCircle className="h-4 w-4" /> {STATUS_LABELS[appointment.status] ?? appointment.status}
                   </span>
                 )}
@@ -244,6 +270,27 @@ export default function Gestionar() {
 
             {!cancelled && appointment.status !== "cancelled" && (
               <div className="space-y-2 pt-2">
+                {/* Confirm button — only when scheduled */}
+                {(appointment.status === "scheduled" && !confirmed) && (
+                  <Button
+                    className="w-full"
+                    onClick={handleConfirm}
+                    disabled={confirming}
+                  >
+                    {confirming ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Confirmando...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Confirmar cita
+                      </>
+                    )}
+                  </Button>
+                )}
+
                 {/* Reschedule button */}
                 <Button
                   variant="outline"

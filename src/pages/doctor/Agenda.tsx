@@ -210,12 +210,14 @@ export default function Agenda() {
 
   const summary = useMemo(() => {
     if (!appointments) return { total: 0, confirmed: 0, scheduled: 0 };
+    const nowUtc = currentTime;
+    const pending = appointments.filter((a) => parseISO(a.end_at) > nowUtc);
     return {
-      total: appointments.length,
-      confirmed: appointments.filter((a) => a.status === "confirmed").length,
-      scheduled: appointments.filter((a) => a.status === "scheduled").length,
+      total: pending.length,
+      confirmed: pending.filter((a) => a.status === "confirmed").length,
+      scheduled: pending.filter((a) => a.status === "scheduled").length,
     };
-  }, [appointments]);
+  }, [appointments, currentTime]);
 
   function getEventStyle(item: CalendarItem): string {
     if (item.type === "google") return "bg-primary/80 text-primary-foreground";

@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
   // Get patient info for notification
   const { data: patient } = await supabase
     .from("patients")
-    .select("full_name")
+    .select("full_name, phone")
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
@@ -116,6 +116,7 @@ Deno.serve(async (req) => {
     title: "Cita cancelada por paciente",
     body: `${patient?.full_name ?? "Paciente"} canceló su cita del ${cancelDate}`,
   });
+
   if (appointment.google_event_id) {
     const { data: doctor } = await supabase
       .from("doctors")
@@ -153,27 +154,46 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Dispatch webhook (fire-and-forget)
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  // Dispatch webhooks (fire-and-forget)
   try {
-    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch-webhook`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-      },
-      body: JSON.stringify({
-        event_type: "appointment.cancelled",
-        payload: {
-          appointment_id: appointment.id,
-          patient_name: patient?.full_name,
-          doctor_id: appointment.doctor_id,
-          start_at: appointment.start_at,
-          cancel_reason: "patient",
-        },
+    await Promise.all([
+      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          event_type: "appointment.cancelled",
+          payload: {
+            appointment_id: appointment.id,
+            patient_name: patient?.full_name,
+            patient_phone: patient?.phone ?? null,
+            doctor_id: appointment.doctor_id,
+            start_at: appointment.start_at,
+            cancel_reason: "patient",
+          },
+        }),
       }),
-    });
+      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          event_type: "appointment.status_changed",
+          payload: {
+            appointment_id: appointment.id,
+            patient_phone: patient?.phone ?? null,
+            patient_name: patient?.full_name ?? null,
+            previous_status: appointment.status,
+            new_status: "cancelled",
+            start_at: appointment.start_at,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      }),
+    ]);
   } catch (e) {
-    console.error("Error dispatching webhook:", e);
+    console.error("Error dispatching webhooks:", e);
   }
 
   return new Response(

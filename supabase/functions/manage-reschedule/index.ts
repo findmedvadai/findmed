@@ -242,28 +242,49 @@ Deno.serve(async (req) => {
     },
   ]);
 
-  // Dispatch webhook (fire-and-forget)
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  // Dispatch webhooks (fire-and-forget)
   try {
-    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch-webhook`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-      },
-      body: JSON.stringify({
-        event_type: "appointment.rescheduled",
-        payload: {
-          old_appointment_id: oldAppt.id,
-          new_appointment_id: newAppt.id,
-          patient_name: patient?.full_name,
-          doctor_name: doctor?.full_name,
-          start_at: startAt,
-          end_at: endAt,
-        },
+    await Promise.all([
+      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          event_type: "appointment.rescheduled",
+          payload: {
+            old_appointment_id: oldAppt.id,
+            new_appointment_id: newAppt.id,
+            patient_name: patient?.full_name,
+            patient_phone: manageToken.patient_phone ?? null,
+            doctor_name: doctor?.full_name,
+            new_start_at: startAt,
+            old_start_at: oldAppt.start_at ?? null,
+            end_at: endAt,
+            manage_url: `${Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app"}/gestionar?token=${manageToken.token}`,
+          },
+        }),
       }),
-    });
+      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          event_type: "appointment.status_changed",
+          payload: {
+            appointment_id: newAppt.id,
+            patient_phone: manageToken.patient_phone ?? null,
+            patient_name: patient?.full_name ?? null,
+            previous_status: "scheduled",
+            new_status: "scheduled",
+            start_at: startAt,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      }),
+    ]);
   } catch (e) {
-    console.error("Error dispatching webhook:", e);
+    console.error("Error dispatching webhooks:", e);
   }
 
   return new Response(

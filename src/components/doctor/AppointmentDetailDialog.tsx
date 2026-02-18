@@ -82,18 +82,29 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
 
   const cancelMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from("appointments")
-        .update({ status: "cancelled", cancel_reason: "doctor" })
-        .eq("id", id);
-      if (error) throw error;
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error("No autenticado");
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const res = await fetch(`${supabaseUrl}/functions/v1/cancel-by-doctor`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: anonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ appointment_id: id }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Error al cancelar");
     },
     onSuccess: () => {
       toast.success("Cita cancelada");
       invalidate();
       onClose();
     },
-    onError: () => toast.error("Error al cancelar la cita"),
+    onError: (err: Error) => toast.error(err.message || "Error al cancelar la cita"),
   });
 
   const completeMutation = useMutation({
@@ -116,11 +127,33 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     mutationFn: async ({ id, doctorNotes }: { id: string; doctorNotes: string }) => {
       const { error } = await supabase
         .from("appointments")
-        .update({ doctor_notes: doctorNotes, doctor_notes_updated_at: new Date().toISOString() })
+        .update({ doctor_notes: doctorNotes, doctor_notes_updated_at: new Date().toISOString(), status: "completed" })
         .eq("id", id);
       if (error) throw error;
+      return id;
     },
-    onSuccess: () => {
+    onSuccess: async (id) => {
+      // Insert admin notification for completed appointment
+      try {
+        const [{ data: doctorData }, { data: apptData }] = await Promise.all([
+          supabase.from("doctors").select("full_name").eq("id", doctorId).single(),
+          supabase.from("appointments").select("patient_id").eq("id", id).single(),
+        ]);
+        if (apptData?.patient_id) {
+          const { data: patientData } = await supabase
+            .from("patients").select("full_name").eq("id", apptData.patient_id).single();
+          await supabase.from("notifications").insert({
+            doctor_id: doctorId,
+            appointment_id: id,
+            recipient_role: "admin",
+            type: "appointment_completed",
+            title: "Cita completada con notas",
+            body: `Dr. ${doctorData?.full_name ?? "Doctor"} completó notas para ${patientData?.full_name ?? "Paciente"}`,
+          } as any);
+        }
+      } catch (e) {
+        console.error("Error inserting admin notification:", e);
+      }
       toast.success("Notas guardadas");
       invalidate();
       setEditingNotes(false);

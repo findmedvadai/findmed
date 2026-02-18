@@ -20,12 +20,13 @@ export default function PorCompletar() {
     queryKey: ["por-completar", doctorId],
     queryFn: async () => {
       if (!doctorId) return [];
+      const nowIso = new Date().toISOString();
       const { data, error } = await supabase
         .from("appointments")
         .select("id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
         .eq("doctor_id", doctorId)
-        .eq("status", "completed")
         .is("doctor_notes", null)
+        .or(`status.eq.completed,and(status.eq.confirmed,end_at.lt.${nowIso})`)
         .order("start_at", { ascending: false });
 
       if (error) throw error;
