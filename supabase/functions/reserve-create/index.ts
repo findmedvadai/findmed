@@ -90,13 +90,13 @@ Deno.serve(async (req) => {
 
   const durationMinutes = settings?.appointment_duration_minutes ?? 30;
 
-  // Calculate start_at and end_at (keep as plain local time strings, no Z suffix)
-  const startAt = `${date}T${slot_start}:00`;
+  // Calculate start_at and end_at with explicit Mexico City offset (-06:00)
+  const startAt = `${date}T${slot_start}:00-06:00`;
   const slotParts = slot_start.split(":").map(Number);
   const totalMinutes = slotParts[0] * 60 + slotParts[1] + durationMinutes;
   const endHH = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
   const endMM = String(totalMinutes % 60).padStart(2, "0");
-  const endAt = `${date}T${endHH}:${endMM}:00`;
+  const endAt = `${date}T${endHH}:${endMM}:00-06:00`;
 
   // Get patient and doctor info
   const { data: patient } = await supabase
