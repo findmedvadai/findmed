@@ -1,122 +1,67 @@
 
-## Corrección de 3 problemas: duplicados en agenda, indicadores de notificación y re-autenticación de contraseña
+## Corrección definitiva: zona horaria y nombre del paciente
 
----
+### Diagnóstico confirmado
 
-### Problema 1: Eventos duplicados en la agenda del doctor
+#### Bug 1 — Zona horaria (reservé a las 11:00, aparece 5:00)
 
-**Causa raíz:**
+El archivo `supabase/functions/reserve-create/index.ts` en las líneas 94 y 99 construye los timestamps **sin offset de zona horaria**:
 
-Cuando se agenda una cita, `reserve-create` crea:
-1. Un registro en la tabla `appointments` (evento interno, amarillo en la agenda)
-2. Un evento en Google Calendar con el mismo contenido (evento externo, azul en la agenda)
+```
+const startAt = `${date}T${slot_start}:00`;      // → "2026-02-18T11:00:00"
+const endAt   = `${date}T${endHH}:${endMM}:00`;  // → "2026-02-18T11:30:00"
+```
 
-La función `google-calendar-events` devuelve todos los eventos del calendario de Google, incluyendo el que fue creado automáticamente por la plataforma.
+PostgreSQL almacena columnas `timestamp with time zone`. Al recibir un string sin offset, asume **UTC**, guardando `2026-02-18T11:00:00+00`. El navegador del doctor en México (UTC-6) convierte eso a las **5:00 AM local**. Esto ocurre porque el fix planeado en la conversación anterior nunca se aplicó.
 
-En `Agenda.tsx`, la deduplicación actual intenta evitar esto:
+**Fix**: Agregar el offset `-06:00` explícito:
+```
+const startAt = `${date}T${slot_start}:00-06:00`;
+const endAt   = `${date}T${endHH}:${endMM}:00-06:00`;
+```
+
+Esto hace que PostgreSQL almacene `2026-02-18T17:00:00+00` (11:00 CDMX = 17:00 UTC), y el navegador lo convierte correctamente a 11:00 AM local.
+
+**También aplica a `manage-reschedule`**: El mismo bug existe en la función de reagendamiento.
+
+#### Bug 2 — "Paciente desconocido"
+
+La consulta de la base de datos confirma que la tabla `patients` tiene **únicamente 2 políticas**:
+- `Admin can manage patients` (ALL)
+- `Admin can read patients` (SELECT)
+
+No existe ninguna política para doctores. La migración que se planeó anteriormente tampoco se ejecutó.
+
+Cuando `Agenda.tsx` ejecuta:
 ```typescript
-const appointmentIds = new Set((appointments || []).map((a) => a.id));
-for (const e of googleEvents || []) {
-  if (appointmentIds.has(e.id)) continue; // filtra por google_event_id == appointment.id
+.select("id, google_event_id, start_at, end_at, ..., patients(full_name, phone)")
 ```
 
-Pero el problema es que compara `e.id` (el ID del evento en Google Calendar) con `a.id` (el UUID de la cita en la plataforma). Estos nunca son iguales, por lo que el filtro no funciona. La cita siempre aparece duplicada.
+Supabase evalúa RLS en el contexto del usuario doctor. Como el doctor no tiene permiso de SELECT en `patients`, el join devuelve `null` → se muestra `"Paciente desconocido"`.
 
-**La solución:**
-
-La tabla `appointments` ya tiene una columna `google_event_id` que se llena cuando se crea el evento en Google Calendar. Se debe usar ese campo para la deduplicación en `Agenda.tsx`:
-
-```typescript
-// Antes (no funciona):
-const appointmentIds = new Set((appointments || []).map((a) => a.id));
-
-// Después (correcto):
-const googleEventIds = new Set(
-  (appointments || []).map((a) => a.google_event_id).filter(Boolean)
-);
-for (const e of googleEvents || []) {
-  if (googleEventIds.has(e.id)) continue; // filtra correctamente
-```
-
-Esto requiere que la query de `appointments` también seleccione `google_event_id`.
-
-**Sobre el timezone de los eventos de Google:**
-
-Los eventos de Google Calendar ya vienen con el offset correcto en su campo `dateTime` (ej. `2026-02-18T14:00:00-06:00`). La función `google-calendar-events` los pasa tal cual. `parseISO` los interpreta correctamente. El problema de que aparecen en horario incorrecto era porque ambos eventos (azul y amarillo) se mostraban y el amarillo tenía el bug de zona horaria que ya se planeó corregir con el offset `-06:00`.
-
-Al eliminar los duplicados y mantener la regla de timezone, la agenda mostrará un solo evento por cita en el horario correcto.
-
----
-
-### Problema 2: Indicador de notificaciones no leídas (círculo rojo)
-
-**Diseño:**
-
-Crear un hook `useUnreadNotifications` que retorne los conteos de no leídas para doctor y admin. Este hook consulta la tabla `notifications` y se mantiene actualizado mediante Realtime (ya existe la suscripción).
-
-- **Doctor:** contar `notifications` donde `doctor_id = doctorId AND recipient_role = 'doctor' AND is_read = false`
-- **Admin:** contar `notifications` donde `recipient_role IN ('admin', 'superadmin') AND is_read = false`
-
-**Implementación:**
-
-En `DoctorLayout.tsx`: añadir una query de conteo de no leídas y mostrar un punto rojo sobre el ícono del item "Inbox".
-
-En `AdminLayout.tsx`: igual, pero para el admin.
-
-El badge debe desaparecer automáticamente cuando las notificaciones se marcan como leídas (ya que tanto DoctorInbox como AdminInbox marcan como leídas al interactuar, y el Realtime actualiza el conteo).
-
-El círculo rojo aparecerá como un pequeño punto superpuesto al nombre del nav item:
-
-```tsx
-<span>{item.title}</span>
-{item.url === "/doctor/inbox" && unreadCount > 0 && (
-  <span className="ml-auto h-2 w-2 rounded-full bg-red-500" />
-)}
+**Fix**: Agregar una política RLS que permita al doctor leer los pacientes de sus propias citas:
+```sql
+CREATE POLICY "Doctor can read own patients"
+  ON public.patients
+  FOR SELECT
+  USING (
+    id IN (
+      SELECT patient_id FROM public.appointments
+      WHERE doctor_id = get_doctor_id_for_user(auth.uid())
+    )
+  );
 ```
 
 ---
 
-### Problema 3: Re-autenticación de contraseña al hacer login
+### Cambios a implementar
 
-**Causa raíz actual:**
-
-`PasswordGate` guarda el estado en `sessionStorage`. El `sessionStorage` persiste durante toda la sesión del navegador (no se borra al cerrar sesión con `signOut`). Entonces si el admin cierra sesión y vuelve a entrar sin cerrar la pestaña, la contraseña ya está "recuerdada".
-
-**La solución:**
-
-En lugar de usar `sessionStorage`, vincular el estado de "desbloqueado" al ID de sesión de autenticación actual. Al hacer login, el ID de sesión cambia, por lo que el unlock anterior ya no es válido.
-
-Estrategia: guardar en `sessionStorage` tanto el flag como el `session.id` (o `user.id`) del momento en que se desbloqueó. Al leer el storage, validar que el `session.id` actual coincida con el guardado.
-
-```typescript
-// Al desbloquear:
-sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ unlocked: true, sessionId: session.id }));
-
-// Al inicializar:
-const stored = sessionStorage.getItem(STORAGE_KEY);
-const { unlocked, sessionId } = JSON.parse(stored);
-if (unlocked && sessionId === currentSession.id) setUnlocked(true);
-```
-
-Esto garantiza que al hacer un nuevo login (nueva sesión, nuevo `session.id`), el gate vuelve a pedir contraseña aunque la pestaña del navegador no se haya cerrado.
-
-`PasswordGate` necesita recibir el `session` actual como prop o leerlo a través del hook `useAuth`.
-
----
-
-### Archivos a modificar
-
-| Archivo | Cambio |
+| Archivo / Recurso | Cambio |
 |---|---|
-| `src/pages/doctor/Agenda.tsx` | Fix de deduplicación: usar `google_event_id` en lugar de `id` para filtrar eventos de Google Calendar |
-| `src/components/layouts/DoctorLayout.tsx` | Añadir query de notificaciones no leídas y mostrar indicador rojo en el nav item de Inbox |
-| `src/components/layouts/AdminLayout.tsx` | Añadir query de notificaciones no leídas y mostrar indicador rojo en el nav item de Inbox |
-| `src/components/admin/PasswordGate.tsx` | Vincular el estado de desbloqueado al `session.id` actual para forzar re-autenticación en cada nuevo login |
+| `supabase/functions/reserve-create/index.ts` | Líneas 94 y 99: agregar `-06:00` a `startAt` y `endAt` |
+| `supabase/functions/manage-reschedule/index.ts` | Mismo fix de offset en los timestamps |
+| Migración SQL | Nueva policy RLS en `patients` para doctores |
 
----
+### Nota sobre las citas existentes
 
-### Notas técnicas
-
-- La query de appointments en Agenda ya selecciona los campos necesarios excepto `google_event_id` — se agrega al `.select()`.
-- El Realtime de notificaciones ya existe en `DoctorInbox` y `AdminInbox`. En los layouts se hará una query ligera (`count`) que se invalida por Realtime para mantener el badge actualizado sin lógica duplicada costosa.
-- No se requieren cambios en la base de datos ni en Edge Functions para ninguno de estos tres cambios.
+Las citas ya creadas con horario incorrecto seguirán mostrando mal en la agenda porque sus timestamps ya están guardados en UTC sin el offset correcto. Solo las **nuevas citas** creadas después de este fix se guardarán correctamente. Las antiguas tendrían que corregirse manualmente en la BD si es necesario.
