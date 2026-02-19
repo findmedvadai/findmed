@@ -79,13 +79,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (oldAppt.status === "cancelled") {
-    return new Response(JSON.stringify({ error: "No se puede reagendar una cita cancelada" }), {
-      status: 409,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
   // Get doctor info
   const { data: doctor } = await supabase
     .from("doctors")
@@ -137,25 +130,32 @@ Deno.serve(async (req) => {
     }
   };
 
-  // 1. Delete old Google Calendar event
+  // 1. Only cancel old appointment + delete Google event if not already cancelled
   const accessToken = await getAccessToken();
-  if (accessToken && oldAppt.google_event_id && doctor?.google_calendar_id) {
-    const calendarId = encodeURIComponent(doctor.google_calendar_id);
-    try {
-      await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${oldAppt.google_event_id}`,
-        { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-    } catch (err) {
-      console.error("Error deleting old Google event:", err);
+  if (oldAppt.status !== "cancelled") {
+    if (accessToken && oldAppt.google_event_id && doctor?.google_calendar_id) {
+      const calendarId = encodeURIComponent(doctor.google_calendar_id);
+      try {
+        await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${oldAppt.google_event_id}`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+      } catch (err) {
+        console.error("Error deleting old Google event:", err);
+      }
     }
+
+    await supabase
+      .from("appointments")
+      .update({ status: "cancelled", cancel_reason: "patient" })
+      .eq("id", oldAppt.id);
   }
 
-  // 2. Cancel old appointment
-  await supabase
-    .from("appointments")
-    .update({ status: "cancelled", cancel_reason: "patient" })
-    .eq("id", oldAppt.id);
+  // 2. Determine if within 48h → auto-confirm
+  const newStartDate = new Date(startAt);
+  const hoursUntilAppt = (newStartDate.getTime() - Date.now()) / (1000 * 60 * 60);
+  const autoConfirmed = hoursUntilAppt < 48;
+  const newStatus = autoConfirmed ? "confirmed" : "scheduled";
 
   // 3. Create new appointment
   const { data: newAppt, error: apptError } = await supabase
@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
       patient_id: oldAppt.patient_id,
       start_at: startAt,
       end_at: endAt,
-      status: "scheduled",
+      status: newStatus,
       symptoms: oldAppt.symptoms,
     })
     .select("id")
@@ -180,7 +180,8 @@ Deno.serve(async (req) => {
 
   // 4. Create new Google Calendar event
   let newGoogleEventId: string | null = null;
-  if (accessToken && doctor?.google_calendar_id) {
+  const gcAccessToken = accessToken ?? await getAccessToken();
+  if (gcAccessToken && doctor?.google_calendar_id) {
     const calendarId = encodeURIComponent(doctor.google_calendar_id);
     try {
       const eventBody = {
