@@ -175,7 +175,7 @@ export default function Gestionar() {
                 appointment_id: data.appointment_id,
                 start_at: data.start_at,
                 end_at: data.end_at,
-                status: "scheduled",
+                status: data.status || "scheduled",
                 patient_name: data.patient_name,
               }
             : prev

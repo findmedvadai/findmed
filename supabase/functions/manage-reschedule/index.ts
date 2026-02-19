@@ -292,6 +292,7 @@ Deno.serve(async (req) => {
     JSON.stringify({
       success: true,
       appointment_id: newAppt.id,
+      status: newStatus,
       doctor_name: doctor?.full_name ?? "Doctor",
       patient_name: patient?.full_name ?? "Paciente",
       start_at: startAt,
