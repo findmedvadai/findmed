@@ -33,8 +33,7 @@ Deno.serve(async (req) => {
     .select(`
       id, start_at, end_at, doctor_id, patient_id,
       doctors(full_name),
-      patients(full_name, phone),
-      doctor_schedule_settings!appointments_doctor_id_fkey(min_confirm_hours_before)
+      patients(full_name, phone)
     `)
     .eq("status", "scheduled")
     .gt("start_at", now.toISOString());
@@ -63,7 +62,13 @@ Deno.serve(async (req) => {
   for (const appt of appointments) {
     const patient = appt.patients as { full_name: string; phone: string } | null;
     const doctor = appt.doctors as { full_name: string } | null;
-    const settings = appt.doctor_schedule_settings as { min_confirm_hours_before: number } | null;
+
+    // Query settings separately since there's no FK between appointments and doctor_schedule_settings
+    const { data: settings } = await supabase
+      .from("doctor_schedule_settings")
+      .select("min_confirm_hours_before")
+      .eq("doctor_id", appt.doctor_id)
+      .maybeSingle();
 
     const minHours = settings?.min_confirm_hours_before ?? 24;
     const deadline = new Date(new Date(appt.start_at).getTime() - minHours * 60 * 60 * 1000);
