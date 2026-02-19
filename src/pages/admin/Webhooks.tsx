@@ -204,17 +204,55 @@ function EventChecklist({
   );
 }
 
-function PayloadBlock({ eventId, label }: { eventId: string; label: string }) {
+function PayloadBlock({
+  eventId,
+  label,
+  override,
+  onSave,
+}: {
+  eventId: string;
+  label: string;
+  override?: object | null;
+  onSave: (eventId: string, json: object) => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
   const example = PAYLOAD_EXAMPLES[eventId];
   if (!example) return null;
 
+  const currentData = override ?? example;
   const fullPayload = {
     event: eventId,
-    data: example,
+    data: currentData,
     timestamp: new Date().toISOString(),
   };
   const json = JSON.stringify(fullPayload, null, 2);
+
+  const startEditing = () => {
+    setDraft(JSON.stringify({ event: eventId, data: currentData, timestamp: new Date().toISOString() }, null, 2));
+    setJsonError(null);
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setJsonError(null);
+  };
+
+  const saveEditing = () => {
+    try {
+      const parsed = JSON.parse(draft);
+      const dataToSave = parsed.data ?? parsed;
+      onSave(eventId, dataToSave);
+      setEditing(false);
+      setJsonError(null);
+    } catch {
+      setJsonError("JSON inválido. Revisa la sintaxis.");
+    }
+  };
 
   return (
     <div className="border rounded-md overflow-hidden">
@@ -226,22 +264,52 @@ function PayloadBlock({ eventId, label }: { eventId: string; label: string }) {
           {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
           {label}
           <Badge variant="outline" className="text-[10px]">{eventId}</Badge>
+          {override && <Badge variant="secondary" className="text-[10px]">Personalizado</Badge>}
         </span>
       </button>
       {open && (
         <div className="relative">
-          <pre className="text-[11px] bg-muted p-3 overflow-x-auto leading-relaxed">{json}</pre>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute top-2 right-2 h-7 w-7"
-            onClick={() => {
-              navigator.clipboard.writeText(json);
-              toast({ title: "Copiado al portapapeles" });
-            }}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
+          {editing ? (
+            <div className="p-3 space-y-2">
+              <textarea
+                className="w-full text-[11px] bg-background border rounded p-2 font-mono leading-relaxed min-h-[200px] resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+              />
+              {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" size="sm" onClick={cancelEditing}>Cancelar</Button>
+                <Button size="sm" onClick={saveEditing}>Guardar</Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <pre className="text-[11px] bg-muted p-3 overflow-x-auto leading-relaxed">{json}</pre>
+              <div className="absolute top-2 right-2 flex gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title="Editar payload"
+                  onClick={startEditing}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => {
+                    navigator.clipboard.writeText(json);
+                    toast({ title: "Copiado al portapapeles" });
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -268,6 +336,7 @@ function WebhooksContent() {
   const [editDescription, setEditDescription] = useState("");
   const [editEvents, setEditEvents] = useState<string[]>([]);
   const [editActive, setEditActive] = useState(true);
+  const [editPayloadOverrides, setEditPayloadOverrides] = useState<Record<string, object>>({});
 
   const { data: webhooks, isLoading } = useQuery({
     queryKey: ["webhooks"],
@@ -288,6 +357,7 @@ function WebhooksContent() {
     setEditDescription(wh.description ?? "");
     setEditEvents(wh.events as string[]);
     setEditActive(wh.is_active);
+    setEditPayloadOverrides({});
     setEditTab("config");
   };
 
@@ -635,7 +705,37 @@ function WebhooksContent() {
                   <p className="text-sm text-muted-foreground">No hay eventos seleccionados.</p>
                 ) : (
                   editEvents.map((ev) => (
-                    <PayloadBlock key={ev} eventId={ev} label={allEventMap[ev] ?? ev} />
+                    <PayloadBlock
+                      key={ev}
+                      eventId={ev}
+                      label={allEventMap[ev] ?? ev}
+                      override={
+                        editPayloadOverrides[ev] ??
+                        (selectedWebhook?.payload_overrides as Record<string, object> | null)?.[ev] ??
+                        null
+                      }
+                      onSave={(eventId, data) => {
+                        const newOverrides = {
+                          ...(selectedWebhook?.payload_overrides as Record<string, object> ?? {}),
+                          ...editPayloadOverrides,
+                          [eventId]: data,
+                        };
+                        setEditPayloadOverrides(newOverrides);
+                        // Persist immediately
+                        supabase
+                          .from("webhooks")
+                          .update({ payload_overrides: newOverrides } as any)
+                          .eq("id", selectedWebhook.id)
+                          .then(({ error }) => {
+                            if (error) {
+                              toast({ title: "Error al guardar", description: error.message, variant: "destructive" });
+                            } else {
+                              queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+                              toast({ title: "Payload guardado" });
+                            }
+                          });
+                      }}
+                    />
                   ))
                 )}
               </div>
