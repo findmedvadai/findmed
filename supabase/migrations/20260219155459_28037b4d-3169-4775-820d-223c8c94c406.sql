@@ -1,0 +1,1 @@
+ALTER TABLE public.webhooks ADD COLUMN IF NOT EXISTS payload_overrides jsonb DEFAULT NULL;

@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
   // Get appointment — verify it belongs to the doctor
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, status, doctor_id, patient_id, start_at, end_at")
+    .select("id, status, doctor_id, patient_id, start_at, end_at, google_event_id")
     .eq("id", appointment_id)
     .eq("doctor_id", doctorId)
     .maybeSingle();
@@ -132,12 +132,43 @@ Deno.serve(async (req) => {
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
-  // Get doctor name
+  // Get doctor info (name + Google Calendar credentials)
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name")
+    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected")
     .eq("id", doctorId)
     .maybeSingle();
+
+  // Delete Google Calendar event if connected
+  if (appointment.google_event_id && doctor?.google_calendar_connected && doctor.google_refresh_token_ref && doctor.google_calendar_id) {
+    const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
+    const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+    try {
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          refresh_token: doctor.google_refresh_token_ref,
+          grant_type: "refresh_token",
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      if (tokenRes.ok && tokenData.access_token) {
+        const calendarId = encodeURIComponent(doctor.google_calendar_id);
+        await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${appointment.google_event_id}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${tokenData.access_token}` },
+          }
+        );
+      }
+    } catch (err) {
+      console.error("Error deleting Google Calendar event:", err);
+    }
+  }
 
   // Generate new manage token for rescheduling (12h expiry)
   const rescheduleToken = generateToken();

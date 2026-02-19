@@ -174,17 +174,30 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Convert UTC datetime string to local minutes in Mexico City timezone
+  const toMexicoMinutes = (dtStr: string): number => {
+    const d = new Date(dtStr);
+    const formatter = new Intl.DateTimeFormat("es-MX", {
+      timeZone: "America/Mexico_City",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const h = parseInt(parts.find((p) => p.type === "hour")!.value);
+    const m = parseInt(parts.find((p) => p.type === "minute")!.value);
+    return h * 60 + m;
+  };
+
   // Filter out slots that overlap with existing appointments or Google events
   const availableSlots = allSlots.filter((slot) => {
     const slotStartMinutes = parseInt(slot.split(":")[0]) * 60 + parseInt(slot.split(":")[1]);
     const slotEndMinutes = slotStartMinutes + durationMinutes;
 
-    // Check appointments
+    // Check appointments (convert UTC stored times to Mexico City local time)
     for (const appt of existingAppts || []) {
-      const apptStart = new Date(appt.start_at);
-      const apptEnd = new Date(appt.end_at);
-      const apptStartMin = apptStart.getHours() * 60 + apptStart.getMinutes();
-      const apptEndMin = apptEnd.getHours() * 60 + apptEnd.getMinutes();
+      const apptStartMin = toMexicoMinutes(appt.start_at);
+      const apptEndMin = toMexicoMinutes(appt.end_at);
 
       // Overlap check: at least 1 minute overlap
       if (slotStartMinutes < apptEndMin && slotEndMinutes > apptStartMin) {

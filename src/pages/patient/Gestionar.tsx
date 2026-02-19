@@ -268,80 +268,90 @@ export default function Gestionar() {
               </div>
             </div>
 
-            {!cancelled && appointment.status !== "cancelled" && (
-              <div className="space-y-2 pt-2">
-                {/* Confirm button — only when scheduled */}
-                {(appointment.status === "scheduled" && !confirmed) && (
-                  <Button
-                    className="w-full"
-                    onClick={handleConfirm}
-                    disabled={confirming}
-                  >
-                    {confirming ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Confirmando...
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle className="h-4 w-4 mr-2" />
-                        Confirmar cita
-                      </>
-                    )}
-                  </Button>
-                )}
+            <div className="space-y-2 pt-2">
+              {/* Message when cancelled */}
+              {(cancelled || appointment.status === "cancelled") && (
+                <p className="text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+                  Tu cita fue cancelada. Puedes reagendar a continuación.
+                </p>
+              )}
 
-                {/* Reschedule button */}
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => setShowReschedule(!showReschedule)}
-                >
-                  <CalendarDays className="h-4 w-4 mr-2" />
-                  Reagendar cita
-                </Button>
-
-                {/* Cancel button */}
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="destructive" className="w-full" disabled={cancelling}>
-                      {cancelling ? (
+              {/* Confirm and Cancel — only when NOT cancelled */}
+              {!cancelled && appointment.status !== "cancelled" && (
+                <>
+                  {/* Confirm button — only when scheduled */}
+                  {(appointment.status === "scheduled" && !confirmed) && (
+                    <Button
+                      className="w-full"
+                      onClick={handleConfirm}
+                      disabled={confirming}
+                    >
+                      {confirming ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Cancelando...
+                          Confirmando...
                         </>
                       ) : (
                         <>
-                          <AlertTriangle className="h-4 w-4 mr-2" />
-                          Cancelar cita
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          Confirmar cita
                         </>
                       )}
                     </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>¿Cancelar cita?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Esta acción no se puede deshacer. Tu cita con {appointment.doctor_name} el{" "}
-                        {format(new Date(appointment.start_at), "d 'de' MMMM", { locale: es })} a las{" "}
-                        {format(new Date(appointment.start_at), "HH:mm")} será cancelada.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>No, mantener</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleCancel}>
-                        Sí, cancelar
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            )}
+                  )}
+
+                  {/* Cancel button */}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" className="w-full" disabled={cancelling}>
+                        {cancelling ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Cancelando...
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="h-4 w-4 mr-2" />
+                            Cancelar cita
+                          </>
+                        )}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>¿Cancelar cita?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Esta acción no se puede deshacer. Tu cita con {appointment.doctor_name} el{" "}
+                          {format(new Date(appointment.start_at), "d 'de' MMMM", { locale: es })} a las{" "}
+                          {format(new Date(appointment.start_at), "HH:mm")} será cancelada.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>No, mantener</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleCancel}>
+                          Sí, cancelar
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </>
+              )}
+
+              {/* Reschedule button — always visible */}
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowReschedule(!showReschedule)}
+              >
+                <CalendarDays className="h-4 w-4 mr-2" />
+                Reagendar cita
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Reschedule section */}
-        {showReschedule && !cancelled && (
+        {/* Reschedule section — always visible when showReschedule is true */}
+        {showReschedule && (
           <>
             <Card>
               <CardHeader className="pb-2">
