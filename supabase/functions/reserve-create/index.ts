@@ -111,6 +111,12 @@ Deno.serve(async (req) => {
     .eq("id", session.doctor_id)
     .maybeSingle();
 
+  // Determine if within 48h → auto-confirm
+  const startDate = new Date(startAt);
+  const hoursUntilAppt = (startDate.getTime() - Date.now()) / (1000 * 60 * 60);
+  const autoConfirmed = hoursUntilAppt < 48;
+  const appointmentStatus = autoConfirmed ? "confirmed" : "scheduled";
+
   // Create appointment
   const { data: appointment, error: apptError } = await supabase
     .from("appointments")
@@ -119,7 +125,7 @@ Deno.serve(async (req) => {
       patient_id: session.patient_id,
       start_at: startAt,
       end_at: endAt,
-      status: "scheduled",
+      status: appointmentStatus,
       symptoms: session.symptoms,
       created_from_session_id: session.id,
     })
@@ -250,7 +256,7 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             patient_name: patient?.full_name ?? null,
             previous_status: null,
-            new_status: "scheduled",
+            new_status: appointmentStatus,
             start_at: startAt,
             timestamp: new Date().toISOString(),
           },
@@ -270,6 +276,7 @@ Deno.serve(async (req) => {
       doctor_name: doctor?.full_name ?? "Doctor",
       start_at: startAt,
       end_at: endAt,
+      auto_confirmed: autoConfirmed,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );

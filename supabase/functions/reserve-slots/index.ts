@@ -47,12 +47,13 @@ Deno.serve(async (req) => {
   // Get doctor settings
   const { data: settings } = await supabase
     .from("doctor_schedule_settings")
-    .select("appointment_duration_minutes, timezone")
+    .select("appointment_duration_minutes, timezone, min_confirm_hours_before")
     .eq("doctor_id", doctor_id)
     .maybeSingle();
 
   const durationMinutes = settings?.appointment_duration_minutes ?? 30;
   const timezone = settings?.timezone ?? "America/Mexico_City";
+  const minConfirmHours = settings?.min_confirm_hours_before ?? 24;
 
   // Get weekly availability for this weekday
   const dayDate = new Date(date + "T12:00:00"); // avoid timezone issues
@@ -215,19 +216,43 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Don't show past slots for today
+    // Don't show past slots for today (using Mexico City timezone)
     const now = new Date();
-    const todayStr = now.toISOString().split("T")[0];
-    if (date === todayStr) {
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-      if (slotStartMinutes <= nowMinutes) return false;
+    const mxDateFormatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Mexico_City",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    const todayMxStr = mxDateFormatter.format(now); // "YYYY-MM-DD"
+
+    const mxTimeParts = new Intl.DateTimeFormat("es-MX", {
+      timeZone: "America/Mexico_City",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(now);
+    const nowMxH = parseInt(mxTimeParts.find((p) => p.type === "hour")!.value);
+    const nowMxM = parseInt(mxTimeParts.find((p) => p.type === "minute")!.value);
+    const nowMinutesMx = nowMxH * 60 + nowMxM;
+
+    if (date === todayMxStr) {
+      const cutoffMinutes = nowMinutesMx + (minConfirmHours * 60);
+      if (slotStartMinutes < cutoffMinutes) return false;
     }
 
     return true;
   });
 
+  // Determine if all slots fall within 48h from now
+  const nowMs = Date.now();
+  const fortyEightHoursMs = 48 * 60 * 60 * 1000;
+  let within48h = false;
+  if (availableSlots.length > 0) {
+    // Check if the requested date is within 48h
+    const firstSlot = availableSlots[0];
+    const slotDateTime = new Date(`${date}T${firstSlot}:00-06:00`);
+    within48h = (slotDateTime.getTime() - nowMs) < fortyEightHoursMs;
+  }
+
   return new Response(
-    JSON.stringify({ slots: availableSlots, duration_minutes: durationMinutes }),
+    JSON.stringify({ slots: availableSlots, duration_minutes: durationMinutes, within_48h: within48h }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });

@@ -46,6 +46,7 @@ const EVENT_GROUPS = [
       { id: "appointment.rescheduled", label: "Cita reagendada" },
       { id: "appointment.completed", label: "Cita completada" },
       { id: "appointment.reminder_48h", label: "Recordatorio 48h" },
+      { id: "appointment.reminder_day_of", label: "Recordatorio día de cita" },
       { id: "appointment.status_changed", label: "Cambio de estado" },
     ],
   },
@@ -129,6 +130,15 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
     start_at: "2026-03-15T10:00:00-06:00",
     manage_url: "https://app.example.com/gestionar?token=abc123",
     message: "Tu cita es en 48 horas. Puedes confirmar, cancelar o reagendar desde el link.",
+  },
+  "appointment.reminder_day_of": {
+    appointment_id: "uuid-example",
+    patient_name: "Karla Gamez",
+    patient_phone: "+521234567890",
+    doctor_name: "Dr. Juan Pérez",
+    start_at: "2026-03-15T10:00:00-06:00",
+    manage_url: "https://app.example.com/gestionar?token=abc123",
+    message: "Tu cita es hoy. Si necesitas reagendar o cancelar, usa el siguiente enlace.",
   },
   "appointment.status_changed": {
     appointment_id: "uuid-example",
