@@ -80,9 +80,9 @@ Deno.serve(async (req) => {
     if (existingToken) {
       manageToken = existingToken.token;
     } else {
-      // Generate new token with 72h expiry (covers reminder + appointment)
+      // Generate new token (expires when appointment ends)
       manageToken = generateToken();
-      const expiresAt = new Date(now.getTime() + 72 * 60 * 60 * 1000).toISOString();
+      const expiresAt = appt.end_at;
       await supabase.from("appointment_manage_tokens").insert({
         appointment_id: appt.id,
         token: manageToken,

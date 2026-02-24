@@ -209,9 +209,9 @@ Deno.serve(async (req) => {
     body: `${patient?.full_name ?? "Paciente"} - ${formattedDate} ${formattedTime}`,
   });
 
-  // Generate manage token (12 hours expiry)
+  // Generate manage token (expires when appointment ends)
   const manageToken = generateToken();
-  const manageExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  const manageExpiresAt = endAt;
 
   await supabase.from("appointment_manage_tokens").insert({
     appointment_id: appointment.id,
