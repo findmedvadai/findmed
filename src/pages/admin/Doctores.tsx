@@ -515,6 +515,11 @@ function CreateDoctorDialog({
       toast({ title: "Completa los campos obligatorios", variant: "destructive" });
       return;
     }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(form.email.trim())) {
+      toast({ title: "El correo electrónico no tiene un formato válido (ej. doctor@findmed.com)", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
