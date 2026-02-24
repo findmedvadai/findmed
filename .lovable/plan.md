@@ -1,49 +1,21 @@
 
 
-## Agregar fallback de zona al endpoint search-doctors
+## Validar formato de email antes de enviar el formulario
 
 ### Que cambia
 
-Cuando se envia una zona y no hay doctores que coincidan con ciudad + especialidad + zona, el endpoint automaticamente vuelve a buscar solo con ciudad + especialidad (sin zona) y devuelve todos los resultados disponibles. La respuesta incluye un campo `fallback` que indica si se uso el fallback o no.
+Agregar validacion de formato de email en el formulario de crear doctor para que el usuario vea un mensaje claro si el correo no tiene un formato valido (ej. falta el `@` o el dominio), antes de que se envie al backend.
 
-### Flujo con fallback
+### Comportamiento
 
-```text
-1. Buscar por ciudad + especialidad + zona
-2. Si hay resultados -> devolver con fallback: false
-3. Si NO hay resultados -> buscar por ciudad + especialidad (sin zona)
-4. Devolver resultados con fallback: true
-```
-
-### Ejemplo de respuesta con fallback
-
-```json
-{
-  "success": true,
-  "total": 3,
-  "fallback": true,
-  "fallback_reason": "No se encontraron doctores en la zona 'Pedregal'. Mostrando todos los doctores de la especialidad en la ciudad.",
-  "doctors": [
-    {
-      "id": "uuid",
-      "full_name": "Dr. Juan Perez",
-      "phone": "+525512345678",
-      "address": "Av. Insurgentes 100",
-      "city": "Ciudad de México",
-      "zone": "Roma Norte",
-      "specialties": ["Gastroenterólogo"]
-    }
-  ]
-}
-```
-
-Si la busqueda original (con zona) encuentra resultados, `fallback` sera `false` y no habra `fallback_reason`.
+- Al hacer clic en "Crear Doctor", si el email no tiene formato valido, se muestra un toast: **"El correo electrónico no tiene un formato válido (ej. doctor@findmed.com)"**
+- No se hace la llamada al backend hasta que el formato sea correcto
+- Se valida con una expresion regular simple que verifica `algo@algo.algo`
 
 ### Detalle tecnico
 
-**Archivo modificado**: `supabase/functions/search-doctors/index.ts`
+**Archivo modificado**: `src/pages/admin/Doctores.tsx`
 
-- Despues de la busqueda con zona, si `result.length === 0` y se envio zona, se ejecuta una segunda busqueda sin el filtro de zona
-- Se agregan los campos `fallback` (boolean) y `fallback_reason` (string, solo cuando fallback es true) a la respuesta JSON
-- El resto de la logica (autenticacion, filtrado por ciudad/especialidad, formato de respuesta) permanece igual
-
+- En la funcion `handleCreate`, agregar una validacion de formato de email despues del check de campos obligatorios
+- Usar regex basica: `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`
+- Si no pasa, mostrar toast descriptivo con ejemplo del formato esperado y hacer `return` antes de llamar al backend
