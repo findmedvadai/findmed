@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.send-day-of-reminders]
 verify_jwt = false
+
+[functions.search-doctors]
+verify_jwt = false
