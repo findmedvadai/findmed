@@ -170,9 +170,9 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Generate new manage token for rescheduling (12h expiry)
+  // Generate new manage token for rescheduling (expires when appointment would have ended)
   const rescheduleToken = generateToken();
-  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  const expiresAt = appointment.end_at;
   await supabase.from("appointment_manage_tokens").insert({
     appointment_id: appointment_id,
     token: rescheduleToken,

@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
   if (appointment_id) {
     const { data } = await supabase
       .from("appointments")
-      .select("id, status, patient_id")
+      .select("id, status, patient_id, end_at")
       .eq("id", appointment_id)
       .maybeSingle();
     appointment = data;
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
 
     const { data } = await supabase
       .from("appointments")
-      .select("id, status, patient_id")
+      .select("id, status, patient_id, end_at")
       .eq("patient_id", patient.id)
       .in("status", ["scheduled", "confirmed"])
       .order("start_at", { ascending: true })
@@ -106,9 +106,9 @@ Deno.serve(async (req) => {
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
-  // Generate manage token (12 hours)
+  // Generate manage token (expires when appointment ends)
   const manageToken = generateToken();
-  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  const expiresAt = appointment.end_at;
 
   await supabase.from("appointment_manage_tokens").insert({
     appointment_id: appointment.id,
