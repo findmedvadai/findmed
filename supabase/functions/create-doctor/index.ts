@@ -54,7 +54,6 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const {
-      email,
       password,
       full_name,
       phone,
@@ -63,6 +62,7 @@ Deno.serve(async (req) => {
       zone_id,
       specialty_ids,
     } = body;
+    const email = (body.email ?? "").trim().toLowerCase();
 
     if (!email || !password || !full_name) {
       return new Response(
