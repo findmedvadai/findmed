@@ -100,26 +100,46 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Step 2: Query doctors filtered by city (and optionally zone)
-  let query = supabase
-    .from("doctors")
-    .select("id, full_name, phone, address, cities!inner(name), zones(name)")
-    .in("id", doctorIds)
-    .eq("is_active", true)
-    .eq("is_deleted", false)
-    .ilike("cities.name", `%${ciudad}%`);
+  // Helper to query doctors by city (and optionally zone)
+  const queryDoctors = async (withZone: boolean) => {
+    let q = supabase
+      .from("doctors")
+      .select("id, full_name, phone, address, cities!inner(name), zones(name)")
+      .in("id", doctorIds)
+      .eq("is_active", true)
+      .eq("is_deleted", false)
+      .ilike("cities.name", `%${ciudad}%`);
 
-  if (zona) {
-    query = query.ilike("zones.name", `%${zona}%`);
-  }
+    if (withZone && zona) {
+      q = q.ilike("zones.name", `%${zona}%`);
+    }
 
-  const { data: doctors, error: docErr } = await query;
+    return q;
+  };
+
+  // Step 2: Query with zone if provided
+  let { data: doctors, error: docErr } = await queryDoctors(!!zona);
 
   if (docErr) {
     return new Response(
       JSON.stringify({ error: "Query error", details: docErr.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+
+  let fallback = false;
+
+  // Step 2b: Fallback — if zone was sent but no results, retry without zone
+  if (zona && (!doctors || doctors.length === 0)) {
+    const { data: fallbackDoctors, error: fbErr } = await queryDoctors(false);
+    if (fbErr) {
+      return new Response(
+        JSON.stringify({ error: "Query error", details: fbErr.message }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    doctors = fallbackDoctors;
+    fallback = true;
   }
 
   // Step 3: Get all specialties for matched doctors
@@ -151,11 +171,15 @@ Deno.serve(async (req) => {
     specialties: specialtiesMap[d.id] || [],
   }));
 
-  // Sort by zone name
   result.sort((a: any, b: any) => (a.zone || "").localeCompare(b.zone || ""));
 
+  const responseBody: any = { success: true, total: result.length, fallback, doctors: result };
+  if (fallback) {
+    responseBody.fallback_reason = `No se encontraron doctores en la zona '${zona}'. Mostrando todos los doctores de la especialidad en la ciudad.`;
+  }
+
   return new Response(
-    JSON.stringify({ success: true, total: result.length, doctors: result }),
+    JSON.stringify(responseBody),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });
