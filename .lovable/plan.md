@@ -1,49 +1,73 @@
 
 
-## Cambiar expiración de manage tokens: de 12 horas fijas a cuando pase la cita
+## Plan: Webhook 48h + Notificaciones de notas + Filtros del Inbox Admin
 
-### Que cambia
+### 1. Agregar `min_confirm_hours_before` al webhook de Recordatorio 48h
 
-Actualmente los tokens de gestión (manage tokens) expiran 12 horas después de crearse. Con este cambio, expirarán cuando la cita termine (`end_at` de la cita), para que el paciente pueda gestionar su cita en cualquier momento antes de que ocurra.
+**Archivo**: `supabase/functions/send-appointment-reminders/index.ts`
 
-### Comportamiento nuevo
+- Consultar `doctor_schedule_settings` para obtener `min_confirm_hours_before` del doctor de cada cita
+- Agregar el campo `min_confirm_hours_before` al payload del evento `appointment.reminder_48h`
 
-- Si agendo una cita para dentro de 2 semanas, el link funciona durante esas 2 semanas
-- Si agendo una cita para dentro de 3 días, el link funciona esos 3 días
-- Una vez que pasa la hora de la cita, el link expira automáticamente
-
-### Archivos a modificar
-
-**1. `supabase/functions/reserve-create/index.ts`**
-- Cambiar `expires_at` de `Date.now() + 12h` a usar el valor de `endAt` (fin de la cita)
-
-**2. `supabase/functions/generate-manage-link/index.ts`**
-- Obtener `start_at` y `end_at` de la cita en el query inicial
-- Usar `end_at` como `expires_at` del token
-
-**3. `supabase/functions/cancel-by-doctor/index.ts`**
-- Obtener `end_at` de la cita (ya disponible en el query)
-- Usar `end_at` como `expires_at` del token de reagendamiento
-
-**4. `supabase/functions/send-appointment-reminders/index.ts`**
-- Cuando genera un token nuevo (línea 85), usar `end_at` de la cita en lugar de `now + 72h`
-
-**5. `supabase/functions/send-day-of-reminders/index.ts`**
-- Misma lógica: usar `end_at` de la cita como expiración del token
-
-### Detalle técnico
-
-En cada función, el cambio es mínimo. Ejemplo en `reserve-create`:
-
-Antes:
 ```typescript
-const manageExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+// Dentro del loop, antes del dispatch:
+const { data: settings } = await supabase
+  .from("doctor_schedule_settings")
+  .select("min_confirm_hours_before")
+  .eq("doctor_id", appt.doctor_id)
+  .maybeSingle();
+
+const minConfirmHours = settings?.min_confirm_hours_before ?? 24;
+
+// En el payload:
+min_confirm_hours_before: minConfirmHours,
 ```
 
-Después:
-```typescript
-const manageExpiresAt = endAt; // expira cuando termina la cita
+---
+
+### 2. Corregir notificaciones de notas del doctor al admin
+
+**Problema raiz**: La tabla `notifications` no tiene politica RLS para INSERT. El codigo en `PorCompletar.tsx` intenta insertar una notificacion desde el cliente pero RLS lo bloquea silenciosamente.
+
+**Solucion - Migracion SQL**:
+```sql
+CREATE POLICY "Doctor can insert admin notifications"
+  ON public.notifications
+  FOR INSERT
+  WITH CHECK (
+    recipient_role IN ('admin', 'superadmin')
+    AND doctor_id = get_doctor_id_for_user(auth.uid())
+  );
 ```
 
-Las validaciones de expiración en `manage-validate`, `manage-cancel`, `manage-reschedule` y `confirm-appointment` no necesitan cambios porque ya comparan `expires_at < now()`, lo cual seguirá funcionando correctamente con la nueva fecha.
+**Archivo**: `src/pages/doctor/PorCompletar.tsx`
+
+Mejorar el body de la notificacion para incluir las notas y la fecha de la cita:
+
+```typescript
+body: `Dr. ${doctorData?.full_name ?? "Doctor"} completo notas para ${patient?.full_name ?? "Paciente"} (${format(parseISO(appointment.start_at), "d MMM yyyy", { locale: es })})\n\nNotas: ${notes.trim()}`,
+```
+
+---
+
+### 3. Nuevos filtros del Inbox del Admin: por doctor y por especialidad
+
+Actualmente el inbox filtra por tipo de notificacion. Se reemplazara por dos filtros: **Doctor** y **Especialidad**.
+
+**Archivo**: `src/pages/admin/Inbox.tsx`
+
+Cambios:
+
+- Eliminar el estado `typeFilter` y las constantes `FILTER_OPTIONS`
+- Agregar dos estados: `doctorFilter` (string, default `"all"`) y `specialtyFilter` (string, default `"all"`)
+- Cargar lista de doctores con query: `supabase.from("doctors").select("id, full_name, doctor_specialties(specialty_id)")`
+- Cargar lista de especialidades con query: `supabase.from("specialties").select("id, name").eq("is_active", true)`
+- Ampliar el query de notificaciones para traer la especialidad del doctor: `select("*, doctors(full_name, doctor_specialties(specialty_id))")`
+- Aplicar filtro por `doctor_id` directamente en el query de notificaciones cuando se selecciona un doctor
+- Aplicar filtro por especialidad en el cliente: si se selecciona una especialidad, solo mostrar notificaciones cuyo doctor tenga esa especialidad
+- Reemplazar el Select actual por dos Select en la barra de filtros:
+  - Select "Doctor" con opcion "Todos" + lista de doctores
+  - Select "Especialidad" con opcion "Todas" + lista de especialidades
+
+La UI de las tarjetas (iconos, badges, mark as read, etc.) se mantiene exactamente igual.
 
