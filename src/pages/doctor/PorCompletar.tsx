@@ -130,7 +130,7 @@ function AppointmentNoteCard({ appointment, doctorId, onSaved }: AppointmentNote
           recipient_role: "admin",
           type: "appointment_completed",
           title: "Cita completada con notas",
-          body: `Dr. ${doctorData?.full_name ?? "Doctor"} completó notas para ${patient?.full_name ?? "Paciente"}`,
+          body: `Dr. ${doctorData?.full_name ?? "Doctor"} completó notas para ${patient?.full_name ?? "Paciente"} (${format(parseISO(appointment.start_at), "d MMM yyyy", { locale: es })})\n\nNotas: ${notes.trim()}`,
         } as any);
       } catch (e) {
         console.error("Error inserting admin notification:", e);
