@@ -93,6 +93,15 @@ Deno.serve(async (req) => {
 
     const manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
 
+    // Fetch doctor's min_confirm_hours_before
+    const { data: settings } = await supabase
+      .from("doctor_schedule_settings")
+      .select("min_confirm_hours_before")
+      .eq("doctor_id", appt.doctor_id)
+      .maybeSingle();
+
+    const minConfirmHours = settings?.min_confirm_hours_before ?? 24;
+
     try {
       await fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
         method: "POST",
@@ -109,6 +118,7 @@ Deno.serve(async (req) => {
             doctor_name: doctor?.full_name ?? null,
             start_at: appt.start_at,
             manage_url: manageUrl,
+            min_confirm_hours_before: minConfirmHours,
             message: "Tu cita es en 48 horas. Puedes confirmar, cancelar o reagendar desde el link.",
           },
         }),

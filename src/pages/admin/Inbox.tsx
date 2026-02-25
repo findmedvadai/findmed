@@ -16,8 +16,8 @@ import {
   Bell,
   Check,
   CheckCheck,
-  Filter,
   User,
+  Stethoscope,
 } from "lucide-react";
 import {
   Select,
@@ -61,36 +61,70 @@ const TYPE_CONFIG: Record<
   },
 };
 
-const FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: "all", label: "Todas" },
-  { value: "appointment_scheduled", label: "Nuevas citas" },
-  { value: "appointment_cancelled_by_patient", label: "Canceladas (paciente)" },
-  { value: "appointment_cancelled_by_doctor", label: "Canceladas (doctor)" },
-  { value: "appointment_auto_cancelled", label: "Auto-canceladas" },
-  { value: "appointment_completed", label: "Completadas" },
-];
-
 export default function AdminInbox() {
   const queryClient = useQueryClient();
-  const [typeFilter, setTypeFilter] = useState("all");
+  const [doctorFilter, setDoctorFilter] = useState("all");
+  const [specialtyFilter, setSpecialtyFilter] = useState("all");
+
+  // Load doctors with their specialties
+  const { data: doctors } = useQuery({
+    queryKey: ["inbox-doctors"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("doctors")
+        .select("id, full_name, doctor_specialties(specialty_id)")
+        .eq("is_active", true)
+        .eq("is_deleted", false)
+        .order("full_name");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  // Load specialties
+  const { data: specialties } = useQuery({
+    queryKey: ["inbox-specialties"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("specialties")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   const { data: notifications, isLoading } = useQuery({
-    queryKey: ["admin-notifications", typeFilter],
+    queryKey: ["admin-notifications", doctorFilter, specialtyFilter],
     queryFn: async () => {
       let query = supabase
         .from("notifications")
-        .select("*, doctors(full_name)")
+        .select("*, doctors(full_name, doctor_specialties(specialty_id))")
         .in("recipient_role", ["admin", "superadmin"])
         .order("created_at", { ascending: false })
         .limit(100);
 
-      if (typeFilter !== "all") {
-        query = query.eq("type", typeFilter as NotificationType);
+      if (doctorFilter !== "all") {
+        query = query.eq("doctor_id", doctorFilter);
       }
 
       const { data, error } = await query;
       if (error) throw error;
-      return data ?? [];
+
+      let results = data ?? [];
+
+      // Client-side specialty filter
+      if (specialtyFilter !== "all") {
+        results = results.filter((n) => {
+          const doctorSpecs = (n as any).doctors?.doctor_specialties as
+            | { specialty_id: string }[]
+            | null;
+          return doctorSpecs?.some((ds) => ds.specialty_id === specialtyFilter);
+        });
+      }
+
+      return results;
     },
   });
 
@@ -172,16 +206,31 @@ export default function AdminInbox() {
               : "Sin notificaciones nuevas"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-52 gap-2">
-              <Filter className="h-4 w-4" />
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={doctorFilter} onValueChange={setDoctorFilter}>
+            <SelectTrigger className="w-48 gap-2">
+              <User className="h-4 w-4" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {FILTER_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
+              <SelectItem value="all">Todos los doctores</SelectItem>
+              {doctors?.map((doc) => (
+                <SelectItem key={doc.id} value={doc.id}>
+                  {doc.full_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={specialtyFilter} onValueChange={setSpecialtyFilter}>
+            <SelectTrigger className="w-48 gap-2">
+              <Stethoscope className="h-4 w-4" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las especialidades</SelectItem>
+              {specialties?.map((spec) => (
+                <SelectItem key={spec.id} value={spec.id}>
+                  {spec.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -232,7 +281,7 @@ export default function AdminInbox() {
                       </Badge>
                     </div>
                     {notif.body && (
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-sm text-muted-foreground whitespace-pre-line">
                         {notif.body}
                       </p>
                     )}
@@ -273,8 +322,8 @@ export default function AdminInbox() {
               Sin notificaciones
             </p>
             <p className="text-sm text-muted-foreground/70">
-              {typeFilter !== "all"
-                ? "No hay notificaciones de este tipo."
+              {doctorFilter !== "all" || specialtyFilter !== "all"
+                ? "No hay notificaciones con estos filtros."
                 : "Aquí aparecerán las notificaciones administrativas."}
             </p>
           </CardContent>
