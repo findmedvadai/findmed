@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Database } from "@/integrations/supabase/types";
+import AppointmentDetailDialog from "@/components/admin/AppointmentDetailDialog";
 
 type NotificationType = Database["public"]["Enums"]["notification_type"];
 
@@ -65,6 +66,7 @@ export default function AdminInbox() {
   const queryClient = useQueryClient();
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [specialtyFilter, setSpecialtyFilter] = useState("all");
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
 
   // Load doctors with their specialties
   const { data: doctors } = useQuery({
@@ -265,7 +267,13 @@ export default function AdminInbox() {
                   notif.is_read
                     ? "opacity-60"
                     : "border-l-4 border-l-primary shadow-sm"
-                }`}
+                } ${notif.appointment_id ? "cursor-pointer hover:bg-accent/50" : ""}`}
+                onClick={() => {
+                  if (notif.appointment_id) {
+                    setSelectedAppointmentId(notif.appointment_id);
+                    if (!notif.is_read) markReadMut.mutate(notif.id);
+                  }
+                }}
               >
                 <CardContent className="flex items-start gap-3 p-4">
                   <Icon
@@ -329,6 +337,14 @@ export default function AdminInbox() {
           </CardContent>
         </Card>
       )}
+
+      <AppointmentDetailDialog
+        appointmentId={selectedAppointmentId}
+        open={!!selectedAppointmentId}
+        onOpenChange={(open) => {
+          if (!open) setSelectedAppointmentId(null);
+        }}
+      />
     </div>
   );
 }
