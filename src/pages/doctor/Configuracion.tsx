@@ -243,9 +243,19 @@ export default function Configuracion() {
       
       const popup = window.open(url, "google-calendar-auth", "width=500,height=700,scrollbars=yes");
       
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data === "google-calendar-connected") {
+          window.removeEventListener("message", handleMessage);
+          setConnectingGoogle(false);
+          refetchDoctor();
+        }
+      };
+      window.addEventListener("message", handleMessage);
+
       const interval = setInterval(() => {
         if (popup?.closed) {
           clearInterval(interval);
+          window.removeEventListener("message", handleMessage);
           setConnectingGoogle(false);
           refetchDoctor();
         }
