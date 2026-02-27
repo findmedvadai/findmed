@@ -82,7 +82,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      renderHTML("¡Autorizado!", "Tu cuenta de Google ha sido vinculada. Cierra esta ventana y selecciona el calendario que deseas usar."),
+      renderSuccessHTML(),
       { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
     );
   } catch (err) {
@@ -112,6 +112,46 @@ function renderHTML(title: string, message: string): string {
     <p>${message}</p>
     <button onclick="window.close()">Cerrar ventana</button>
   </div>
+</body>
+</html>`;
+}
+
+function renderSuccessHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Conexión exitosa</title>
+<style>
+  body { font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; }
+  .card { background: white; border-radius: 12px; padding: 2.5rem; box-shadow: 0 4px 24px rgba(0,0,0,0.08); text-align: center; max-width: 400px; }
+  .check { width: 64px; height: 64px; margin: 0 auto 1rem; }
+  h1 { margin: 0 0 0.5rem; font-size: 1.5rem; color: #16a34a; }
+  p { color: #64748b; line-height: 1.5; }
+  .auto-close { font-size: 0.85rem; color: #94a3b8; margin-top: 0.5rem; }
+  button { margin-top: 1rem; padding: 0.6rem 1.8rem; border: none; background: #16a34a; color: white; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+  button:hover { background: #15803d; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <svg class="check" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="11" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+      <path d="M7 12.5l3 3 7-7" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1>¡Conexión exitosa!</h1>
+    <p>Tu cuenta de Google ha sido vinculada correctamente.<br/>Ya puedes cerrar esta ventana y seleccionar el calendario que deseas usar.</p>
+    <p class="auto-close" id="countdown">Esta ventana se cerrará automáticamente en 5 segundos...</p>
+    <button onclick="window.close()">Cerrar ventana</button>
+  </div>
+  <script>
+    try { window.opener?.postMessage("google-calendar-connected", "*"); } catch(e) {}
+    let sec = 5;
+    const el = document.getElementById("countdown");
+    const timer = setInterval(() => {
+      sec--;
+      if (sec <= 0) { clearInterval(timer); window.close(); }
+      else { el.textContent = "Esta ventana se cerrará automáticamente en " + sec + " segundos..."; }
+    }, 1000);
+  </script>
 </body>
 </html>`;
 }

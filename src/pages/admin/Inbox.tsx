@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
 import {
   Inbox,
   CalendarPlus,
@@ -18,6 +19,7 @@ import {
   CheckCheck,
   User,
   Stethoscope,
+  Search,
 } from "lucide-react";
 import {
   Select,
@@ -67,7 +69,7 @@ export default function AdminInbox() {
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [specialtyFilter, setSpecialtyFilter] = useState("all");
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
-
+  const [searchQuery, setSearchQuery] = useState("");
   // Load doctors with their specialties
   const { data: doctors } = useQuery({
     queryKey: ["inbox-doctors"],
@@ -209,6 +211,15 @@ export default function AdminInbox() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por paciente, doctor..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
           <Select value={doctorFilter} onValueChange={setDoctorFilter}>
             <SelectTrigger className="w-48 gap-2">
               <User className="h-4 w-4" />
@@ -252,9 +263,22 @@ export default function AdminInbox() {
         </div>
       </div>
 
-      {notifications && notifications.length > 0 ? (
+      {(() => {
+        const q = searchQuery.toLowerCase();
+        const filtered = q
+          ? notifications?.filter((n) => {
+              const doctorName = ((n as any).doctors?.full_name ?? "").toLowerCase();
+              return (
+                n.title.toLowerCase().includes(q) ||
+                (n.body ?? "").toLowerCase().includes(q) ||
+                doctorName.includes(q)
+              );
+            })
+          : notifications;
+        
+        return filtered && filtered.length > 0 ? (
         <div className="space-y-2">
-          {notifications.map((notif) => {
+          {filtered.map((notif) => {
             const cfg = TYPE_CONFIG[notif.type as NotificationType];
             const Icon = cfg?.icon ?? Bell;
             const created = parseISO(notif.created_at);
@@ -330,13 +354,16 @@ export default function AdminInbox() {
               Sin notificaciones
             </p>
             <p className="text-sm text-muted-foreground/70">
-              {doctorFilter !== "all" || specialtyFilter !== "all"
+              {searchQuery
+                ? "No hay resultados para tu búsqueda."
+                : doctorFilter !== "all" || specialtyFilter !== "all"
                 ? "No hay notificaciones con estos filtros."
                 : "Aquí aparecerán las notificaciones administrativas."}
             </p>
           </CardContent>
         </Card>
-      )}
+      );
+      })()}
 
       <AppointmentDetailDialog
         appointmentId={selectedAppointmentId}
