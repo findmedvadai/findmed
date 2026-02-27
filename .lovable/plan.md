@@ -1,44 +1,23 @@
 
 
-## Fix: Google Calendar callback - redirigir a pagina React en vez de retornar HTML
+## Fix: Desplegar google-calendar-callback y corregir URL de redireccion
 
-### Problema
+### Problema 1: Funcion no desplegada
+La funcion `google-calendar-callback` existe en el codigo pero no esta desplegada en produccion. Por eso Google muestra `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
 
-La edge function `google-calendar-callback` retorna HTML directamente, pero el navegador lo muestra como texto plano en vez de renderizarlo. Esto parece ser una limitacion de como se sirve el content-type en edge functions en ciertos navegadores/contextos.
-
-### Nuevo approach
-
-En vez de retornar HTML desde la edge function, **redirigir** a una pagina dentro de la app React que muestre la UI de exito. Esto garantiza que siempre se renderice correctamente.
+### Problema 2: URL de redireccion incorrecta
+El fallback de `SITE_URL` en la funcion apunta a `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app`, pero la app realmente corre en `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`. Esto haria que el redirect despues de conectar Google lleve a una URL que no existe.
 
 ### Cambios
 
-**1. Nueva pagina React**: `src/pages/GoogleCalendarSuccess.tsx`
-- Pagina simple que muestra el checkmark verde, mensaje de "Conexion exitosa!", countdown de 5 segundos y boton de cerrar
-- Envia `postMessage` al opener para que la ventana padre refresque
-- Auto-cierra con `window.close()` despues de 5 segundos
-- No requiere autenticacion (es una pagina publica)
+**1. Corregir URL en** `supabase/functions/google-calendar-callback/index.ts`
+- Cambiar el fallback de SITE_URL de `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app` a `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`
+- Esto aplica en la linea 15 y la linea 76
 
-**2. Agregar ruta en** `src/App.tsx`
-- Ruta `/google-calendar-success` que renderiza la nueva pagina
-- Ruta publica, sin ProtectedRoute
+**2. Desplegar la funcion**
+- Redesplegar `google-calendar-callback` para que este activa y responda correctamente
 
-**3. Modificar edge function** `supabase/functions/google-calendar-callback/index.ts`
-- Despues de guardar el refresh token exitosamente, en vez de retornar HTML, hacer un **redirect 302** a la URL de la app: `{SITE_URL}/google-calendar-success`
-- Para errores, redirigir a `/google-calendar-success?error=mensaje`
-- La pagina React lee el query param `error` para mostrar error o exito
-
-### Detalle tecnico
-
-Edge function (cambio en la respuesta exitosa):
-```typescript
-// En vez de: return new Response(renderSuccessHTML(), { headers: { "Content-Type": "text/html" } })
-// Ahora:
-const siteUrl = Deno.env.get("SITE_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
-return new Response(null, {
-  status: 302,
-  headers: { Location: `${siteUrl}/google-calendar-success` },
-});
-```
-
-La pagina React tendra el mismo diseno que ya estaba en el HTML: checkmark SVG verde, titulo, mensaje, countdown y boton. Pero al ser una pagina React normal, se renderizara siempre correctamente.
-
+### Resultado esperado
+1. Google redirige al callback → la funcion procesa el token → redirige a `/google-calendar-success` en la app React
+2. La pagina React muestra el checkmark verde, envia postMessage al opener, y se cierra automaticamente
+3. La ventana padre detecta la conexion y refresca la lista de calendarios
