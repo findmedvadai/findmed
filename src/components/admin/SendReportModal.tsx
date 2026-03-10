@@ -33,7 +33,6 @@ interface Props {
 export default function SendReportModal({ open, onOpenChange, formId, appointmentId, onSuccess }: Props) {
   const [destType, setDestType] = useState<"hospital" | "laboratory">("hospital");
   const [destId, setDestId] = useState("");
-  const [search, setSearch] = useState("");
 
   const { data: hospitals } = useQuery({
     queryKey: ["active-hospitals"],
@@ -45,7 +44,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
         .order("name");
       return (data ?? []) as any[];
     },
-    enabled: open && destType === "hospital",
+    enabled: open,
   });
 
   const { data: laboratories } = useQuery({
@@ -58,16 +57,10 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
         .order("name");
       return (data ?? []) as any[];
     },
-    enabled: open && destType === "laboratory",
+    enabled: open,
   });
 
   const options = destType === "hospital" ? hospitals : laboratories;
-  const filtered = search
-    ? options?.filter((o) =>
-        o.name.toLowerCase().includes(search.toLowerCase()) ||
-        (o.cities?.name ?? "").toLowerCase().includes(search.toLowerCase())
-      )
-    : options;
 
   const sendMut = useMutation({
     mutationFn: async () => {
