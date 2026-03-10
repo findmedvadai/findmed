@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -122,7 +121,6 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
     },
     onSuccess: () => {
       toast({ title: "Informe enviado" });
-      setDestId("");
       setDestId("");
       onSuccess();
     },
