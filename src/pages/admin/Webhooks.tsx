@@ -180,6 +180,23 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
     patient_name: "Karla Gamez",
     patient_phone: "+521234567890",
     doctor_name: "Dr. Juan Pérez",
+    start_at: "2026-03-15T10:00:00-06:00",
+    form: {
+      id: "uuid-example",
+      appointment_id: "uuid-example",
+      doctor_id: "uuid-example",
+      observations: "Paciente requiere cirugía.",
+      prescribed_medications: "Ibuprofeno 400mg cada 8 horas",
+      imaging_studies: null,
+      lab_tests: "Biometría hemática completa",
+      specialist_referral: null,
+      hospitalization: "Hospital General, cirugía programada, urgente",
+      review_status: "report_sent",
+      report_destination_type: "hospital",
+      report_destination_id: "uuid-example",
+      report_sent_at: "2026-03-10T20:05:41.848Z",
+      created_at: "2026-03-10T18:00:00.000Z",
+    },
     destination_type: "hospital",
     destination: {
       name: "Hospital General",
@@ -188,8 +205,6 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
       city: "CDMX",
       zone: "Centro",
     },
-    observations: "Paciente requiere cirugía.",
-    hospitalization: "Hospital General, cirugía programada, urgente",
   },
 };
 
