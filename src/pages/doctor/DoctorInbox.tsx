@@ -30,10 +30,10 @@ import type { Database } from "@/integrations/supabase/types";
 
 type NotificationType = Database["public"]["Enums"]["notification_type"];
 
-const TYPE_CONFIG: Record<
+const TYPE_CONFIG: Partial<Record<
   NotificationType,
   { label: string; icon: typeof Bell; className: string }
-> = {
+>> = {
   appointment_scheduled: {
     label: "Nueva cita",
     icon: CalendarPlus,

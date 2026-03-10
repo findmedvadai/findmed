@@ -20,6 +20,7 @@ import {
   User,
   Stethoscope,
   Search,
+  ClipboardList,
 } from "lucide-react";
 import {
   Select,
