@@ -8,9 +8,21 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
-import { ClipboardList, User, Save, Check, FileText } from "lucide-react";
+import { Check, User, FileText, Send, Pill, ScanLine, FlaskConical, UserRoundPlus, Building2 } from "lucide-react";
+
+const TOGGLE_FIELDS = [
+  { key: "prescribed_medications", label: "Se recetaron medicamentos", placeholder: "Nombres, dosis y frecuencia...", icon: Pill },
+  { key: "imaging_studies", label: "Se solicitaron estudios de imagen", placeholder: "Tipo de estudio (radiografía, ultrasonido, resonancia, etc.)...", icon: ScanLine },
+  { key: "lab_tests", label: "Se solicitaron análisis de laboratorio", placeholder: "Tipo de análisis (biometría, química sanguínea, etc.)...", icon: FlaskConical },
+  { key: "specialist_referral", label: "Se refirió a otro especialista", placeholder: "Especialidad y motivo de referencia...", icon: UserRoundPlus },
+  { key: "hospitalization", label: "Se envió a hospitalización", placeholder: "Hospital, motivo y urgencia...", icon: Building2 },
+] as const;
+
+type ToggleKey = typeof TOGGLE_FIELDS[number]["key"];
 
 export default function PorCompletar() {
   const { doctorId } = useAuth();
@@ -51,14 +63,14 @@ export default function PorCompletar() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Por Completar</h1>
         <p className="text-sm text-muted-foreground">
-          Citas completadas que aún necesitan tus notas médicas.
+          Citas completadas que aún necesitan tu formulario post-consulta.
         </p>
       </div>
 
       {appointments && appointments.length > 0 ? (
         <div className="space-y-4">
           {appointments.map((appt) => (
-            <AppointmentNoteCard
+            <PostConsultationForm
               key={appt.id}
               appointment={appt}
               doctorId={doctorId!}
@@ -74,7 +86,7 @@ export default function PorCompletar() {
             <Check className="mb-3 h-10 w-10 text-confirmed" />
             <p className="text-lg font-medium text-muted-foreground">Todo al día</p>
             <p className="text-sm text-muted-foreground/70">
-              No hay citas pendientes de notas médicas.
+              No hay citas pendientes de formulario post-consulta.
             </p>
           </CardContent>
         </Card>
@@ -83,7 +95,7 @@ export default function PorCompletar() {
   );
 }
 
-interface AppointmentNoteCardProps {
+interface PostConsultationFormProps {
   appointment: {
     id: string;
     start_at: string;
@@ -97,45 +109,114 @@ interface AppointmentNoteCardProps {
   onSaved: () => void;
 }
 
-function AppointmentNoteCard({ appointment, doctorId, onSaved }: AppointmentNoteCardProps) {
-  const [notes, setNotes] = useState("");
+function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultationFormProps) {
+  const [observations, setObservations] = useState("");
+  const [toggles, setToggles] = useState<Record<ToggleKey, boolean>>({
+    prescribed_medications: false,
+    imaging_studies: false,
+    lab_tests: false,
+    specialist_referral: false,
+    hospitalization: false,
+  });
+  const [fields, setFields] = useState<Record<ToggleKey, string>>({
+    prescribed_medications: "",
+    imaging_studies: "",
+    lab_tests: "",
+    specialist_referral: "",
+    hospitalization: "",
+  });
+
   const start = parseISO(appointment.start_at);
   const patient = appointment.patients as { full_name: string; phone: string } | null;
 
-  const saveMut = useMutation({
+  const handleToggle = (key: ToggleKey, checked: boolean) => {
+    setToggles((prev) => ({ ...prev, [key]: checked }));
+    if (!checked) {
+      setFields((prev) => ({ ...prev, [key]: "" }));
+    }
+  };
+
+  const submitMut = useMutation({
     mutationFn: async () => {
-      if (!notes.trim()) throw new Error("Las notas no pueden estar vacías");
-      const { error } = await supabase
+      // Build form data
+      const formData: Record<string, string | null> = {
+        observations: observations.trim() || null,
+      };
+      for (const f of TOGGLE_FIELDS) {
+        formData[f.key] = toggles[f.key] ? (fields[f.key].trim() || null) : null;
+      }
+
+      // Insert post consultation form
+      const { error: formError } = await supabase
+        .from("post_consultation_forms")
+        .insert({
+          appointment_id: appointment.id,
+          doctor_id: doctorId,
+          observations: formData.observations,
+          prescribed_medications: formData.prescribed_medications,
+          imaging_studies: formData.imaging_studies,
+          lab_tests: formData.lab_tests,
+          specialist_referral: formData.specialist_referral,
+          hospitalization: formData.hospitalization,
+        } as any);
+      if (formError) throw formError;
+
+      // Update appointment status
+      const { error: apptError } = await supabase
         .from("appointments")
         .update({
-          doctor_notes: notes.trim(),
+          doctor_notes: formData.observations,
           doctor_notes_updated_at: new Date().toISOString(),
           status: "completed" as any,
         })
         .eq("id", appointment.id);
-      if (error) throw error;
-    },
-    onSuccess: async () => {
-      // Insert admin notification for completed appointment
-      try {
-        const { data: doctorData } = await supabase
-          .from("doctors")
-          .select("full_name")
-          .eq("id", doctorId)
-          .single();
+      if (apptError) throw apptError;
 
-        await supabase.from("notifications").insert({
-          doctor_id: doctorId,
-          appointment_id: appointment.id,
-          recipient_role: "admin",
-          type: "appointment_completed",
-          title: "Cita completada con notas",
-          body: `Dr. ${doctorData?.full_name ?? "Doctor"} completó notas para ${patient?.full_name ?? "Paciente"} (${format(parseISO(appointment.start_at), "d MMM yyyy", { locale: es })})\n\nNotas: ${notes.trim()}`,
-        } as any);
+      // Get doctor name for notification
+      const { data: doctorData } = await supabase
+        .from("doctors")
+        .select("full_name")
+        .eq("id", doctorId)
+        .single();
+
+      // Insert admin notification
+      await supabase.from("notifications").insert({
+        doctor_id: doctorId,
+        appointment_id: appointment.id,
+        recipient_role: "admin",
+        type: "postconsultation_submitted",
+        title: "Formulario post-consulta enviado",
+        body: `Dr. ${doctorData?.full_name ?? "Doctor"} envió formulario post-consulta para ${patient?.full_name ?? "Paciente"} (${format(start, "d MMM yyyy", { locale: es })})`,
+      } as any);
+
+      // Dispatch webhook
+      try {
+        await supabase.functions.invoke("dispatch-webhook", {
+          body: {
+            event: "postconsultation.submitted",
+            data: {
+              appointment_id: appointment.id,
+              patient_name: patient?.full_name,
+              patient_phone: patient?.phone,
+              doctor_name: doctorData?.full_name,
+              start_at: appointment.start_at,
+              end_at: appointment.end_at,
+              symptoms: appointment.symptoms,
+              observations: formData.observations,
+              prescribed_medications: formData.prescribed_medications,
+              imaging_studies: formData.imaging_studies,
+              lab_tests: formData.lab_tests,
+              specialist_referral: formData.specialist_referral,
+              hospitalization: formData.hospitalization,
+            },
+          },
+        });
       } catch (e) {
-        console.error("Error inserting admin notification:", e);
+        console.error("Webhook dispatch error:", e);
       }
-      toast({ title: "Notas guardadas" });
+    },
+    onSuccess: () => {
+      toast({ title: "Formulario enviado" });
       onSaved();
     },
     onError: (err: Error) =>
@@ -163,22 +244,68 @@ function AppointmentNoteCard({ appointment, doctorId, onSaved }: AppointmentNote
           </CardDescription>
         )}
       </CardHeader>
-      <CardContent className="space-y-3">
-        <Textarea
-          placeholder="Escribe las notas médicas de esta consulta…"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={3}
-          className="resize-none"
-        />
+      <CardContent className="space-y-5">
+        {/* Observations */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Observaciones de la consulta</Label>
+          <Textarea
+            placeholder="Escribe las observaciones principales de esta consulta…"
+            value={observations}
+            onChange={(e) => setObservations(e.target.value)}
+            rows={3}
+            className="resize-none"
+          />
+        </div>
+
+        {/* Toggle fields */}
+        <div className="space-y-3">
+          <Label className="text-sm font-medium text-muted-foreground">Acciones realizadas</Label>
+          {TOGGLE_FIELDS.map((field) => {
+            const Icon = field.icon;
+            return (
+              <div key={field.key} className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-muted-foreground" />
+                    <Label className="text-sm cursor-pointer" htmlFor={`toggle-${field.key}`}>
+                      {field.label}
+                    </Label>
+                  </div>
+                  <Switch
+                    id={`toggle-${field.key}`}
+                    checked={toggles[field.key]}
+                    onCheckedChange={(checked) => handleToggle(field.key, checked)}
+                  />
+                </div>
+                <div
+                  className="overflow-hidden transition-all duration-300 ease-in-out"
+                  style={{
+                    maxHeight: toggles[field.key] ? "200px" : "0px",
+                    opacity: toggles[field.key] ? 1 : 0,
+                  }}
+                >
+                  <Textarea
+                    placeholder={field.placeholder}
+                    value={fields[field.key]}
+                    onChange={(e) =>
+                      setFields((prev) => ({ ...prev, [field.key]: e.target.value }))
+                    }
+                    rows={2}
+                    className="resize-none"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         <Button
-          onClick={() => saveMut.mutate()}
-          disabled={saveMut.isPending || !notes.trim()}
-          size="sm"
-          className="gap-2"
+          onClick={() => submitMut.mutate()}
+          disabled={submitMut.isPending}
+          className="gap-2 w-full sm:w-auto"
         >
-          <Save className="h-4 w-4" />
-          {saveMut.isPending ? "Guardando…" : "Guardar notas"}
+          <Send className="h-4 w-4" />
+          {submitMut.isPending ? "Enviando…" : "Enviar formulario"}
         </Button>
       </CardContent>
     </Card>

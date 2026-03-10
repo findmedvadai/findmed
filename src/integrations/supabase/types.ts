@@ -368,6 +368,108 @@ export type Database = {
           },
         ]
       }
+      hospitals: {
+        Row: {
+          address: string | null
+          city_id: string | null
+          created_at: string
+          email: string | null
+          id: string
+          is_active: boolean
+          name: string
+          phone: string | null
+          zone_id: string | null
+        }
+        Insert: {
+          address?: string | null
+          city_id?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          phone?: string | null
+          zone_id?: string | null
+        }
+        Update: {
+          address?: string | null
+          city_id?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          phone?: string | null
+          zone_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hospitals_city_id_fkey"
+            columns: ["city_id"]
+            isOneToOne: false
+            referencedRelation: "cities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hospitals_zone_id_fkey"
+            columns: ["zone_id"]
+            isOneToOne: false
+            referencedRelation: "zones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      laboratories: {
+        Row: {
+          address: string | null
+          city_id: string | null
+          created_at: string
+          email: string | null
+          id: string
+          is_active: boolean
+          name: string
+          phone: string | null
+          zone_id: string | null
+        }
+        Insert: {
+          address?: string | null
+          city_id?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          phone?: string | null
+          zone_id?: string | null
+        }
+        Update: {
+          address?: string | null
+          city_id?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          phone?: string | null
+          zone_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "laboratories_city_id_fkey"
+            columns: ["city_id"]
+            isOneToOne: false
+            referencedRelation: "cities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "laboratories_zone_id_fkey"
+            columns: ["zone_id"]
+            isOneToOne: false
+            referencedRelation: "zones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           appointment_id: string | null
@@ -439,6 +541,72 @@ export type Database = {
           phone?: string
         }
         Relationships: []
+      }
+      post_consultation_forms: {
+        Row: {
+          appointment_id: string
+          created_at: string
+          doctor_id: string
+          hospitalization: string | null
+          id: string
+          imaging_studies: string | null
+          lab_tests: string | null
+          observations: string | null
+          prescribed_medications: string | null
+          report_destination_id: string | null
+          report_destination_type: string | null
+          report_sent_at: string | null
+          review_status: Database["public"]["Enums"]["post_consultation_status"]
+          specialist_referral: string | null
+        }
+        Insert: {
+          appointment_id: string
+          created_at?: string
+          doctor_id: string
+          hospitalization?: string | null
+          id?: string
+          imaging_studies?: string | null
+          lab_tests?: string | null
+          observations?: string | null
+          prescribed_medications?: string | null
+          report_destination_id?: string | null
+          report_destination_type?: string | null
+          report_sent_at?: string | null
+          review_status?: Database["public"]["Enums"]["post_consultation_status"]
+          specialist_referral?: string | null
+        }
+        Update: {
+          appointment_id?: string
+          created_at?: string
+          doctor_id?: string
+          hospitalization?: string | null
+          id?: string
+          imaging_studies?: string | null
+          lab_tests?: string | null
+          observations?: string | null
+          prescribed_medications?: string | null
+          report_destination_id?: string | null
+          report_destination_type?: string | null
+          report_sent_at?: string | null
+          review_status?: Database["public"]["Enums"]["post_consultation_status"]
+          specialist_referral?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_consultation_forms_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consultation_forms_doctor_id_fkey"
+            columns: ["doctor_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reservation_sessions: {
         Row: {
@@ -661,6 +829,8 @@ export type Database = {
         | "appointment_cancelled_by_doctor"
         | "appointment_auto_cancelled"
         | "appointment_completed"
+        | "postconsultation_submitted"
+      post_consultation_status: "pending" | "read" | "report_sent"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -797,7 +967,9 @@ export const Constants = {
         "appointment_cancelled_by_doctor",
         "appointment_auto_cancelled",
         "appointment_completed",
+        "postconsultation_submitted",
       ],
+      post_consultation_status: ["pending", "read", "report_sent"],
     },
   },
 } as const

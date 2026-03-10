@@ -32,8 +32,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Building2, FlaskConical } from "lucide-react";
 import { SPECIALTY_COLORS } from "@/lib/specialty-colors";
+import { Textarea } from "@/components/ui/textarea";
 
 /* ═══════ Cities Tab ═══════ */
 
@@ -545,15 +546,239 @@ export default function Catalogos() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Catálogos</h1>
       <Tabs defaultValue="cities">
-        <TabsList>
+        <TabsList className="flex-wrap">
           <TabsTrigger value="cities">Ciudades</TabsTrigger>
           <TabsTrigger value="zones">Zonas</TabsTrigger>
           <TabsTrigger value="specialties">Especialidades</TabsTrigger>
+          <TabsTrigger value="hospitals" className="gap-1"><Building2 className="h-3.5 w-3.5" />Hospitales</TabsTrigger>
+          <TabsTrigger value="laboratories" className="gap-1"><FlaskConical className="h-3.5 w-3.5" />Laboratorios</TabsTrigger>
         </TabsList>
         <TabsContent value="cities"><CitiesTab /></TabsContent>
         <TabsContent value="zones"><ZonesTab /></TabsContent>
         <TabsContent value="specialties"><SpecialtiesTab /></TabsContent>
+        <TabsContent value="hospitals"><FacilitiesTab type="hospitals" /></TabsContent>
+        <TabsContent value="laboratories"><FacilitiesTab type="laboratories" /></TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/* ═══════ Facilities Tab (Hospitals / Laboratories) ═══════ */
+
+interface FacilityItem {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  city_id: string | null;
+  zone_id: string | null;
+  is_active: boolean;
+  cities?: { name: string } | null;
+  zones?: { name: string } | null;
+}
+
+function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
+  const qc = useQueryClient();
+  const label = type === "hospitals" ? "Hospital" : "Laboratorio";
+  const [showAdd, setShowAdd] = useState(false);
+  const [editItem, setEditItem] = useState<FacilityItem | null>(null);
+
+  // Form state
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [address, setAddress] = useState("");
+  const [cityId, setCityId] = useState("");
+  const [zoneId, setZoneId] = useState("");
+
+  const { data: cities } = useQuery({
+    queryKey: ["catalog-cities-active"],
+    queryFn: async () => {
+      const { data } = await supabase.from("cities").select("id, name").eq("is_active", true).order("name");
+      return data ?? [];
+    },
+  });
+
+  const { data: zones } = useQuery({
+    queryKey: ["catalog-zones-active", cityId],
+    queryFn: async () => {
+      let q = supabase.from("zones").select("id, name").eq("is_active", true).order("name");
+      if (cityId) q = q.eq("city_id", cityId);
+      const { data } = await q;
+      return data ?? [];
+    },
+  });
+
+  const { data: items, isLoading } = useQuery({
+    queryKey: [`catalog-${type}`],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from(type)
+        .select("*, cities(name), zones(name)")
+        .order("name");
+      if (error) throw error;
+      return (data ?? []) as FacilityItem[];
+    },
+  });
+
+  const resetForm = () => {
+    setName(""); setPhone(""); setEmail(""); setAddress(""); setCityId(""); setZoneId("");
+  };
+
+  const addMut = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from(type).insert({
+        name: name.trim(),
+        phone: phone.trim() || null,
+        email: email.trim() || null,
+        address: address.trim() || null,
+        city_id: cityId || null,
+        zone_id: zoneId || null,
+      } as any);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [`catalog-${type}`] }); toast({ title: `${label} creado` }); setShowAdd(false); resetForm(); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const editMut = useMutation({
+    mutationFn: async () => {
+      if (!editItem) return;
+      const { error } = await supabase.from(type).update({
+        name: name.trim(),
+        phone: phone.trim() || null,
+        email: email.trim() || null,
+        address: address.trim() || null,
+        city_id: cityId || null,
+        zone_id: zoneId || null,
+      } as any).eq("id", editItem.id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [`catalog-${type}`] }); toast({ title: `${label} actualizado` }); setEditItem(null); resetForm(); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const toggleMut = useMutation({
+    mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
+      const { error } = await supabase.from(type).update({ is_active } as any).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [`catalog-${type}`] }),
+  });
+
+  const openEdit = (item: FacilityItem) => {
+    setEditItem(item);
+    setName(item.name);
+    setPhone(item.phone ?? "");
+    setEmail(item.email ?? "");
+    setAddress(item.address ?? "");
+    setCityId(item.city_id ?? "");
+    setZoneId(item.zone_id ?? "");
+  };
+
+  if (isLoading) return <Skeleton className="h-48 w-full" />;
+
+  const formDialog = (open: boolean, onClose: () => void, title: string, onSave: () => void, saving: boolean) => (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>Completa los datos del {label.toLowerCase()}.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Nombre *</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Teléfono</Label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Email</Label>
+              <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Dirección</Label>
+            <Input value={address} onChange={(e) => setAddress(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Ciudad</Label>
+              <Select value={cityId || "none"} onValueChange={(v) => { setCityId(v === "none" ? "" : v); setZoneId(""); }}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin ciudad</SelectItem>
+                  {(cities ?? []).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Zona</Label>
+              <Select value={zoneId || "none"} onValueChange={(v) => setZoneId(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin zona</SelectItem>
+                  {(zones ?? []).map((z) => <SelectItem key={z.id} value={z.id}>{z.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={onSave} disabled={saving || !name.trim()}>{saving ? "Guardando…" : "Guardar"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button size="sm" className="gap-1" onClick={() => { setShowAdd(true); resetForm(); }}>
+          <Plus className="h-4 w-4" /> Agregar
+        </Button>
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Nombre</TableHead>
+            <TableHead>Ciudad</TableHead>
+            <TableHead>Zona</TableHead>
+            <TableHead>Estado</TableHead>
+            <TableHead className="w-24">Acciones</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {(items ?? []).length === 0 && (
+            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Sin registros</TableCell></TableRow>
+          )}
+          {(items ?? []).map((item) => (
+            <TableRow key={item.id}>
+              <TableCell className="font-medium">{item.name}</TableCell>
+              <TableCell className="text-muted-foreground">{item.cities?.name ?? "—"}</TableCell>
+              <TableCell className="text-muted-foreground">{item.zones?.name ?? "—"}</TableCell>
+              <TableCell>
+                <Badge variant={item.is_active ? "default" : "secondary"}>{item.is_active ? "Activo" : "Inactivo"}</Badge>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(item)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Switch checked={item.is_active} onCheckedChange={(v) => toggleMut.mutate({ id: item.id, is_active: v })} />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {formDialog(showAdd, () => setShowAdd(false), `Agregar ${label}`, () => { if (name.trim()) addMut.mutate(); }, addMut.isPending)}
+      {formDialog(!!editItem, () => setEditItem(null), `Editar ${label}`, () => { if (name.trim()) editMut.mutate(); }, editMut.isPending)}
     </div>
   );
 }

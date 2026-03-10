@@ -20,6 +20,7 @@ import {
   User,
   Stethoscope,
   Search,
+  ClipboardList,
 } from "lucide-react";
 import {
   Select,
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog from "@/components/admin/AppointmentDetailDialog";
+import PostConsultationDetailDialog from "@/components/admin/PostConsultationDetailDialog";
 
 type NotificationType = Database["public"]["Enums"]["notification_type"];
 
@@ -62,6 +64,11 @@ const TYPE_CONFIG: Record<
     icon: CheckCircle2,
     className: "text-primary",
   },
+  postconsultation_submitted: {
+    label: "Post-consulta",
+    icon: ClipboardList,
+    className: "text-amber-600",
+  },
 };
 
 export default function AdminInbox() {
@@ -69,6 +76,7 @@ export default function AdminInbox() {
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [specialtyFilter, setSpecialtyFilter] = useState("all");
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
+  const [postConsultationAppointmentId, setPostConsultationAppointmentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   // Load doctors with their specialties
   const { data: doctors } = useQuery({
@@ -294,7 +302,11 @@ export default function AdminInbox() {
                 } ${notif.appointment_id ? "cursor-pointer hover:bg-accent/50" : ""}`}
                 onClick={() => {
                   if (notif.appointment_id) {
-                    setSelectedAppointmentId(notif.appointment_id);
+                    if (notif.type === "postconsultation_submitted") {
+                      setPostConsultationAppointmentId(notif.appointment_id);
+                    } else {
+                      setSelectedAppointmentId(notif.appointment_id);
+                    }
                     if (!notif.is_read) markReadMut.mutate(notif.id);
                   }
                 }}
@@ -370,6 +382,14 @@ export default function AdminInbox() {
         open={!!selectedAppointmentId}
         onOpenChange={(open) => {
           if (!open) setSelectedAppointmentId(null);
+        }}
+      />
+
+      <PostConsultationDetailDialog
+        appointmentId={postConsultationAppointmentId}
+        open={!!postConsultationAppointmentId}
+        onOpenChange={(open) => {
+          if (!open) setPostConsultationAppointmentId(null);
         }}
       />
     </div>
