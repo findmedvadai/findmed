@@ -110,7 +110,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
       try {
         await supabase.functions.invoke("dispatch-webhook", {
           body: {
-            event: "postconsultation.report_sent",
+            event_type: "postconsultation.report_sent",
             data: {
               appointment_id: appointmentId,
               patient_name: (appt as any)?.patients?.full_name,
