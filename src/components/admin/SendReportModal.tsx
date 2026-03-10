@@ -123,7 +123,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
     onSuccess: () => {
       toast({ title: "Informe enviado" });
       setDestId("");
-      setSearch("");
+      setDestId("");
       onSuccess();
     },
     onError: (err: Error) =>
