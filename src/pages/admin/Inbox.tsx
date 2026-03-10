@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog from "@/components/admin/AppointmentDetailDialog";
+import PostConsultationDetailDialog from "@/components/admin/PostConsultationDetailDialog";
 
 type NotificationType = Database["public"]["Enums"]["notification_type"];
 
