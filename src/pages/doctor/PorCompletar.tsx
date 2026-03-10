@@ -193,7 +193,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
       try {
         await supabase.functions.invoke("dispatch-webhook", {
           body: {
-            event: "postconsultation.submitted",
+            event_type: "postconsultation.submitted",
             data: {
               appointment_id: appointment.id,
               patient_name: patient?.full_name,
