@@ -1,17 +1,23 @@
 
 
-## Plan: Simplificar modal "Enviar Informe"
+## Fix: Desplegar google-calendar-callback y corregir URL de redireccion
 
-Eliminar el campo de búsqueda separado y el campo "Seleccionar destino" redundante. Dejar solo:
+### Problema 1: Funcion no desplegada
+La funcion `google-calendar-callback` existe en el codigo pero no esta desplegada en produccion. Por eso Google muestra `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
 
-1. **Tipo de destino** (Hospital / Laboratorio) — sin cambios
-2. **Un único dropdown** que muestre directamente los hospitales o laboratorios activos del catálogo (nombre + ciudad/zona). Sin campo de texto de búsqueda aparte.
+### Problema 2: URL de redireccion incorrecta
+El fallback de `SITE_URL` en la funcion apunta a `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app`, pero la app realmente corre en `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`. Esto haria que el redirect despues de conectar Google lleve a una URL que no existe.
 
-### Cambios en `src/components/admin/SendReportModal.tsx`
+### Cambios
 
-- Eliminar el estado `search` y el campo `<Input>` de búsqueda (líneas 36, 65-70, 174-182)
-- Eliminar el label "Seleccionar destino" redundante
-- Cambiar el label del dropdown a "Seleccionar hospital" o "Seleccionar laboratorio" según el tipo
-- Usar `options` directamente en vez de `filtered`
-- Ambas queries se habilitan cuando `open` es true (quitar condición de `destType`) para precargar ambas listas
+**1. Corregir URL en** `supabase/functions/google-calendar-callback/index.ts`
+- Cambiar el fallback de SITE_URL de `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app` a `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`
+- Esto aplica en la linea 15 y la linea 76
 
+**2. Desplegar la funcion**
+- Redesplegar `google-calendar-callback` para que este activa y responda correctamente
+
+### Resultado esperado
+1. Google redirige al callback → la funcion procesa el token → redirige a `/google-calendar-success` en la app React
+2. La pagina React muestra el checkmark verde, envia postMessage al opener, y se cierra automaticamente
+3. La ventana padre detecta la conexion y refresca la lista de calendarios

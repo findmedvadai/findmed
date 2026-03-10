@@ -33,7 +33,6 @@ interface Props {
 export default function SendReportModal({ open, onOpenChange, formId, appointmentId, onSuccess }: Props) {
   const [destType, setDestType] = useState<"hospital" | "laboratory">("hospital");
   const [destId, setDestId] = useState("");
-  const [search, setSearch] = useState("");
 
   const { data: hospitals } = useQuery({
     queryKey: ["active-hospitals"],
@@ -45,7 +44,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
         .order("name");
       return (data ?? []) as any[];
     },
-    enabled: open && destType === "hospital",
+    enabled: open,
   });
 
   const { data: laboratories } = useQuery({
@@ -58,16 +57,10 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
         .order("name");
       return (data ?? []) as any[];
     },
-    enabled: open && destType === "laboratory",
+    enabled: open,
   });
 
   const options = destType === "hospital" ? hospitals : laboratories;
-  const filtered = search
-    ? options?.filter((o) =>
-        o.name.toLowerCase().includes(search.toLowerCase()) ||
-        (o.cities?.name ?? "").toLowerCase().includes(search.toLowerCase())
-      )
-    : options;
 
   const sendMut = useMutation({
     mutationFn: async () => {
@@ -130,7 +123,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
     onSuccess: () => {
       toast({ title: "Informe enviado" });
       setDestId("");
-      setSearch("");
+      setDestId("");
       onSuccess();
     },
     onError: (err: Error) =>
@@ -171,31 +164,21 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
             </div>
           </div>
 
-          {/* Search and select */}
           <div className="space-y-2">
-            <Label>Buscar {destType === "hospital" ? "hospital" : "laboratorio"}</Label>
-            <Input
-              placeholder="Buscar por nombre o ciudad..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Seleccionar destino</Label>
+            <Label>{destType === "hospital" ? "Seleccionar hospital" : "Seleccionar laboratorio"}</Label>
             <Select value={destId} onValueChange={setDestId}>
               <SelectTrigger>
                 <SelectValue placeholder="Seleccionar..." />
               </SelectTrigger>
               <SelectContent>
-                {(filtered ?? []).map((item) => (
+                {(options ?? []).map((item) => (
                   <SelectItem key={item.id} value={item.id}>
                     {item.name}
                     {item.cities?.name ? ` · ${item.cities.name}` : ""}
                     {item.zones?.name ? ` / ${item.zones.name}` : ""}
                   </SelectItem>
                 ))}
-                {(filtered ?? []).length === 0 && (
+                {(options ?? []).length === 0 && (
                   <div className="px-2 py-3 text-sm text-muted-foreground text-center">
                     Sin resultados
                   </div>
