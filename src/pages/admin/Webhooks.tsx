@@ -56,6 +56,13 @@ const EVENT_GROUPS = [
       { id: "patient.created", label: "Paciente creado" },
     ],
   },
+  {
+    label: "Post-consulta",
+    events: [
+      { id: "postconsultation.submitted", label: "Post-consulta enviada" },
+      { id: "postconsultation.report_sent", label: "Informe enviado" },
+    ],
+  },
 ];
 
 const PAYLOAD_EXAMPLES: Record<string, object> = {
