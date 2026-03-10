@@ -32,8 +32,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Building2, FlaskConical } from "lucide-react";
 import { SPECIALTY_COLORS } from "@/lib/specialty-colors";
+import { Textarea } from "@/components/ui/textarea";
 
 /* ═══════ Cities Tab ═══════ */
 
