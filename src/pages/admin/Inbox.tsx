@@ -302,7 +302,11 @@ export default function AdminInbox() {
                 } ${notif.appointment_id ? "cursor-pointer hover:bg-accent/50" : ""}`}
                 onClick={() => {
                   if (notif.appointment_id) {
-                    setSelectedAppointmentId(notif.appointment_id);
+                    if (notif.type === "postconsultation_submitted") {
+                      setPostConsultationAppointmentId(notif.appointment_id);
+                    } else {
+                      setSelectedAppointmentId(notif.appointment_id);
+                    }
                     if (!notif.is_read) markReadMut.mutate(notif.id);
                   }
                 }}
