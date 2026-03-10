@@ -62,6 +62,11 @@ const TYPE_CONFIG: Record<
     icon: CheckCircle2,
     className: "text-primary",
   },
+  postconsultation_submitted: {
+    label: "Post-consulta",
+    icon: ClipboardList,
+    className: "text-amber-600",
+  },
 };
 
 export default function AdminInbox() {
