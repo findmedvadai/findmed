@@ -76,6 +76,7 @@ export default function AdminInbox() {
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [specialtyFilter, setSpecialtyFilter] = useState("all");
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
+  const [postConsultationAppointmentId, setPostConsultationAppointmentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   // Load doctors with their specialties
   const { data: doctors } = useQuery({
