@@ -162,6 +162,35 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
     patient_phone: "+521234567890",
     created_at: "2026-03-13T08:00:00-06:00",
   },
+  "postconsultation.submitted": {
+    appointment_id: "uuid-example",
+    patient_name: "Karla Gamez",
+    patient_phone: "+521234567890",
+    doctor_name: "Dr. Juan Pérez",
+    start_at: "2026-03-15T10:00:00-06:00",
+    observations: "Paciente presenta mejoría general.",
+    prescribed_medications: "Ibuprofeno 400mg cada 8 horas",
+    imaging_studies: null,
+    lab_tests: "Biometría hemática completa",
+    specialist_referral: null,
+    hospitalization: null,
+  },
+  "postconsultation.report_sent": {
+    appointment_id: "uuid-example",
+    patient_name: "Karla Gamez",
+    patient_phone: "+521234567890",
+    doctor_name: "Dr. Juan Pérez",
+    destination_type: "hospital",
+    destination: {
+      name: "Hospital General",
+      phone: "+525555555555",
+      email: "contacto@hospital.com",
+      city: "CDMX",
+      zone: "Centro",
+    },
+    observations: "Paciente requiere cirugía.",
+    hospitalization: "Hospital General, cirugía programada, urgente",
+  },
 };
 
 function generateSecret(): string {

@@ -384,6 +384,14 @@ export default function AdminInbox() {
           if (!open) setSelectedAppointmentId(null);
         }}
       />
+
+      <PostConsultationDetailDialog
+        appointmentId={postConsultationAppointmentId}
+        open={!!postConsultationAppointmentId}
+        onOpenChange={(open) => {
+          if (!open) setPostConsultationAppointmentId(null);
+        }}
+      />
     </div>
   );
 }
