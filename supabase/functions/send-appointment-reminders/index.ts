@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     .from("appointments")
     .select(`
       id, start_at, end_at, doctor_id, patient_id,
-      doctors(full_name),
+      doctors(full_name, address),
       patients(full_name, phone)
     `)
     .eq("status", "scheduled")
