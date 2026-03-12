@@ -180,7 +180,7 @@ Deno.serve(async (req) => {
     patient_phone: patient?.phone ?? "",
   });
 
-  const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
+  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
   const rescheduleUrl = `${baseUrl}/gestionar?token=${rescheduleToken}`;
 
   // Insert notification for doctor

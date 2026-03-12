@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
+  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
   const manageUrl = `${baseUrl}/gestionar?token=${token}`;
 
   // Dispatch webhooks (fire-and-forget)

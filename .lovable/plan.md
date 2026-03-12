@@ -1,37 +1,23 @@
 
 
-## Problema
+## Fix: Desplegar google-calendar-callback y corregir URL de redireccion
 
-Todas las edge functions usan como fallback la URL de preview (`id-preview--f06cae85-...lovable.app`) cuando no existe el secret `APP_URL`. Esta URL requiere autenticación de Lovable para abrirse, por lo que los pacientes no pueden acceder a los links de reserva/gestión.
+### Problema 1: Funcion no desplegada
+La funcion `google-calendar-callback` existe en el codigo pero no esta desplegada en produccion. Por eso Google muestra `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
 
-La app ya está publicada en `https://findmed.lovable.app`.
+### Problema 2: URL de redireccion incorrecta
+El fallback de `SITE_URL` en la funcion apunta a `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app`, pero la app realmente corre en `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`. Esto haria que el redirect despues de conectar Google lleve a una URL que no existe.
 
-## Solución
+### Cambios
 
-Cambiar el fallback en **11 archivos** de edge functions, reemplazando:
-```
-https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app
-```
-por:
-```
-https://findmed.lovable.app
-```
+**1. Corregir URL en** `supabase/functions/google-calendar-callback/index.ts`
+- Cambiar el fallback de SITE_URL de `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app` a `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`
+- Esto aplica en la linea 15 y la linea 76
 
-### Archivos a modificar
+**2. Desplegar la funcion**
+- Redesplegar `google-calendar-callback` para que este activa y responda correctamente
 
-1. `supabase/functions/triage-webhook/index.ts`
-2. `supabase/functions/reserve-create/index.ts`
-3. `supabase/functions/generate-manage-link/index.ts`
-4. `supabase/functions/send-appointment-reminders/index.ts`
-5. `supabase/functions/send-day-of-reminders/index.ts`
-6. `supabase/functions/update-appointment-status/index.ts`
-7. `supabase/functions/confirm-appointment/index.ts`
-8. `supabase/functions/auto-cancel-unconfirmed/index.ts`
-9. `supabase/functions/manage-cancel/index.ts`
-10. `supabase/functions/manage-reschedule/index.ts`
-11. `supabase/functions/cancel-by-doctor/index.ts`
-
-En cada archivo, el cambio es idéntico: una sustitución de string en la línea donde se define `baseUrl` o se usa inline el fallback.
-
-Adicionalmente, se recomienda configurar el secret `APP_URL` con valor `https://findmed.lovable.app` para que no dependa del fallback hardcodeado.
-
+### Resultado esperado
+1. Google redirige al callback → la funcion procesa el token → redirige a `/google-calendar-success` en la app React
+2. La pagina React muestra el checkmark verde, envia postMessage al opener, y se cierra automaticamente
+3. La ventana padre detecta la conexion y refresca la lista de calendarios
