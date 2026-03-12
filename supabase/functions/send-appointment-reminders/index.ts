@@ -116,6 +116,7 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             patient_name: patient?.full_name ?? null,
             doctor_name: doctor?.full_name ?? null,
+            doctor_address: doctor?.address ?? null,
             start_at: appt.start_at,
             manage_url: manageUrl,
             min_confirm_hours_before: minConfirmHours,
