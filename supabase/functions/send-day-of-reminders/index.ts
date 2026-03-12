@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     .from("appointments")
     .select(`
       id, start_at, end_at, doctor_id, patient_id,
-      doctors(full_name),
+      doctors(full_name, address),
       patients(full_name, phone)
     `)
     .eq("status", "confirmed")
@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
 
   for (const appt of appointments) {
     const patient = appt.patients as { full_name: string; phone: string } | null;
-    const doctor = appt.doctors as { full_name: string } | null;
+    const doctor = appt.doctors as { full_name: string; address: string | null } | null;
 
     // Check for existing valid manage token
     const { data: existingToken } = await supabase
@@ -117,6 +117,7 @@ Deno.serve(async (req) => {
             patient_name: patient?.full_name ?? null,
             patient_phone: patient?.phone ?? null,
             doctor_name: doctor?.full_name ?? null,
+            doctor_address: doctor?.address ?? null,
             start_at: appt.start_at,
             manage_url: manageUrl,
             message: "Tu cita es hoy. Si necesitas reagendar o cancelar, usa el siguiente enlace.",
