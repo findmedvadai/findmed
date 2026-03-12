@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
             new_status: "scheduled",
             start_at: startAt,
             timestamp: new Date().toISOString(),
-            manage_url: `${Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app"}/gestionar?token=${token}`,
+            manage_url: `${Deno.env.get("APP_URL") || "https://findmed.lovable.app"}/gestionar?token=${token}`,
           },
         }),
       }),
