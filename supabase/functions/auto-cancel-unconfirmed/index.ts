@@ -146,6 +146,7 @@ Deno.serve(async (req) => {
                 new_status: "cancelled",
                 start_at: appt.start_at,
                 timestamp: now.toISOString(),
+                manage_url: rescheduleUrl,
               },
             }),
           }),

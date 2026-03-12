@@ -156,6 +156,8 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
+  const manageUrl = `${baseUrl}/gestionar?token=${token}`;
 
   // Dispatch webhooks (fire-and-forget)
   try {
@@ -172,6 +174,7 @@ Deno.serve(async (req) => {
             doctor_id: appointment.doctor_id,
             start_at: appointment.start_at,
             cancel_reason: "patient",
+            manage_url: manageUrl,
           },
         }),
       }),
@@ -188,6 +191,7 @@ Deno.serve(async (req) => {
             new_status: "cancelled",
             start_at: appointment.start_at,
             timestamp: new Date().toISOString(),
+            manage_url: manageUrl,
           },
         }),
       }),
