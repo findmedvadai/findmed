@@ -206,6 +206,18 @@ Deno.serve(async (req) => {
   // --- Dispatch webhooks ---
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
+
+  // Look up manage token for this appointment
+  const { data: manageTokenRow } = await supabase
+    .from("appointment_manage_tokens")
+    .select("token")
+    .eq("appointment_id", appointment.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const manageUrl = manageTokenRow ? `${baseUrl}/gestionar?token=${manageTokenRow.token}` : null;
 
   const webhookPayload = {
     appointment_id: appointment.id,
@@ -216,6 +228,7 @@ Deno.serve(async (req) => {
     end_at: appointment.end_at,
     previous_status: previousStatus,
     new_status: newStatus,
+    manage_url: manageUrl,
   };
 
   // Dispatch specific event

@@ -143,6 +143,18 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const baseUrl = Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app";
+
+  // Look up manage token for this appointment
+  const { data: manageTokenRow } = await supabase
+    .from("appointment_manage_tokens")
+    .select("token")
+    .eq("appointment_id", appointment.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const manageUrl = manageTokenRow ? `${baseUrl}/gestionar?token=${manageTokenRow.token}` : null;
 
   // Dispatch webhooks (fire-and-forget)
   try {
@@ -158,6 +170,7 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             start_at: appointment.start_at,
             confirmed_at: new Date().toISOString(),
+            manage_url: manageUrl,
           },
         }),
       }),
@@ -174,6 +187,7 @@ Deno.serve(async (req) => {
             new_status: "confirmed",
             start_at: appointment.start_at,
             timestamp: new Date().toISOString(),
+            manage_url: manageUrl,
           },
         }),
       }),

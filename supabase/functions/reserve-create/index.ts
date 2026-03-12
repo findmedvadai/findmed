@@ -259,6 +259,7 @@ Deno.serve(async (req) => {
             new_status: appointmentStatus,
             start_at: startAt,
             timestamp: new Date().toISOString(),
+            manage_url: manageUrl,
           },
         }),
       }),
