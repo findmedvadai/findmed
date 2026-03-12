@@ -117,6 +117,7 @@ Deno.serve(async (req) => {
             patient_name: patient?.full_name ?? null,
             patient_phone: patient?.phone ?? null,
             doctor_name: doctor?.full_name ?? null,
+            doctor_address: doctor?.address ?? null,
             start_at: appt.start_at,
             manage_url: manageUrl,
             message: "Tu cita es hoy. Si necesitas reagendar o cancelar, usa el siguiente enlace.",
