@@ -77,12 +77,25 @@ Deno.serve(async (req) => {
     );
   }
 
+  // --- Normalize search term: strip common suffixes to get root ---
+  const normalizeSpecialty = (term: string): string => {
+    let t = term.trim().toLowerCase();
+    // Remove accents for matching
+    t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    // Strip common suffixes: -logía, -logía, -logo, -loga, -ista, -ia, -ico, -ica
+    t = t.replace(/(log[ií]a|logo|loga|ista|[ií]a|ico|ica)$/i, "");
+    // Ensure at least 3 chars for meaningful search
+    return t.length >= 3 ? t : term.trim().toLowerCase();
+  };
+
+  const searchRoot = normalizeSpecialty(especialidad);
+
   // --- Query doctors with joins ---
-  // Step 1: Find doctor IDs matching specialty
+  // Step 1: Find doctor IDs matching specialty (using root for flexible match)
   const { data: specialtyMatches, error: specErr } = await supabase
     .from("doctor_specialties")
     .select("doctor_id, specialties!inner(name)")
-    .ilike("specialties.name", `%${especialidad}%`);
+    .ilike("specialties.name", `%${searchRoot}%`);
 
   if (specErr) {
     return new Response(
