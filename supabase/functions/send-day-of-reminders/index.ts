@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
 
   for (const appt of appointments) {
     const patient = appt.patients as { full_name: string; phone: string } | null;
-    const doctor = appt.doctors as { full_name: string } | null;
+    const doctor = appt.doctors as { full_name: string; address: string | null } | null;
 
     // Check for existing valid manage token
     const { data: existingToken } = await supabase
