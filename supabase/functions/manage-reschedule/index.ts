@@ -263,7 +263,7 @@ Deno.serve(async (req) => {
             new_start_at: startAt,
             old_start_at: oldAppt.start_at ?? null,
             end_at: endAt,
-            manage_url: `${Deno.env.get("APP_URL") || "https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app"}/gestionar?token=${manageToken.token}`,
+            manage_url: `${Deno.env.get("APP_URL") || "https://findmed.lovable.app"}/gestionar?token=${manageToken.token}`,
           },
         }),
       }),
