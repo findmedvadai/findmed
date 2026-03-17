@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  // --- API Key validation (same pattern as triage-webhook) ---
+  // --- API Key validation ---
   const authHeader = req.headers.get("Authorization") ?? "";
   const rawKey = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
@@ -77,21 +77,17 @@ Deno.serve(async (req) => {
     );
   }
 
-  // --- Normalize search term: strip common suffixes to get root ---
+  // --- Normalize search term ---
   const normalizeSpecialty = (term: string): string => {
     let t = term.trim().toLowerCase();
-    // Remove accents for matching
     t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    // Strip common suffixes: -logía, -logía, -logo, -loga, -ista, -ia, -ico, -ica
     t = t.replace(/(log[ií]a|logo|loga|ista|[ií]a|ico|ica)$/i, "");
-    // Ensure at least 3 chars for meaningful search
     return t.length >= 3 ? t : term.trim().toLowerCase();
   };
 
   const searchRoot = normalizeSpecialty(especialidad);
 
-  // --- Query doctors with joins ---
-  // Step 1: Find doctor IDs matching specialty (using root for flexible match)
+  // --- Step 1: Find doctor IDs matching specialty ---
   const { data: specialtyMatches, error: specErr } = await supabase
     .from("doctor_specialties")
     .select("doctor_id, specialties!inner(name)")
@@ -113,25 +109,53 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Helper to query doctors by city (and optionally zone)
-  const queryDoctors = async (withZone: boolean) => {
-    let q = supabase
-      .from("doctors")
-      .select("id, full_name, phone, address, cities!inner(name), zones(name)")
-      .in("id", doctorIds)
-      .eq("is_active", true)
-      .eq("is_deleted", false)
-      .ilike("cities.name", `%${ciudad}%`);
+  // --- Step 2: Resolve city ID by name ---
+  const { data: cityRows } = await supabase
+    .from("cities")
+    .select("id, name")
+    .ilike("name", `%${ciudad}%`);
 
-    if (withZone && zona) {
-      q = q.ilike("zones.name", `%${zona}%`);
-    }
+  const cityIds = (cityRows || []).map((c: any) => c.id);
 
-    return q;
-  };
+  if (cityIds.length === 0) {
+    return new Response(
+      JSON.stringify({ success: true, total: 0, doctors: [] }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
-  // Step 2: Query with zone if provided
-  let { data: doctors, error: docErr } = await queryDoctors(!!zona);
+  // Build city name map
+  const cityMap: Record<string, string> = {};
+  for (const c of cityRows || []) {
+    cityMap[c.id] = c.name;
+  }
+
+  // --- Step 3: Resolve zone ID if provided ---
+  let zoneIds: string[] | null = null;
+  if (zona) {
+    const { data: zoneRows } = await supabase
+      .from("zones")
+      .select("id, name")
+      .ilike("name", `%${zona}%`)
+      .in("city_id", cityIds);
+
+    zoneIds = (zoneRows || []).map((z: any) => z.id);
+  }
+
+  // --- Step 4: Query doctors with direct fields ---
+  let q = supabase
+    .from("doctors")
+    .select("id, full_name, phone, address, city_id, zone_id")
+    .in("id", doctorIds)
+    .eq("is_active", true)
+    .eq("is_deleted", false)
+    .in("city_id", cityIds);
+
+  if (zoneIds && zoneIds.length > 0) {
+    q = q.in("zone_id", zoneIds);
+  }
+
+  let { data: doctors, error: docErr } = await q;
 
   if (docErr) {
     return new Response(
@@ -142,9 +166,16 @@ Deno.serve(async (req) => {
 
   let fallback = false;
 
-  // Step 2b: Fallback — if zone was sent but no results, retry without zone
+  // Step 4b: Fallback — if zone was sent but no results, retry without zone filter
   if (zona && (!doctors || doctors.length === 0)) {
-    const { data: fallbackDoctors, error: fbErr } = await queryDoctors(false);
+    const { data: fallbackDoctors, error: fbErr } = await supabase
+      .from("doctors")
+      .select("id, full_name, phone, address, city_id, zone_id")
+      .in("id", doctorIds)
+      .eq("is_active", true)
+      .eq("is_deleted", false)
+      .in("city_id", cityIds);
+
     if (fbErr) {
       return new Response(
         JSON.stringify({ error: "Query error", details: fbErr.message }),
@@ -155,7 +186,22 @@ Deno.serve(async (req) => {
     fallback = true;
   }
 
-  // Step 3: Get all specialties for matched doctors
+  // --- Step 5: Build zone name map for matched doctors ---
+  const matchedZoneIds = [...new Set((doctors || []).map((d: any) => d.zone_id).filter(Boolean))];
+  const zoneMap: Record<string, string> = {};
+
+  if (matchedZoneIds.length > 0) {
+    const { data: zoneRows } = await supabase
+      .from("zones")
+      .select("id, name")
+      .in("id", matchedZoneIds);
+
+    for (const z of zoneRows || []) {
+      zoneMap[z.id] = z.name;
+    }
+  }
+
+  // --- Step 6: Get all specialties for matched doctors ---
   const matchedIds = (doctors || []).map((d: any) => d.id);
   let specialtiesMap: Record<string, string[]> = {};
 
@@ -173,14 +219,14 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Step 4: Format response
+  // --- Step 7: Format response ---
   const result = (doctors || []).map((d: any) => ({
     id: d.id,
     full_name: d.full_name,
     phone: d.phone,
     address: d.address,
-    city: d.cities?.name || null,
-    zone: d.zones?.name || null,
+    city: cityMap[d.city_id] || null,
+    zone: zoneMap[d.zone_id] || null,
     specialties: specialtiesMap[d.id] || [],
   }));
 
