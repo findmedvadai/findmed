@@ -1,23 +1,22 @@
 
 
-## Fix: Desplegar google-calendar-callback y corregir URL de redireccion
+## Problema
 
-### Problema 1: Funcion no desplegada
-La funcion `google-calendar-callback` existe en el codigo pero no esta desplegada en produccion. Por eso Google muestra `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
+La columna `zone_id` en la tabla `doctors` no tiene una foreign key hacia `zones.id`. PostgREST (el motor detrás de las queries del SDK) necesita foreign keys para resolver joins como `zones(name)`. Sin la FK, el join siempre devuelve `null`.
 
-### Problema 2: URL de redireccion incorrecta
-El fallback de `SITE_URL` en la funcion apunta a `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app`, pero la app realmente corre en `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`. Esto haria que el redirect despues de conectar Google lleve a una URL que no existe.
+Lo mismo aplica para `city_id` → `cities.id`, pero ese join funciona porque usas `cities!inner(name)` y probablemente sí existe implícitamente o hay otro mecanismo. Vamos a verificar y agregar ambas FKs si faltan.
 
-### Cambios
+## Solución
 
-**1. Corregir URL en** `supabase/functions/google-calendar-callback/index.ts`
-- Cambiar el fallback de SITE_URL de `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app` a `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`
-- Esto aplica en la linea 15 y la linea 76
+1. **Crear migración** para agregar foreign keys faltantes en `doctors`:
+   - `doctors.zone_id → zones.id`
+   - `doctors.city_id → cities.id` (si falta también)
 
-**2. Desplegar la funcion**
-- Redesplegar `google-calendar-callback` para que este activa y responda correctamente
+```sql
+ALTER TABLE public.doctors
+  ADD CONSTRAINT doctors_city_id_fkey FOREIGN KEY (city_id) REFERENCES public.cities(id),
+  ADD CONSTRAINT doctors_zone_id_fkey FOREIGN KEY (zone_id) REFERENCES public.zones(id);
+```
 
-### Resultado esperado
-1. Google redirige al callback → la funcion procesa el token → redirige a `/google-calendar-success` en la app React
-2. La pagina React muestra el checkmark verde, envia postMessage al opener, y se cierra automaticamente
-3. La ventana padre detecta la conexion y refresca la lista de calendarios
+2. **Sin cambios en código** — el query `zones(name)` en `search-doctors/index.ts` ya está correcto; solo necesita la FK para funcionar.
+
