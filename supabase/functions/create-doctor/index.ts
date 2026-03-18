@@ -52,7 +52,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const body = await req.json();
+    let body = await req.json();
+    // supabase.functions.invoke may double-encode the body as a JSON string
+    if (typeof body === "string") {
+      body = JSON.parse(body);
+    }
     const {
       password,
       full_name,
@@ -64,9 +68,20 @@ Deno.serve(async (req) => {
     } = body;
     const email = (body.email ?? "").trim().toLowerCase();
 
+    console.log("create-doctor: email received =>", JSON.stringify(email));
+
     if (!email || !password || !full_name) {
       return new Response(
         JSON.stringify({ error: "email, password and full_name are required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate email format before sending to auth
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return new Response(
+        JSON.stringify({ error: `Invalid email format: "${email}"` }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
