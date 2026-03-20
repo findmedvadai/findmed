@@ -53,3 +53,6 @@ verify_jwt = false
 
 [functions.search-doctors]
 verify_jwt = false
+
+[functions.update-admin-email]
+verify_jwt = false

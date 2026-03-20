@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
   const { role = "admin" } = await req.json().catch(() => ({ role: "admin" }));
 
   const isDoctor = role === "doctor";
-  const email = isDoctor ? "doctor@findmed.test" : "admin@findmed.test";
+  const email = isDoctor ? "doctor@findmed.test" : "admin@findmed.com";
   const password = isDoctor ? "Doctor123!" : "Admin123!";
 
   // Create auth user
