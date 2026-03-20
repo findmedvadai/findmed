@@ -1,34 +1,25 @@
 
 
-## Plan: Agregar opción de eliminar en catálogos
+## Plan: Cambiar credenciales del admin
 
-### Contexto
-Actualmente las 5 secciones de catálogos (ciudades, zonas, especialidades, hospitales, laboratorios) solo tienen editar y activar/desactivar. Falta un botón de eliminar con confirmación.
+### Problema
+El admin actual usa `admin@findmed.test`. Se necesita cambiar a `admin@findmed.com` con contraseña `Admin123!`.
 
-Las políticas RLS ya permiten DELETE para admins (política "Admin can manage" con comando ALL), así que no se necesita migración.
+### Pasos
 
-### Cambios en `src/pages/admin/Catalogos.tsx`
+1. **Crear edge function temporal `update-admin-email`** que use `supabase.auth.admin.updateUserById()` para:
+   - Buscar el usuario con email `admin@findmed.test`
+   - Actualizar su email a `admin@findmed.com`
+   - Confirmar el email automáticamente
+   - Actualizar también la tabla `users` si tiene campo email
 
-1. **Importar** `Trash2` de lucide-react y los componentes `AlertDialog*`
+2. **Invocar la función** para aplicar el cambio
 
-2. **Componente compartido `DeleteConfirmDialog`**: Un AlertDialog reutilizable que recibe `open`, `onClose`, `onConfirm`, `itemName` y `deleting`. Muestra "¿Eliminar {itemName}? Esta acción no se puede deshacer."
+3. **Actualizar `seed-admin/index.ts`** para que el email por defecto del admin sea `admin@findmed.com` (para futuros seeds)
 
-3. **`CatalogTable` (usado por Cities)**: Agregar prop `onDelete`. Añadir botón Trash2 en la columna de acciones junto al botón de editar y el switch.
+4. **Eliminar la función temporal** después de ejecutarla
 
-4. **`CitiesTab`**: Agregar `deleteMut` que hace `supabase.from("cities").delete().eq("id", id)`. Estado para `deleteItem`. Pasar `onDelete` a `CatalogTable`. Renderizar `DeleteConfirmDialog`.
-
-5. **`ZonesTab`**: Mismo patrón — `deleteMut` con `supabase.from("zones").delete()`, botón Trash2 en la tabla inline, y `DeleteConfirmDialog`.
-
-6. **`SpecialtiesTab`**: Mismo patrón para `specialties`.
-
-7. **`FacilitiesTab` (Hospitals/Labs)**: Mismo patrón — `deleteMut` genérico usando el prop `type`, botón Trash2, y `DeleteConfirmDialog`.
-
-### Diseño UI
-- Botón: icono Trash2 con `variant="ghost"` y clase `text-destructive` al lado de Pencil
-- Diálogo: AlertDialog con título "Eliminar registro", descripción con el nombre, botones "Cancelar" y "Eliminar" (destructive)
-
-### No se necesita
-- Migración de base de datos (RLS ya cubre DELETE)
-- Cambios en edge functions
-- Cambios en otros archivos
+### Archivos modificados
+- `supabase/functions/update-admin-email/index.ts` (crear, ejecutar, eliminar)
+- `supabase/functions/seed-admin/index.ts` (actualizar email por defecto)
 
