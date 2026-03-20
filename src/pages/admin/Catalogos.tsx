@@ -18,6 +18,16 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -32,9 +42,48 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Building2, FlaskConical } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, FlaskConical } from "lucide-react";
 import { SPECIALTY_COLORS } from "@/lib/specialty-colors";
 import { Textarea } from "@/components/ui/textarea";
+
+/* ═══════ Delete Confirm Dialog ═══════ */
+
+function DeleteConfirmDialog({
+  open,
+  onClose,
+  onConfirm,
+  itemName,
+  deleting,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  itemName: string;
+  deleting: boolean;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Eliminar registro</AlertDialogTitle>
+          <AlertDialogDescription>
+            ¿Eliminar <strong>{itemName}</strong>? Esta acción no se puede deshacer.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => { e.preventDefault(); onConfirm(); }}
+            disabled={deleting}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {deleting ? "Eliminando…" : "Eliminar"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 /* ═══════ Cities Tab ═══════ */
 
@@ -42,6 +91,7 @@ function CitiesTab() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState<{ id: string; name: string } | null>(null);
+  const [deleteItem, setDeleteItem] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
 
   const { data: cities, isLoading } = useQuery({
@@ -80,6 +130,15 @@ function CitiesTab() {
     onError: () => toast({ title: "Error al cambiar estado", variant: "destructive" }),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("cities").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-cities"] }); toast({ title: "Ciudad eliminada" }); setDeleteItem(null); },
+    onError: (e: any) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+  });
+
   if (isLoading) return <Skeleton className="h-48 w-full" />;
 
   return (
@@ -93,6 +152,7 @@ function CitiesTab() {
         items={(cities ?? []).map((c) => ({ id: c.id, name: c.name, is_active: c.is_active }))}
         onEdit={(item) => { setEditItem(item); setName(item.name); }}
         onToggle={(id, active) => toggleMut.mutate({ id, is_active: active })}
+        onDelete={(item) => setDeleteItem(item)}
       />
       <CatalogFormDialog
         open={showAdd}
@@ -112,6 +172,13 @@ function CitiesTab() {
         onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim() }); }}
         saving={editMut.isPending}
       />
+      <DeleteConfirmDialog
+        open={!!deleteItem}
+        onClose={() => setDeleteItem(null)}
+        onConfirm={() => { if (deleteItem) deleteMut.mutate(deleteItem.id); }}
+        itemName={deleteItem?.name ?? ""}
+        deleting={deleteMut.isPending}
+      />
     </div>
   );
 }
@@ -122,6 +189,7 @@ function ZonesTab() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState<{ id: string; name: string } | null>(null);
+  const [deleteItem, setDeleteItem] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
   const [cityFilter, setCityFilter] = useState("all");
   const [newZoneCityId, setNewZoneCityId] = useState("");
@@ -170,6 +238,15 @@ function ZonesTab() {
     onError: () => toast({ title: "Error al cambiar estado", variant: "destructive" }),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("zones").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-zones"] }); toast({ title: "Zona eliminada" }); setDeleteItem(null); },
+    onError: (e: any) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+  });
+
   const filtered = (zones ?? []).filter((z) => cityFilter === "all" || z.city_id === cityFilter);
 
   if (isLoading) return <Skeleton className="h-48 w-full" />;
@@ -194,7 +271,7 @@ function ZonesTab() {
             <TableHead>Nombre</TableHead>
             <TableHead>Ciudad</TableHead>
             <TableHead>Estado</TableHead>
-            <TableHead className="w-24">Acciones</TableHead>
+            <TableHead className="w-28">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -212,6 +289,9 @@ function ZonesTab() {
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditItem({ id: z.id, name: z.name }); setName(z.name); }}>
                     <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteItem({ id: z.id, name: z.name })}>
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                   <Switch checked={z.is_active} onCheckedChange={(v) => toggleMut.mutate({ id: z.id, is_active: v })} />
                 </div>
@@ -261,6 +341,13 @@ function ZonesTab() {
         onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim() }); }}
         saving={editMut.isPending}
       />
+      <DeleteConfirmDialog
+        open={!!deleteItem}
+        onClose={() => setDeleteItem(null)}
+        onConfirm={() => { if (deleteItem) deleteMut.mutate(deleteItem.id); }}
+        itemName={deleteItem?.name ?? ""}
+        deleting={deleteMut.isPending}
+      />
     </div>
   );
 }
@@ -271,6 +358,7 @@ function SpecialtiesTab() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState<{ id: string; name: string; color: string | null } | null>(null);
+  const [deleteItem, setDeleteItem] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState<string>("");
 
@@ -310,6 +398,15 @@ function SpecialtiesTab() {
     onError: () => toast({ title: "Error al cambiar estado", variant: "destructive" }),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("specialties").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); qc.invalidateQueries({ queryKey: ["specialties"] }); toast({ title: "Especialidad eliminada" }); setDeleteItem(null); },
+    onError: (e: any) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+  });
+
   if (isLoading) return <Skeleton className="h-48 w-full" />;
 
   return (
@@ -325,7 +422,7 @@ function SpecialtiesTab() {
             <TableHead>Color</TableHead>
             <TableHead>Nombre</TableHead>
             <TableHead>Estado</TableHead>
-            <TableHead className="w-24">Acciones</TableHead>
+            <TableHead className="w-28">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -348,6 +445,9 @@ function SpecialtiesTab() {
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditItem({ id: item.id, name: item.name, color: item.color }); setName(item.name); setColor(item.color || ""); }}>
                     <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteItem({ id: item.id, name: item.name })}>
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                   <Switch checked={item.is_active} onCheckedChange={(v) => toggleMut.mutate({ id: item.id, is_active: v })} />
                 </div>
@@ -381,6 +481,14 @@ function SpecialtiesTab() {
         setColor={setColor}
         onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim(), color: color || null }); }}
         saving={editMut.isPending}
+      />
+
+      <DeleteConfirmDialog
+        open={!!deleteItem}
+        onClose={() => setDeleteItem(null)}
+        onConfirm={() => { if (deleteItem) deleteMut.mutate(deleteItem.id); }}
+        itemName={deleteItem?.name ?? ""}
+        deleting={deleteMut.isPending}
       />
     </div>
   );
@@ -463,10 +571,12 @@ function CatalogTable({
   items,
   onEdit,
   onToggle,
+  onDelete,
 }: {
   items: { id: string; name: string; is_active: boolean }[];
   onEdit: (item: { id: string; name: string }) => void;
   onToggle: (id: string, active: boolean) => void;
+  onDelete: (item: { id: string; name: string }) => void;
 }) {
   return (
     <Table>
@@ -474,7 +584,7 @@ function CatalogTable({
         <TableRow>
           <TableHead>Nombre</TableHead>
           <TableHead>Estado</TableHead>
-          <TableHead className="w-24">Acciones</TableHead>
+          <TableHead className="w-28">Acciones</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -491,6 +601,9 @@ function CatalogTable({
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(item)}>
                   <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => onDelete(item)}>
+                  <Trash2 className="h-3.5 w-3.5" />
                 </Button>
                 <Switch checked={item.is_active} onCheckedChange={(v) => onToggle(item.id, v)} />
               </div>
@@ -583,6 +696,7 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
   const label = type === "hospitals" ? "Hospital" : "Laboratorio";
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState<FacilityItem | null>(null);
+  const [deleteItem, setDeleteItem] = useState<{ id: string; name: string } | null>(null);
 
   // Form state
   const [name, setName] = useState("");
@@ -665,6 +779,15 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [`catalog-${type}`] }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from(type).delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [`catalog-${type}`] }); toast({ title: `${label} eliminado` }); setDeleteItem(null); },
+    onError: (e: any) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
   });
 
   const openEdit = (item: FacilityItem) => {
@@ -750,7 +873,7 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
             <TableHead>Ciudad</TableHead>
             <TableHead>Zona</TableHead>
             <TableHead>Estado</TableHead>
-            <TableHead className="w-24">Acciones</TableHead>
+            <TableHead className="w-28">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -770,6 +893,9 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(item)}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteItem({ id: item.id, name: item.name })}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                   <Switch checked={item.is_active} onCheckedChange={(v) => toggleMut.mutate({ id: item.id, is_active: v })} />
                 </div>
               </TableCell>
@@ -779,6 +905,13 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
       </Table>
       {formDialog(showAdd, () => setShowAdd(false), `Agregar ${label}`, () => { if (name.trim()) addMut.mutate(); }, addMut.isPending)}
       {formDialog(!!editItem, () => setEditItem(null), `Editar ${label}`, () => { if (name.trim()) editMut.mutate(); }, editMut.isPending)}
+      <DeleteConfirmDialog
+        open={!!deleteItem}
+        onClose={() => setDeleteItem(null)}
+        onConfirm={() => { if (deleteItem) deleteMut.mutate(deleteItem.id); }}
+        itemName={deleteItem?.name ?? ""}
+        deleting={deleteMut.isPending}
+      />
     </div>
   );
 }
