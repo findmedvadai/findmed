@@ -1,23 +1,34 @@
 
 
-## Fix: Desplegar google-calendar-callback y corregir URL de redireccion
+## Plan: Agregar opción de eliminar en catálogos
 
-### Problema 1: Funcion no desplegada
-La funcion `google-calendar-callback` existe en el codigo pero no esta desplegada en produccion. Por eso Google muestra `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
+### Contexto
+Actualmente las 5 secciones de catálogos (ciudades, zonas, especialidades, hospitales, laboratorios) solo tienen editar y activar/desactivar. Falta un botón de eliminar con confirmación.
 
-### Problema 2: URL de redireccion incorrecta
-El fallback de `SITE_URL` en la funcion apunta a `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app`, pero la app realmente corre en `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`. Esto haria que el redirect despues de conectar Google lleve a una URL que no existe.
+Las políticas RLS ya permiten DELETE para admins (política "Admin can manage" con comando ALL), así que no se necesita migración.
 
-### Cambios
+### Cambios en `src/pages/admin/Catalogos.tsx`
 
-**1. Corregir URL en** `supabase/functions/google-calendar-callback/index.ts`
-- Cambiar el fallback de SITE_URL de `https://id-preview--f06cae85-4014-499a-b2cc-40cce2aba6c6.lovable.app` a `https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`
-- Esto aplica en la linea 15 y la linea 76
+1. **Importar** `Trash2` de lucide-react y los componentes `AlertDialog*`
 
-**2. Desplegar la funcion**
-- Redesplegar `google-calendar-callback` para que este activa y responda correctamente
+2. **Componente compartido `DeleteConfirmDialog`**: Un AlertDialog reutilizable que recibe `open`, `onClose`, `onConfirm`, `itemName` y `deleting`. Muestra "¿Eliminar {itemName}? Esta acción no se puede deshacer."
 
-### Resultado esperado
-1. Google redirige al callback → la funcion procesa el token → redirige a `/google-calendar-success` en la app React
-2. La pagina React muestra el checkmark verde, envia postMessage al opener, y se cierra automaticamente
-3. La ventana padre detecta la conexion y refresca la lista de calendarios
+3. **`CatalogTable` (usado por Cities)**: Agregar prop `onDelete`. Añadir botón Trash2 en la columna de acciones junto al botón de editar y el switch.
+
+4. **`CitiesTab`**: Agregar `deleteMut` que hace `supabase.from("cities").delete().eq("id", id)`. Estado para `deleteItem`. Pasar `onDelete` a `CatalogTable`. Renderizar `DeleteConfirmDialog`.
+
+5. **`ZonesTab`**: Mismo patrón — `deleteMut` con `supabase.from("zones").delete()`, botón Trash2 en la tabla inline, y `DeleteConfirmDialog`.
+
+6. **`SpecialtiesTab`**: Mismo patrón para `specialties`.
+
+7. **`FacilitiesTab` (Hospitals/Labs)**: Mismo patrón — `deleteMut` genérico usando el prop `type`, botón Trash2, y `DeleteConfirmDialog`.
+
+### Diseño UI
+- Botón: icono Trash2 con `variant="ghost"` y clase `text-destructive` al lado de Pencil
+- Diálogo: AlertDialog con título "Eliminar registro", descripción con el nombre, botones "Cancelar" y "Eliminar" (destructive)
+
+### No se necesita
+- Migración de base de datos (RLS ya cubre DELETE)
+- Cambios en edge functions
+- Cambios en otros archivos
+
