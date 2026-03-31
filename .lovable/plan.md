@@ -1,25 +1,17 @@
 
 
-## Plan: Cambiar credenciales del admin
+## Problema
 
-### Problema
-El admin actual usa `admin@findmed.test`. Se necesita cambiar a `admin@findmed.com` con contraseña `Admin123!`.
+La función `google-calendar-callback` tiene el fallback de `SITE_URL` apuntando a la URL de preview (`https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com`) en lugar de la URL publicada. Como el secret `SITE_URL` no está configurado, usa ese fallback y redirige a una URL que requiere autenticación de Lovable — causando el error 404.
 
-### Pasos
+Es el mismo problema que corregimos en las otras edge functions, pero esta función se nos pasó.
 
-1. **Crear edge function temporal `update-admin-email`** que use `supabase.auth.admin.updateUserById()` para:
-   - Buscar el usuario con email `admin@findmed.test`
-   - Actualizar su email a `admin@findmed.com`
-   - Confirmar el email automáticamente
-   - Actualizar también la tabla `users` si tiene campo email
+## Solución
 
-2. **Invocar la función** para aplicar el cambio
+Cambiar el fallback en **`supabase/functions/google-calendar-callback/index.ts`** en dos líneas:
 
-3. **Actualizar `seed-admin/index.ts`** para que el email por defecto del admin sea `admin@findmed.com` (para futuros seeds)
+- **Línea 15**: `"https://f06cae85-...lovableproject.com"` → `"https://findmed.lovable.app"`
+- **Línea 76**: Mismo cambio
 
-4. **Eliminar la función temporal** después de ejecutarla
-
-### Archivos modificados
-- `supabase/functions/update-admin-email/index.ts` (crear, ejecutar, eliminar)
-- `supabase/functions/seed-admin/index.ts` (actualizar email por defecto)
+No se requieren otros cambios — la ruta `/google-calendar-success` ya existe en el router y el componente funciona correctamente.
 
