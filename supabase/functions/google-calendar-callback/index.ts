@@ -12,7 +12,7 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-    const SITE_URL = Deno.env.get("SITE_URL") || "https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com";
+    const SITE_URL = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
 
     const redirectTo = (path: string) =>
