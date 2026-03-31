@@ -73,7 +73,7 @@ serve(async (req) => {
     return redirectTo("/google-calendar-success");
   } catch (err) {
     console.error("Callback error:", err);
-    const SITE_URL = Deno.env.get("SITE_URL") || "https://f06cae85-4014-499a-b2cc-40cce2aba6c6.lovableproject.com";
+    const SITE_URL = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
     return new Response(null, {
       status: 302,
       headers: { Location: `${SITE_URL}/google-calendar-success?error=${encodeURIComponent("Ocurrió un error inesperado")}` },
