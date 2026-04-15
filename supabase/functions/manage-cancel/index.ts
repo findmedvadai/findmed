@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
   // Get appointment
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, status, google_event_id, doctor_id, patient_id, start_at")
+    .select("id, status, google_event_id, outlook_event_id, doctor_id, patient_id, start_at")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -150,6 +150,46 @@ Deno.serve(async (req) => {
         }
       } catch (err) {
         console.error("Error deleting Google Calendar event:", err);
+      }
+    }
+  }
+
+  // Delete Outlook Calendar event if exists
+  if (appointment.outlook_event_id) {
+    const { data: doctor } = await supabase
+      .from("doctors")
+      .select("outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
+      .eq("id", appointment.doctor_id)
+      .maybeSingle();
+
+    const OC_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
+    const OC_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
+    if (doctor?.outlook_calendar_connected && doctor.outlook_refresh_token_ref && doctor.outlook_calendar_id && OC_ID) {
+      try {
+        const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: OC_ID,
+            client_secret: OC_SECRET,
+            refresh_token: doctor.outlook_refresh_token_ref,
+            grant_type: "refresh_token",
+            scope: "offline_access Calendars.ReadWrite",
+          }),
+        });
+        const tokenData = await tokenRes.json();
+        if (tokenRes.ok && tokenData.access_token) {
+          const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+          await fetch(
+            `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${tokenData.access_token}` },
+            }
+          );
+        }
+      } catch (err) {
+        console.error("Error deleting Outlook Calendar event:", err);
       }
     }
   }

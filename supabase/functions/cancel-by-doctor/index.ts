@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
   // Get appointment — verify it belongs to the doctor
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, status, doctor_id, patient_id, start_at, end_at, google_event_id")
+    .select("id, status, doctor_id, patient_id, start_at, end_at, google_event_id, outlook_event_id")
     .eq("id", appointment_id)
     .eq("doctor_id", doctorId)
     .maybeSingle();
@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
   // Get doctor info (name + Google Calendar credentials)
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected")
+    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
     .eq("id", doctorId)
     .maybeSingle();
 
@@ -167,6 +167,40 @@ Deno.serve(async (req) => {
       }
     } catch (err) {
       console.error("Error deleting Google Calendar event:", err);
+    }
+  }
+
+  // Delete Outlook Calendar event if connected
+  if (appointment.outlook_event_id && doctor?.outlook_calendar_connected && doctor.outlook_refresh_token_ref && doctor.outlook_calendar_id) {
+    const OC_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
+    const OC_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
+    if (OC_ID) {
+      try {
+        const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: OC_ID,
+            client_secret: OC_SECRET,
+            refresh_token: doctor.outlook_refresh_token_ref,
+            grant_type: "refresh_token",
+            scope: "offline_access Calendars.ReadWrite",
+          }),
+        });
+        const tokenData = await tokenRes.json();
+        if (tokenRes.ok && tokenData.access_token) {
+          const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+          await fetch(
+            `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${tokenData.access_token}` },
+            }
+          );
+        }
+      } catch (err) {
+        console.error("Error deleting Outlook Calendar event:", err);
+      }
     }
   }
 

@@ -53,3 +53,24 @@ verify_jwt = false
 
 [functions.search-doctors]
 verify_jwt = false
+
+[functions.outlook-calendar-auth]
+verify_jwt = false
+
+[functions.outlook-calendar-callback]
+verify_jwt = false
+
+[functions.outlook-calendar-list]
+verify_jwt = false
+
+[functions.outlook-calendar-events]
+verify_jwt = false
+
+[functions.outlook-calendar-create-event]
+verify_jwt = false
+
+[functions.outlook-calendar-update-event]
+verify_jwt = false
+
+[functions.outlook-calendar-delete-event]
+verify_jwt = false

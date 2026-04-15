@@ -90,6 +90,7 @@ export type Database = {
           end_at: string
           google_event_id: string | null
           id: string
+          outlook_event_id: string | null
           patient_id: string
           start_at: string
           status: Database["public"]["Enums"]["appointment_status"]
@@ -106,6 +107,7 @@ export type Database = {
           end_at: string
           google_event_id?: string | null
           id?: string
+          outlook_event_id?: string | null
           patient_id: string
           start_at: string
           status?: Database["public"]["Enums"]["appointment_status"]
@@ -122,6 +124,7 @@ export type Database = {
           end_at?: string
           google_event_id?: string | null
           id?: string
+          outlook_event_id?: string | null
           patient_id?: string
           start_at?: string
           status?: Database["public"]["Enums"]["appointment_status"]
@@ -317,6 +320,9 @@ export type Database = {
           id: string
           is_active: boolean
           is_deleted: boolean
+          outlook_calendar_connected: boolean
+          outlook_calendar_id: string | null
+          outlook_refresh_token_ref: string | null
           phone: string | null
           updated_at: string
           zone_id: string | null
@@ -332,6 +338,9 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_deleted?: boolean
+          outlook_calendar_connected?: boolean
+          outlook_calendar_id?: string | null
+          outlook_refresh_token_ref?: string | null
           phone?: string | null
           updated_at?: string
           zone_id?: string | null
@@ -347,6 +356,9 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_deleted?: boolean
+          outlook_calendar_connected?: boolean
+          outlook_calendar_id?: string | null
+          outlook_refresh_token_ref?: string | null
           phone?: string | null
           updated_at?: string
           zone_id?: string | null
