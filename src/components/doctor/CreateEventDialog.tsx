@@ -90,14 +90,24 @@ export default function CreateEventDialog({
         return;
       }
 
+      // Detect which calendar provider the doctor uses
+      const { data: doctorData } = await supabase
+        .from("doctors")
+        .select("google_calendar_connected, outlook_calendar_connected")
+        .eq("id", (await supabase.from("users").select("doctor_id").eq("id", session.data.session!.user.id).maybeSingle()).data?.doctor_id ?? "")
+        .maybeSingle();
+
+      const useOutlook = doctorData?.outlook_calendar_connected && !doctorData?.google_calendar_connected;
+
       const startAt = `${date}T${startTime}:00`;
       const endAt = `${date}T${endTime}:00`;
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+      const providerPrefix = useOutlook ? "outlook" : "google";
       const endpoint = isEdit
-        ? `${supabaseUrl}/functions/v1/google-calendar-update-event`
-        : `${supabaseUrl}/functions/v1/google-calendar-create-event`;
+        ? `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-update-event`
+        : `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-create-event`;
 
       const payload = isEdit
         ? {
@@ -129,8 +139,9 @@ export default function CreateEventDialog({
         throw new Error(data.error || (isEdit ? "Error al actualizar evento" : "Error al crear evento"));
       }
 
-      toast.success(isEdit ? "Evento actualizado" : "Evento creado en Google Calendar");
+      toast.success(isEdit ? "Evento actualizado" : "Evento creado en calendario");
       queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
+      queryClient.invalidateQueries({ queryKey: ["outlook-calendar-events"] });
       onClose();
     } catch (err: any) {
       toast.error(err.message || "Error al guardar evento");
