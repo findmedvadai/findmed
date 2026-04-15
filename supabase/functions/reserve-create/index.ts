@@ -34,6 +34,8 @@ Deno.serve(async (req) => {
 
   const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
   const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+  const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
+  const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
 
   let body: { session_id: string; slot_start: string; date: string };
   try {
@@ -107,7 +109,7 @@ Deno.serve(async (req) => {
 
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected")
+    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
     .eq("id", session.doctor_id)
     .maybeSingle();
 
@@ -139,8 +141,10 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Create Google Calendar event
+  // Create calendar event (Google or Outlook)
   let googleEventId: string | null = null;
+  let outlookEventId: string | null = null;
+
   if (doctor?.google_calendar_connected && doctor.google_refresh_token_ref && doctor.google_calendar_id) {
     try {
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -164,7 +168,6 @@ Deno.serve(async (req) => {
           end: { dateTime: endAt, timeZone: "America/Mexico_City" },
         };
 
-        // Remove the duplicate closing brace that was here
         const createRes = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
           {
@@ -188,6 +191,54 @@ Deno.serve(async (req) => {
       }
     } catch (err) {
       console.error("Error creating Google Calendar event:", err);
+    }
+  } else if (doctor?.outlook_calendar_connected && doctor.outlook_refresh_token_ref && doctor.outlook_calendar_id && OUTLOOK_CLIENT_ID) {
+    try {
+      const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: OUTLOOK_CLIENT_ID,
+          client_secret: OUTLOOK_CLIENT_SECRET,
+          refresh_token: doctor.outlook_refresh_token_ref,
+          grant_type: "refresh_token",
+          scope: "offline_access Calendars.ReadWrite",
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (tokenRes.ok && tokenData.access_token) {
+        const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+        const eventBody = {
+          subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
+          body: session.symptoms ? { contentType: "Text", content: `Síntomas: ${session.symptoms}` } : undefined,
+          start: { dateTime: startAt, timeZone: "America/Mexico_City" },
+          end: { dateTime: endAt, timeZone: "America/Mexico_City" },
+        };
+
+        const createRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${tokenData.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(eventBody),
+          }
+        );
+
+        const eventData = await createRes.json();
+        if (createRes.ok && eventData.id) {
+          outlookEventId = eventData.id;
+          await supabase
+            .from("appointments")
+            .update({ outlook_event_id: outlookEventId })
+            .eq("id", appointment.id);
+        }
+      }
+    } catch (err) {
+      console.error("Error creating Outlook Calendar event:", err);
     }
   }
 
