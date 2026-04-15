@@ -32,6 +32,7 @@ import Gestionar from "./pages/patient/Gestionar";
 
 // Utility pages
 import GoogleCalendarSuccess from "./pages/GoogleCalendarSuccess";
+import OutlookCalendarSuccess from "./pages/OutlookCalendarSuccess";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/reserva" element={<Reserva />} />
             <Route path="/gestionar" element={<Gestionar />} />
             <Route path="/google-calendar-success" element={<GoogleCalendarSuccess />} />
+            <Route path="/outlook-calendar-success" element={<OutlookCalendarSuccess />} />
 
             {/* Admin routes */}
             <Route
