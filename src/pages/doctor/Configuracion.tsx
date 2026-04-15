@@ -33,7 +33,7 @@ interface WeekdaySlot {
   is_enabled: boolean;
 }
 
-interface GoogleCalendar {
+interface CalendarEntry {
   id: string;
   summary: string;
   primary: boolean;
@@ -152,14 +152,14 @@ export default function Configuracion() {
     onError: () => toast({ title: "Error al guardar disponibilidad", variant: "destructive" }),
   });
 
-  // --- Google Calendar ---
+  // --- Doctor Profile (calendar info) ---
   const { data: doctor, refetch: refetchDoctor } = useQuery({
     queryKey: ["doctor-profile", doctorId],
     queryFn: async () => {
       if (!doctorId) return null;
       const { data, error } = await supabase
         .from("doctors")
-        .select("google_calendar_connected, google_calendar_id, google_refresh_token_ref")
+        .select("google_calendar_connected, google_calendar_id, google_refresh_token_ref, outlook_calendar_connected, outlook_calendar_id, outlook_refresh_token_ref")
         .eq("id", doctorId)
         .maybeSingle();
       if (error) throw error;
@@ -168,61 +168,54 @@ export default function Configuracion() {
     enabled: !!doctorId,
   });
 
+  // --- Google Calendar state ---
   const [connectingGoogle, setConnectingGoogle] = useState(false);
-  const [calendarList, setCalendarList] = useState<GoogleCalendar[]>([]);
-  const [loadingCalendars, setLoadingCalendars] = useState(false);
-  const [selectedCalendarId, setSelectedCalendarId] = useState<string>("");
+  const [googleCalendarList, setGoogleCalendarList] = useState<CalendarEntry[]>([]);
+  const [loadingGoogleCalendars, setLoadingGoogleCalendars] = useState(false);
+  const [selectedGoogleCalendarId, setSelectedGoogleCalendarId] = useState<string>("");
 
-  // Detect "token saved but no calendar selected" state and load calendar list
-  const hasTokenButNoCalendar = doctor?.google_refresh_token_ref && !doctor?.google_calendar_connected;
+  const hasGoogleTokenButNoCalendar = doctor?.google_refresh_token_ref && !doctor?.google_calendar_connected;
 
   useEffect(() => {
-    if (hasTokenButNoCalendar && calendarList.length === 0 && !loadingCalendars) {
-      fetchCalendarList();
+    if (hasGoogleTokenButNoCalendar && googleCalendarList.length === 0 && !loadingGoogleCalendars) {
+      fetchGoogleCalendarList();
     }
-  }, [hasTokenButNoCalendar]);
+  }, [hasGoogleTokenButNoCalendar]);
 
-  const fetchCalendarList = async () => {
-    setLoadingCalendars(true);
+  const fetchGoogleCalendarList = async () => {
+    setLoadingGoogleCalendars(true);
     try {
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) throw new Error("No autenticado");
-
       const res = await supabase.functions.invoke("google-calendar-list", {
         headers: { Authorization: `Bearer ${token}` },
       });
-
       if (res.error) throw res.error;
       const calendars = res.data?.calendars || [];
-      setCalendarList(calendars);
-      // Pre-select primary if available
-      const primary = calendars.find((c: GoogleCalendar) => c.primary);
-      if (primary) setSelectedCalendarId(primary.id);
-      else if (calendars.length > 0) setSelectedCalendarId(calendars[0].id);
+      setGoogleCalendarList(calendars);
+      const primary = calendars.find((c: CalendarEntry) => c.primary);
+      if (primary) setSelectedGoogleCalendarId(primary.id);
+      else if (calendars.length > 0) setSelectedGoogleCalendarId(calendars[0].id);
     } catch (error) {
-      console.error("Error fetching calendars:", error);
-      toast({ title: "Error al cargar calendarios", variant: "destructive" });
+      console.error("Error fetching Google calendars:", error);
+      toast({ title: "Error al cargar calendarios de Google", variant: "destructive" });
     } finally {
-      setLoadingCalendars(false);
+      setLoadingGoogleCalendars(false);
     }
   };
 
-  const saveCalendarSelection = async () => {
-    if (!doctorId || !selectedCalendarId) return;
+  const saveGoogleCalendarSelection = async () => {
+    if (!doctorId || !selectedGoogleCalendarId) return;
     const { error } = await supabase
       .from("doctors")
-      .update({
-        google_calendar_id: selectedCalendarId,
-        google_calendar_connected: true,
-      })
+      .update({ google_calendar_id: selectedGoogleCalendarId, google_calendar_connected: true })
       .eq("id", doctorId);
-
     if (error) {
       toast({ title: "Error al guardar calendario", variant: "destructive" });
     } else {
-      toast({ title: "Calendario seleccionado" });
-      setCalendarList([]);
+      toast({ title: "Calendario de Google seleccionado" });
+      setGoogleCalendarList([]);
       refetchDoctor();
     }
   };
@@ -233,16 +226,12 @@ export default function Configuracion() {
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) throw new Error("No autenticado");
-
       const res = await supabase.functions.invoke("google-calendar-auth", {
         headers: { Authorization: `Bearer ${token}` },
       });
-
       if (res.error) throw res.error;
       const { url } = res.data;
-      
       const popup = window.open(url, "google-calendar-auth", "width=500,height=700,scrollbars=yes");
-      
       const handleMessage = (event: MessageEvent) => {
         if (event.data === "google-calendar-connected") {
           window.removeEventListener("message", handleMessage);
@@ -251,7 +240,6 @@ export default function Configuracion() {
         }
       };
       window.addEventListener("message", handleMessage);
-
       const interval = setInterval(() => {
         if (popup?.closed) {
           clearInterval(interval);
@@ -271,17 +259,115 @@ export default function Configuracion() {
     if (!doctorId) return;
     const { error } = await supabase
       .from("doctors")
-      .update({
-        google_calendar_connected: false,
-        google_calendar_id: null,
-        google_refresh_token_ref: null,
-      })
+      .update({ google_calendar_connected: false, google_calendar_id: null, google_refresh_token_ref: null })
       .eq("id", doctorId);
     if (error) {
       toast({ title: "Error al desconectar", variant: "destructive" });
     } else {
       toast({ title: "Google Calendar desconectado" });
-      setCalendarList([]);
+      setGoogleCalendarList([]);
+      refetchDoctor();
+    }
+  };
+
+  // --- Outlook Calendar state ---
+  const [connectingOutlook, setConnectingOutlook] = useState(false);
+  const [outlookCalendarList, setOutlookCalendarList] = useState<CalendarEntry[]>([]);
+  const [loadingOutlookCalendars, setLoadingOutlookCalendars] = useState(false);
+  const [selectedOutlookCalendarId, setSelectedOutlookCalendarId] = useState<string>("");
+
+  const hasOutlookTokenButNoCalendar = doctor?.outlook_refresh_token_ref && !doctor?.outlook_calendar_connected;
+
+  useEffect(() => {
+    if (hasOutlookTokenButNoCalendar && outlookCalendarList.length === 0 && !loadingOutlookCalendars) {
+      fetchOutlookCalendarList();
+    }
+  }, [hasOutlookTokenButNoCalendar]);
+
+  const fetchOutlookCalendarList = async () => {
+    setLoadingOutlookCalendars(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error("No autenticado");
+      const res = await supabase.functions.invoke("outlook-calendar-list", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.error) throw res.error;
+      const calendars = res.data?.calendars || [];
+      setOutlookCalendarList(calendars);
+      const primary = calendars.find((c: CalendarEntry) => c.primary);
+      if (primary) setSelectedOutlookCalendarId(primary.id);
+      else if (calendars.length > 0) setSelectedOutlookCalendarId(calendars[0].id);
+    } catch (error) {
+      console.error("Error fetching Outlook calendars:", error);
+      toast({ title: "Error al cargar calendarios de Outlook", variant: "destructive" });
+    } finally {
+      setLoadingOutlookCalendars(false);
+    }
+  };
+
+  const saveOutlookCalendarSelection = async () => {
+    if (!doctorId || !selectedOutlookCalendarId) return;
+    const { error } = await supabase
+      .from("doctors")
+      .update({ outlook_calendar_id: selectedOutlookCalendarId, outlook_calendar_connected: true })
+      .eq("id", doctorId);
+    if (error) {
+      toast({ title: "Error al guardar calendario", variant: "destructive" });
+    } else {
+      toast({ title: "Calendario de Outlook seleccionado" });
+      setOutlookCalendarList([]);
+      refetchDoctor();
+    }
+  };
+
+  const handleConnectOutlook = async () => {
+    setConnectingOutlook(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error("No autenticado");
+      const res = await supabase.functions.invoke("outlook-calendar-auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.error) throw res.error;
+      const { url } = res.data;
+      const popup = window.open(url, "outlook-calendar-auth", "width=500,height=700,scrollbars=yes");
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data === "outlook-calendar-connected") {
+          window.removeEventListener("message", handleMessage);
+          setConnectingOutlook(false);
+          refetchDoctor();
+        }
+      };
+      window.addEventListener("message", handleMessage);
+      const interval = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(interval);
+          window.removeEventListener("message", handleMessage);
+          setConnectingOutlook(false);
+          refetchDoctor();
+        }
+      }, 500);
+    } catch (error) {
+      console.error("Error connecting Outlook Calendar:", error);
+      toast({ title: "Error al conectar Outlook Calendar", variant: "destructive" });
+      setConnectingOutlook(false);
+    }
+  };
+
+  const handleDisconnectOutlook = async () => {
+    if (!doctorId) return;
+    const { error } = await supabase
+      .from("doctors")
+      .update({ outlook_calendar_connected: false, outlook_calendar_id: null, outlook_refresh_token_ref: null })
+      .eq("id", doctorId);
+    if (error) {
+      toast({ title: "Error al desconectar", variant: "destructive" });
+    } else {
+      toast({ title: "Outlook Calendar desconectado" });
+      setOutlookCalendarList([]);
       refetchDoctor();
     }
   };
@@ -297,6 +383,62 @@ export default function Configuracion() {
       </div>
     );
   }
+
+  // Reusable calendar card renderer
+  const renderCalendarSelectionStep = (
+    calendars: CalendarEntry[],
+    loading: boolean,
+    selectedId: string,
+    setSelectedId: (id: string) => void,
+    onSave: () => void,
+    onCancel: () => void,
+    onRetry: () => void,
+    providerLabel: string,
+  ) => (
+    <div className="space-y-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+      <div className="flex items-center gap-2">
+        <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+        <p className="text-sm font-medium">Cuenta de {providerLabel} vinculada — selecciona un calendario</p>
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Cargando calendarios…
+        </div>
+      ) : calendars.length > 0 ? (
+        <div className="space-y-3">
+          <Select value={selectedId} onValueChange={setSelectedId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Selecciona un calendario" />
+            </SelectTrigger>
+            <SelectContent>
+              {calendars.map((cal) => (
+                <SelectItem key={cal.id} value={cal.id}>
+                  {cal.summary}{cal.primary ? " (Principal)" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex gap-2">
+            <Button onClick={onSave} disabled={!selectedId} className="gap-2">
+              <Save className="h-4 w-4" />
+              Usar este calendario
+            </Button>
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">No se encontraron calendarios.</p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            Reintentar
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -419,55 +561,17 @@ export default function Configuracion() {
                 <Unlink className="h-4 w-4" /> Desconectar
               </Button>
             </div>
-          ) : hasTokenButNoCalendar ? (
-            /* Calendar selection step */
-            <div className="space-y-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
-              <div className="flex items-center gap-2">
-                <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
-                <p className="text-sm font-medium">Cuenta de Google vinculada — selecciona un calendario</p>
-              </div>
-              {loadingCalendars ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Cargando calendarios…
-                </div>
-              ) : calendarList.length > 0 ? (
-                <div className="space-y-3">
-                  <Select value={selectedCalendarId} onValueChange={setSelectedCalendarId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona un calendario" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {calendarList.map((cal) => (
-                        <SelectItem key={cal.id} value={cal.id}>
-                          {cal.summary}{cal.primary ? " (Principal)" : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={saveCalendarSelection}
-                      disabled={!selectedCalendarId}
-                      className="gap-2"
-                    >
-                      <Save className="h-4 w-4" />
-                      Usar este calendario
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={handleDisconnectGoogle}>
-                      Cancelar
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">No se encontraron calendarios.</p>
-                  <Button variant="outline" size="sm" onClick={fetchCalendarList}>
-                    Reintentar
-                  </Button>
-                </div>
-              )}
-            </div>
+          ) : hasGoogleTokenButNoCalendar ? (
+            renderCalendarSelectionStep(
+              googleCalendarList,
+              loadingGoogleCalendars,
+              selectedGoogleCalendarId,
+              setSelectedGoogleCalendarId,
+              saveGoogleCalendarSelection,
+              handleDisconnectGoogle,
+              fetchGoogleCalendarList,
+              "Google",
+            )
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-6 text-center">
               <Link2 className="h-8 w-8 text-muted-foreground/50" />
@@ -477,7 +581,7 @@ export default function Configuracion() {
               <Button
                 className="gap-2 bg-cta text-cta-foreground hover:bg-cta/90"
                 onClick={handleConnectGoogle}
-                disabled={connectingGoogle}
+                disabled={connectingGoogle || !!doctor?.outlook_calendar_connected}
               >
                 {connectingGoogle ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -486,9 +590,73 @@ export default function Configuracion() {
                 )}
                 {connectingGoogle ? "Conectando…" : "Conectar Google Calendar"}
               </Button>
-              <p className="text-xs text-muted-foreground">
-                La integración se activará cuando el administrador configure las credenciales de Google.
+              {doctor?.outlook_calendar_connected && (
+                <p className="text-xs text-muted-foreground">Desconecta Outlook primero para conectar Google.</p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Outlook Calendar */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CalendarIcon className="h-5 w-5" />
+            Outlook Calendar
+          </CardTitle>
+          <CardDescription>
+            Sincroniza tus citas con Outlook Calendar para verlas en tu calendario.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {doctor?.outlook_calendar_connected ? (
+            <div className="flex items-center justify-between rounded-lg border border-confirmed/30 bg-confirmed/5 p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-3 rounded-full bg-confirmed" />
+                <div>
+                  <p className="text-sm font-medium">Conectado</p>
+                  {doctor.outlook_calendar_id && (
+                    <p className="text-xs text-muted-foreground">Outlook Calendar</p>
+                  )}
+                </div>
+              </div>
+              <Button variant="outline" size="sm" className="gap-2" onClick={handleDisconnectOutlook}>
+                <Unlink className="h-4 w-4" /> Desconectar
+              </Button>
+            </div>
+          ) : hasOutlookTokenButNoCalendar ? (
+            renderCalendarSelectionStep(
+              outlookCalendarList,
+              loadingOutlookCalendars,
+              selectedOutlookCalendarId,
+              setSelectedOutlookCalendarId,
+              saveOutlookCalendarSelection,
+              handleDisconnectOutlook,
+              fetchOutlookCalendarList,
+              "Microsoft",
+            )
+          ) : (
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-6 text-center">
+              <Link2 className="h-8 w-8 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">
+                Conecta tu Outlook Calendar para sincronizar citas automáticamente.
               </p>
+              <Button
+                className="gap-2 bg-cta text-cta-foreground hover:bg-cta/90"
+                onClick={handleConnectOutlook}
+                disabled={connectingOutlook || !!doctor?.google_calendar_connected}
+              >
+                {connectingOutlook ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CalendarIcon className="h-4 w-4" />
+                )}
+                {connectingOutlook ? "Conectando…" : "Conectar Outlook Calendar"}
+              </Button>
+              {doctor?.google_calendar_connected && (
+                <p className="text-xs text-muted-foreground">Desconecta Google primero para conectar Outlook.</p>
+              )}
             </div>
           )}
         </CardContent>
