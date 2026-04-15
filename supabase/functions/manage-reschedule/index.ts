@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
   // Get current appointment
   const { data: oldAppt } = await supabase
     .from("appointments")
-    .select("id, doctor_id, patient_id, symptoms, google_event_id, status")
+    .select("id, doctor_id, patient_id, symptoms, google_event_id, outlook_event_id, status")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
   // Get doctor info
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected")
+    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
     .eq("id", oldAppt.doctor_id)
     .maybeSingle();
 
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
   const endAt = `${date}T${endHH}:${endMM}:00-06:00`;
 
   // Helper to get Google access token
-  const getAccessToken = async (): Promise<string | null> => {
+  const getGoogleAccessToken = async (): Promise<string | null> => {
     if (!doctor?.google_calendar_connected || !doctor.google_refresh_token_ref) return null;
     try {
       const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -130,18 +130,58 @@ Deno.serve(async (req) => {
     }
   };
 
-  // 1. Only cancel old appointment + delete Google event if not already cancelled
-  const accessToken = await getAccessToken();
+  // Helper to get Outlook access token
+  const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
+  const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
+  const getOutlookAccessToken = async (): Promise<string | null> => {
+    if (!doctor?.outlook_calendar_connected || !doctor.outlook_refresh_token_ref || !OUTLOOK_CLIENT_ID) return null;
+    try {
+      const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: OUTLOOK_CLIENT_ID,
+          client_secret: OUTLOOK_CLIENT_SECRET,
+          refresh_token: doctor.outlook_refresh_token_ref,
+          grant_type: "refresh_token",
+          scope: "offline_access Calendars.ReadWrite",
+        }),
+      });
+      const data = await res.json();
+      return res.ok ? data.access_token : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // 1. Cancel old appointment + delete calendar events if not already cancelled
+  const googleAccessToken = await getGoogleAccessToken();
+  const outlookAccessToken = await getOutlookAccessToken();
+
   if (oldAppt.status !== "cancelled") {
-    if (accessToken && oldAppt.google_event_id && doctor?.google_calendar_id) {
+    // Delete old Google event
+    if (googleAccessToken && oldAppt.google_event_id && doctor?.google_calendar_id) {
       const calendarId = encodeURIComponent(doctor.google_calendar_id);
       try {
         await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${oldAppt.google_event_id}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+          { method: "DELETE", headers: { Authorization: `Bearer ${googleAccessToken}` } }
         );
       } catch (err) {
         console.error("Error deleting old Google event:", err);
+      }
+    }
+
+    // Delete old Outlook event
+    if (outlookAccessToken && oldAppt.outlook_event_id && doctor?.outlook_calendar_id) {
+      const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+      try {
+        await fetch(
+          `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(oldAppt.outlook_event_id)}`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${outlookAccessToken}` } }
+        );
+      } catch (err) {
+        console.error("Error deleting old Outlook event:", err);
       }
     }
 
@@ -178,10 +218,12 @@ Deno.serve(async (req) => {
     );
   }
 
-  // 4. Create new Google Calendar event
+  // 4. Create new calendar event (Google or Outlook)
   let newGoogleEventId: string | null = null;
-  const gcAccessToken = accessToken ?? await getAccessToken();
-  if (gcAccessToken && doctor?.google_calendar_id) {
+  let newOutlookEventId: string | null = null;
+
+  const gcToken = googleAccessToken ?? await getGoogleAccessToken();
+  if (gcToken && doctor?.google_calendar_id) {
     const calendarId = encodeURIComponent(doctor.google_calendar_id);
     try {
       const eventBody = {
@@ -196,7 +238,7 @@ Deno.serve(async (req) => {
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${gcToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify(eventBody),
@@ -213,6 +255,42 @@ Deno.serve(async (req) => {
       }
     } catch (err) {
       console.error("Error creating new Google event:", err);
+    }
+  }
+
+  const olToken = outlookAccessToken ?? await getOutlookAccessToken();
+  if (olToken && doctor?.outlook_calendar_id) {
+    const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+    try {
+      const eventBody = {
+        subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
+        body: oldAppt.symptoms ? { contentType: "Text", content: `Síntomas: ${oldAppt.symptoms}` } : undefined,
+        start: { dateTime: startAt, timeZone: "America/Mexico_City" },
+        end: { dateTime: endAt, timeZone: "America/Mexico_City" },
+      };
+
+      const createRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${olToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(eventBody),
+        }
+      );
+
+      const eventData = await createRes.json();
+      if (createRes.ok && eventData.id) {
+        newOutlookEventId = eventData.id;
+        await supabase
+          .from("appointments")
+          .update({ outlook_event_id: newOutlookEventId })
+          .eq("id", newAppt.id);
+      }
+    } catch (err) {
+      console.error("Error creating new Outlook event:", err);
     }
   }
 
