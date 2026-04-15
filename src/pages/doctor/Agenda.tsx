@@ -150,6 +150,26 @@ export default function Agenda() {
     refetchInterval: 60_000,
   });
 
+  const { data: outlookEvents } = useQuery({
+    queryKey: ["outlook-calendar-events", doctorId, weekKey],
+    queryFn: async () => {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) return [];
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const response = await fetch(
+        `${supabaseUrl}/functions/v1/outlook-calendar-events?timeMin=${encodeURIComponent(weekStart.toISOString())}&timeMax=${encodeURIComponent(weekEnd.toISOString())}`,
+        { headers: { Authorization: `Bearer ${token}`, apikey: anonKey } }
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.events || []) as GoogleEvent[];
+    },
+    enabled: !!doctorId,
+    refetchInterval: 60_000,
+  });
+
   const calendarItems = useMemo(() => {
     const items: CalendarItem[] = [];
     for (const appt of appointments || []) {
@@ -181,8 +201,24 @@ export default function Agenda() {
         description: e.description ?? undefined,
       });
     }
+    // Add Outlook events (same pattern as Google)
+    const outlookEventIds = new Set(
+      (appointments || []).map((a: any) => a.outlook_event_id).filter(Boolean)
+    );
+    for (const e of outlookEvents || []) {
+      if (outlookEventIds.has(e.id)) continue;
+      items.push({
+        id: e.id,
+        type: "google", // reuse same visual style
+        start: parseISO(e.start),
+        end: parseISO(e.end),
+        title: e.summary,
+        htmlLink: e.htmlLink,
+        description: e.description ?? undefined,
+      });
+    }
     return items;
-  }, [appointments, googleEvents]);
+  }, [appointments, googleEvents, outlookEvents]);
 
   const itemsByDay = useMemo(() => {
     const map: Record<number, CalendarItem[]> = {};
