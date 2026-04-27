@@ -1,19 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createManageToken } from "../_shared/manage-token.ts";
+import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-function generateToken(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let token = "";
-  for (let i = 0; i < 32; i++) {
-    token += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return token;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -60,12 +53,17 @@ Deno.serve(async (req) => {
       .maybeSingle();
     appointment = data;
   } else {
-    // Find latest non-cancelled appointment by patient phone
-    const { data: patient } = await supabase
+    // Find latest non-cancelled appointment by patient phone. The lookup
+    // tolerates Mexican `+52` / `+521` variants so the n8n flow can pass any
+    // form the patient typed without missing existing rows.
+    const phoneVariants = mxPhoneLookupVariants(normalizeMxPhone(patient_phone!));
+    const { data: patientMatches } = await supabase
       .from("patients")
       .select("id, phone")
-      .eq("phone", patient_phone!)
-      .maybeSingle();
+      .in("phone", phoneVariants)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const patient = patientMatches?.[0];
 
     if (!patient) {
       return new Response(JSON.stringify({ error: "Paciente no encontrado" }), {
@@ -106,19 +104,14 @@ Deno.serve(async (req) => {
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
-  // Generate manage token (expires when appointment ends)
-  const manageToken = generateToken();
+  // Generate manage token (expires when appointment ends).
   const expiresAt = appointment.end_at;
-
-  await supabase.from("appointment_manage_tokens").insert({
-    appointment_id: appointment.id,
-    token: manageToken,
-    expires_at: expiresAt,
-    patient_phone: patientData?.phone ?? patient_phone ?? "",
+  const { token: manageToken, manageUrl } = await createManageToken({
+    supabase,
+    appointmentId: appointment.id,
+    expiresAt,
+    patientPhone: patientData?.phone ?? patient_phone ?? "",
   });
-
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
-  const manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
 
   return new Response(
     JSON.stringify({

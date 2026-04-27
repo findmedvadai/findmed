@@ -1,19 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createManageToken } from "../_shared/manage-token.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-function generateToken(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let token = "";
-  for (let i = 0; i < 32; i++) {
-    token += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return token;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -77,21 +69,21 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     let manageToken: string;
+    let manageUrl: string;
     if (existingToken) {
       manageToken = existingToken.token;
+      manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
     } else {
-      // Generate new token (expires when appointment ends)
-      manageToken = generateToken();
-      const expiresAt = appt.end_at;
-      await supabase.from("appointment_manage_tokens").insert({
-        appointment_id: appt.id,
-        token: manageToken,
-        expires_at: expiresAt,
-        patient_phone: patient?.phone ?? "",
+      // Generate new token (expires when appointment ends).
+      const result = await createManageToken({
+        supabase,
+        appointmentId: appt.id,
+        expiresAt: appt.end_at,
+        patientPhone: patient?.phone ?? "",
       });
+      manageToken = result.token;
+      manageUrl = result.manageUrl;
     }
-
-    const manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
 
     // Fetch doctor's min_confirm_hours_before
     const { data: settings } = await supabase

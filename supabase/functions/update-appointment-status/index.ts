@@ -1,19 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-function normalizePhone(raw: string): string {
-  let digits = raw.replace(/[^\d+]/g, "");
-  if (digits.startsWith("+")) return digits;
-  if (digits.startsWith("0")) digits = digits.slice(1);
-  if (digits.length === 10) return `+52${digits}`;
-  if (digits.length === 12 && digits.startsWith("52")) return `+${digits}`;
-  return `+${digits}`;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -104,13 +96,16 @@ Deno.serve(async (req) => {
   if (appointment_id) {
     appointmentQuery = appointmentQuery.eq("id", appointment_id);
   } else if (patient_phone) {
-    const phone = normalizePhone(patient_phone);
-    // Find patient first
-    const { data: patient } = await supabase
+    // Match against both Mexican `+52` / `+521` variants so the n8n flow can
+    // pass any form the patient typed without missing the row.
+    const phoneVariants = mxPhoneLookupVariants(normalizeMxPhone(patient_phone));
+    const { data: patientMatches } = await supabase
       .from("patients")
       .select("id")
-      .eq("phone", phone)
-      .maybeSingle();
+      .in("phone", phoneVariants)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const patient = patientMatches?.[0];
 
     if (!patient) {
       return new Response(JSON.stringify({ error: "Patient not found" }), {
