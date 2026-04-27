@@ -48,23 +48,40 @@ serve(async (req) => {
     const userId = payload.sub as string;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { data: userData } = await supabase
-      .from("users")
-      .select("doctor_id")
-      .eq("id", userId)
-      .maybeSingle();
+    // Resolve target doctor. Default = the doctor whose user is authenticated.
+    // If the caller passes ?doctor_id=…, they must be admin/superadmin.
+    const url = new URL(req.url);
+    const requestedDoctorId = url.searchParams.get("doctor_id");
+    let targetDoctorId: string | null = null;
 
-    if (!userData?.doctor_id) {
-      return new Response(JSON.stringify({ error: "No eres un doctor" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (requestedDoctorId) {
+      const { data: isAdmin } = await supabase.rpc("is_admin_or_superadmin", { _user_id: userId });
+      if (!isAdmin) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      targetDoctorId = requestedDoctorId;
+    } else {
+      const { data: userData } = await supabase
+        .from("users")
+        .select("doctor_id")
+        .eq("id", userId)
+        .maybeSingle();
+      if (!userData?.doctor_id) {
+        return new Response(JSON.stringify({ error: "No eres un doctor" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      targetDoctorId = userData.doctor_id;
     }
 
     const { data: doctor } = await supabase
       .from("doctors")
       .select("outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
-      .eq("id", userData.doctor_id)
+      .eq("id", targetDoctorId)
       .maybeSingle();
 
     if (!doctor?.outlook_calendar_connected || !doctor.outlook_refresh_token_ref || !doctor.outlook_calendar_id) {
@@ -74,7 +91,6 @@ serve(async (req) => {
       });
     }
 
-    const url = new URL(req.url);
     const timeMin = url.searchParams.get("timeMin");
     const timeMax = url.searchParams.get("timeMax");
 
@@ -101,7 +117,7 @@ serve(async (req) => {
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
       console.error("Token refresh failed:", tokenData);
-      return new Response(JSON.stringify({ events: [], error: "Error al refrescar token" }), {
+      return new Response(JSON.stringify({ events: [], error: "calendar_not_synced" }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -118,21 +134,28 @@ serve(async (req) => {
         $select: "id,subject,start,end,bodyPreview,webLink",
       });
 
+    // No `Prefer: outlook.timezone` header → Microsoft Graph returns dateTime in UTC
+    // (naive ISO without offset). Appending "Z" turns it into a valid UTC ISO 8601.
     const eventsRes = await fetch(eventsUrl, {
       headers: {
         Authorization: `Bearer ${tokenData.access_token}`,
-        Prefer: 'outlook.timezone="America/Mexico_City"',
       },
     });
     const eventsData = await eventsRes.json();
+
+    const toUtcIso = (raw: string): string => {
+      // Trim trailing zeros from fractional seconds to keep parseISO happy on the client.
+      const trimmed = raw.replace(/\.\d+$/, "");
+      return /[Z+-]\d{2}:?\d{2}?$/.test(trimmed) ? trimmed : trimmed + "Z";
+    };
 
     const events = (eventsData.value || [])
       .filter((e: any) => e.start?.dateTime)
       .map((e: any) => ({
         id: e.id,
         summary: e.subject || "Sin título",
-        start: e.start.dateTime.endsWith("Z") ? e.start.dateTime : e.start.dateTime + "Z",
-        end: e.end?.dateTime ? (e.end.dateTime.endsWith("Z") ? e.end.dateTime : e.end.dateTime + "Z") : e.start.dateTime,
+        start: toUtcIso(e.start.dateTime),
+        end: e.end?.dateTime ? toUtcIso(e.end.dateTime) : toUtcIso(e.start.dateTime),
         description: e.bodyPreview || null,
         htmlLink: e.webLink || null,
       }));

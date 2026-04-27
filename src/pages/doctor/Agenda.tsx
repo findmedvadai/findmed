@@ -7,12 +7,10 @@ import {
   addWeeks,
   subWeeks,
   addDays,
-  isSameDay,
-  isToday,
   parseISO,
   differenceInMinutes,
 } from "date-fns";
-import { toZonedTime } from "date-fns-tz";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
 
 const MEXICO_TZ = "America/Mexico_City";
@@ -25,6 +23,23 @@ function getMexicoMinutes(date: Date): number {
 }
 function formatMexicoTime(date: Date, fmt: string): string {
   return format(toZonedTime(date, MEXICO_TZ), fmt);
+}
+
+// Compare two instants by their CDMX calendar day, regardless of the browser's TZ.
+function isSameMexicoDay(a: Date, b: Date): boolean {
+  return formatMexicoTime(a, "yyyy-MM-dd") === formatMexicoTime(b, "yyyy-MM-dd");
+}
+
+// Returns the CDMX week boundaries for the week containing `instant`, expressed
+// as absolute UTC instants. weekStartsOn: 0 = Sunday.
+function getMexicoWeekBounds(instant: Date): { start: Date; end: Date } {
+  const cdmxNaive = toZonedTime(instant, MEXICO_TZ);
+  const startNaive = startOfWeek(cdmxNaive, { weekStartsOn: 0 });
+  const endNaive = endOfWeek(cdmxNaive, { weekStartsOn: 0 });
+  return {
+    start: fromZonedTime(startNaive, MEXICO_TZ),
+    end: fromZonedTime(endNaive, MEXICO_TZ),
+  };
 }
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -86,9 +101,8 @@ function computeOverlapColumns(items: CalendarItem[]) {
 export default function Agenda() {
   const { doctorId } = useAuth();
   const queryClient = useQueryClient();
-  const [weekStart, setWeekStart] = useState(() =>
-    startOfWeek(new Date(), { weekStartsOn: 0 })
-  );
+  // weekStart is the absolute UTC instant for Sunday 00:00 CDMX of the visible week.
+  const [weekStart, setWeekStart] = useState(() => getMexicoWeekBounds(new Date()).start);
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
@@ -104,9 +118,10 @@ export default function Agenda() {
     return () => clearInterval(interval);
   }, []);
 
-  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
-  const weekKey = format(weekStart, "yyyy-MM-dd");
+  const weekEnd = useMemo(() => getMexicoWeekBounds(weekStart).end, [weekStart]);
+  const weekKey = formatMexicoTime(weekStart, "yyyy-MM-dd");
 
+  // Each day is the CDMX-midnight instant for that calendar day in the visible week.
   const weekDays = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart]
@@ -118,7 +133,7 @@ export default function Agenda() {
       if (!doctorId) return [];
       const { data, error } = await supabase
         .from("appointments")
-        .select("id, google_event_id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
+        .select("id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
         .eq("doctor_id", doctorId)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
@@ -201,15 +216,16 @@ export default function Agenda() {
         description: e.description ?? undefined,
       });
     }
-    // Add Outlook events (same pattern as Google)
+    // Add Outlook events. Same visual treatment as Google but tagged so the detail
+    // dialog can show the right badge / route delete & edit to the right endpoint.
     const outlookEventIds = new Set(
-      (appointments || []).map((a: any) => a.outlook_event_id).filter(Boolean)
+      (appointments || []).map((a) => a.outlook_event_id).filter(Boolean)
     );
     for (const e of outlookEvents || []) {
       if (outlookEventIds.has(e.id)) continue;
       items.push({
         id: e.id,
-        type: "google", // reuse same visual style
+        type: "outlook",
         start: parseISO(e.start),
         end: parseISO(e.end),
         title: e.summary,
@@ -224,7 +240,7 @@ export default function Agenda() {
     const map: Record<number, CalendarItem[]> = {};
     for (let i = 0; i < 7; i++) map[i] = [];
     for (const item of calendarItems) {
-      const dayIdx = weekDays.findIndex((d) => isSameDay(d, item.start));
+      const dayIdx = weekDays.findIndex((d) => isSameMexicoDay(d, item.start));
       if (dayIdx >= 0) map[dayIdx].push(item);
     }
     return map;
@@ -240,9 +256,9 @@ export default function Agenda() {
 
   const goToPrev = () => setWeekStart((w) => subWeeks(w, 1));
   const goToNext = () => setWeekStart((w) => addWeeks(w, 1));
-  const goToToday = () => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 0 }));
+  const goToToday = () => setWeekStart(getMexicoWeekBounds(new Date()).start);
 
-  const monthLabel = format(weekStart, "MMMM yyyy", { locale: es });
+  const monthLabel = format(toZonedTime(weekStart, MEXICO_TZ), "MMMM yyyy", { locale: es });
 
   const summary = useMemo(() => {
     if (!appointments) return { total: 0, confirmed: 0, scheduled: 0 };
@@ -256,7 +272,8 @@ export default function Agenda() {
   }, [appointments, currentTime]);
 
   function getEventStyle(item: CalendarItem): string {
-    if (item.type === "google") return "bg-primary/80 text-primary-foreground";
+    if (item.type === "google" || item.type === "outlook")
+      return "bg-primary/80 text-primary-foreground";
     if (item.status === "scheduled") return "bg-scheduled text-scheduled-foreground";
     if (item.status === "confirmed") return "bg-confirmed text-confirmed-foreground";
     return "bg-muted text-muted-foreground";
@@ -295,7 +312,7 @@ export default function Agenda() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button
-            variant={isSameDay(weekStart, startOfWeek(new Date(), { weekStartsOn: 0 })) ? "default" : "outline"}
+            variant={isSameMexicoDay(weekStart, getMexicoWeekBounds(new Date()).start) ? "default" : "outline"}
             size="sm"
             onClick={goToToday}
             className="h-8 text-xs"
@@ -342,22 +359,25 @@ export default function Agenda() {
       {/* Day headers */}
       <div className="grid grid-cols-[3rem_repeat(7,1fr)] border-b border-border">
         <div />
-        {weekDays.map((day) => (
-          <DayHeaderPopover key={day.toISOString()} day={day} doctorId={doctorId ?? ""}>
-            <button className="flex flex-col items-center py-1 hover:bg-accent/50 rounded transition-colors cursor-pointer">
-              <span className="text-[10px] uppercase text-muted-foreground">
-                {format(day, "EEE", { locale: es })}
-              </span>
-              <span
-                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
-                  isToday(day) ? "bg-primary text-primary-foreground" : "text-foreground"
-                }`}
-              >
-                {format(day, "d")}
-              </span>
-            </button>
-          </DayHeaderPopover>
-        ))}
+        {weekDays.map((day) => {
+          const dayIsToday = isSameMexicoDay(day, currentTime);
+          return (
+            <DayHeaderPopover key={day.toISOString()} day={day} doctorId={doctorId ?? ""}>
+              <button className="flex flex-col items-center py-1 hover:bg-accent/50 rounded transition-colors cursor-pointer">
+                <span className="text-[10px] uppercase text-muted-foreground">
+                  {format(toZonedTime(day, MEXICO_TZ), "EEE", { locale: es })}
+                </span>
+                <span
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
+                    dayIsToday ? "bg-primary text-primary-foreground" : "text-foreground"
+                  }`}
+                >
+                  {formatMexicoTime(day, "d")}
+                </span>
+              </button>
+            </DayHeaderPopover>
+          );
+        })}
       </div>
 
       {/* Grid */}
@@ -384,11 +404,12 @@ export default function Agenda() {
           {weekDays.map((day, dayIdx) => {
             const dayItems = itemsByDay[dayIdx] || [];
             const positioned = computeOverlapColumns(dayItems);
+            const dayIsToday = isSameMexicoDay(day, currentTime);
 
             return (
               <div
                 key={day.toISOString()}
-                className={`relative border-l border-border ${isToday(day) ? "bg-primary/5" : ""}`}
+                className={`relative border-l border-border ${dayIsToday ? "bg-primary/5" : ""}`}
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   const y = e.clientY - rect.top;
@@ -409,7 +430,7 @@ export default function Agenda() {
                 ))}
 
                 {/* Current time red line */}
-                {isToday(day) && currentTimeTop !== null && (
+                {dayIsToday && currentTimeTop !== null && (
                   <div
                     className="absolute inset-x-0 z-30 pointer-events-none"
                     style={{ top: currentTimeTop }}

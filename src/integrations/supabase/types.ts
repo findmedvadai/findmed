@@ -81,8 +81,10 @@ export type Database = {
       }
       appointments: {
         Row: {
+          booking_source: Database["public"]["Enums"]["booking_source"]
           cancel_reason: Database["public"]["Enums"]["cancel_reason"] | null
           created_at: string
+          created_by_user_id: string | null
           created_from_session_id: string | null
           doctor_id: string
           doctor_notes: string | null
@@ -98,8 +100,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          booking_source?: Database["public"]["Enums"]["booking_source"]
           cancel_reason?: Database["public"]["Enums"]["cancel_reason"] | null
           created_at?: string
+          created_by_user_id?: string | null
           created_from_session_id?: string | null
           doctor_id: string
           doctor_notes?: string | null
@@ -115,8 +119,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          booking_source?: Database["public"]["Enums"]["booking_source"]
           cancel_reason?: Database["public"]["Enums"]["cancel_reason"] | null
           created_at?: string
+          created_by_user_id?: string | null
           created_from_session_id?: string | null
           doctor_id?: string
           doctor_notes?: string | null
@@ -834,7 +840,8 @@ export type Database = {
     Enums: {
       app_role: "superadmin" | "admin" | "doctor"
       appointment_status: "scheduled" | "confirmed" | "cancelled" | "completed"
-      cancel_reason: "patient" | "doctor" | "no_confirmation"
+      booking_source: "patient_self" | "admin_manual" | "doctor_manual"
+      cancel_reason: "patient" | "doctor" | "no_confirmation" | "admin"
       notification_type:
         | "appointment_scheduled"
         | "appointment_cancelled_by_patient"
@@ -842,6 +849,8 @@ export type Database = {
         | "appointment_auto_cancelled"
         | "appointment_completed"
         | "postconsultation_submitted"
+        | "appointment_rescheduled"
+        | "appointment_cancelled_by_admin"
       post_consultation_status: "pending" | "read" | "report_sent"
     }
     CompositeTypes: {
@@ -972,7 +981,8 @@ export const Constants = {
     Enums: {
       app_role: ["superadmin", "admin", "doctor"],
       appointment_status: ["scheduled", "confirmed", "cancelled", "completed"],
-      cancel_reason: ["patient", "doctor", "no_confirmation"],
+      booking_source: ["patient_self", "admin_manual", "doctor_manual"],
+      cancel_reason: ["patient", "doctor", "no_confirmation", "admin"],
       notification_type: [
         "appointment_scheduled",
         "appointment_cancelled_by_patient",
@@ -980,6 +990,8 @@ export const Constants = {
         "appointment_auto_cancelled",
         "appointment_completed",
         "postconsultation_submitted",
+        "appointment_rescheduled",
+        "appointment_cancelled_by_admin",
       ],
       post_consultation_status: ["pending", "read", "report_sent"],
     },

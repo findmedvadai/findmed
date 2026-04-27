@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI local state (per-machine project link, do not commit)
+supabase/.temp/
+supabase/migrations.zip

@@ -1,8 +1,14 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, isPast } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
+
+const MEXICO_TZ = "America/Mexico_City";
+function formatMx(date: Date, fmt: string, opts?: Parameters<typeof format>[2]) {
+  return format(toZonedTime(date, MEXICO_TZ), fmt, opts);
+}
 import {
   Dialog,
   DialogContent,
@@ -30,9 +36,11 @@ import CreateEventDialog from "./CreateEventDialog";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
+export type CalendarItemType = "appointment" | "google" | "outlook";
+
 export interface CalendarItem {
   id: string;
-  type: "appointment" | "google";
+  type: CalendarItemType;
   start: Date;
   end: Date;
   title: string;
@@ -76,8 +84,9 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
   };
 
-  const invalidateGoogle = () => {
+  const invalidateExternal = () => {
     queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
+    queryClient.invalidateQueries({ queryKey: ["outlook-calendar-events"] });
   };
 
   const cancelMutation = useMutation({
@@ -161,8 +170,9 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     onError: () => toast.error("Error al guardar notas"),
   });
 
-  const handleDeleteGoogleEvent = async () => {
+  const handleDeleteExternalEvent = async () => {
     if (!item) return;
+    const provider = item.type === "outlook" ? "outlook" : "google";
     setDeleting(true);
     try {
       const session = await supabase.auth.getSession();
@@ -172,7 +182,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-      const res = await fetch(`${supabaseUrl}/functions/v1/google-calendar-delete-event`, {
+      const res = await fetch(`${supabaseUrl}/functions/v1/${provider}-calendar-delete-event`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -185,8 +195,10 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || "Error al eliminar");
 
-      toast.success("Evento eliminado de Google Calendar");
-      invalidateGoogle();
+      toast.success(provider === "outlook"
+        ? "Evento eliminado de Outlook Calendar"
+        : "Evento eliminado de Google Calendar");
+      invalidateExternal();
       onClose();
     } catch (err: any) {
       toast.error(err.message || "Error al eliminar evento");
@@ -197,7 +209,9 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
 
   if (!item) return null;
 
-  const isGoogle = item.type === "google";
+  const isExternal = item.type === "google" || item.type === "outlook";
+  const externalProvider: "google" | "outlook" | null =
+    item.type === "outlook" ? "outlook" : item.type === "google" ? "google" : null;
   const canComplete = item.status === "confirmed" && isPast(item.start);
   const canCancel = item.status === "scheduled" || item.status === "confirmed";
   const canEditNotes = item.status === "completed";
@@ -221,15 +235,21 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {item.title}
-              {!isGoogle && item.status && (
+              {!isExternal && item.status && (
                 <Badge className={STATUS_STYLES[item.status]}>{STATUS_LABELS[item.status]}</Badge>
               )}
-              {isGoogle && (
+              {!isExternal && !item.status && (
+                <Badge variant="outline" className="text-xs">Plataforma</Badge>
+              )}
+              {externalProvider === "google" && (
                 <Badge variant="outline" className="text-xs">Google</Badge>
+              )}
+              {externalProvider === "outlook" && (
+                <Badge variant="outline" className="text-xs">Outlook</Badge>
               )}
             </DialogTitle>
             <DialogDescription>
-              {format(item.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
+              {formatMx(item.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
             </DialogDescription>
           </DialogHeader>
 
@@ -237,39 +257,39 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
             <div>
               <span className="text-muted-foreground">Horario: </span>
               <span className="font-medium">
-                {format(item.start, "HH:mm")} – {format(item.end, "HH:mm")}
+                {formatMx(item.start, "HH:mm")} – {formatMx(item.end, "HH:mm")}
               </span>
             </div>
 
-            {!isGoogle && item.symptoms && (
+            {!isExternal && item.symptoms && (
               <div>
                 <span className="text-muted-foreground">Síntomas: </span>
                 <span>{item.symptoms}</span>
               </div>
             )}
 
-            {isGoogle && item.description && (
+            {isExternal && item.description && (
               <div>
                 <span className="text-muted-foreground">Descripción: </span>
                 <span>{item.description}</span>
               </div>
             )}
 
-            {!isGoogle && item.doctorNotes && !editingNotes && (
+            {!isExternal && item.doctorNotes && !editingNotes && (
               <div>
                 <span className="text-muted-foreground">Notas médicas: </span>
                 <span>{item.doctorNotes}</span>
               </div>
             )}
 
-            {isGoogle && item.htmlLink && (
+            {isExternal && item.htmlLink && (
               <a
                 href={item.htmlLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary underline text-xs"
               >
-                Abrir en Google Calendar
+                {externalProvider === "outlook" ? "Abrir en Outlook Calendar" : "Abrir en Google Calendar"}
               </a>
             )}
           </div>
@@ -298,8 +318,8 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
             </div>
           )}
 
-          {/* Actions for Google events */}
-          {isGoogle && (
+          {/* Actions for external events (Google / Outlook) */}
+          {isExternal && (
             <div className="flex gap-2 justify-end pt-2">
               <Button variant="outline" size="sm" onClick={() => setEditEventOpen(true)}>
                 Editar
@@ -314,12 +334,14 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
                   <AlertDialogHeader>
                     <AlertDialogTitle>¿Eliminar este evento?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Se eliminará de tu Google Calendar. Esta acción no se puede deshacer.
+                      {externalProvider === "outlook"
+                        ? "Se eliminará de tu Outlook Calendar. Esta acción no se puede deshacer."
+                        : "Se eliminará de tu Google Calendar. Esta acción no se puede deshacer."}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Volver</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleDeleteGoogleEvent} disabled={deleting}>
+                    <AlertDialogAction onClick={handleDeleteExternalEvent} disabled={deleting}>
                       {deleting ? "Eliminando..." : "Sí, eliminar"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -329,7 +351,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
           )}
 
           {/* Actions for appointments */}
-          {!isGoogle && (
+          {!isExternal && (
             <div className="flex gap-2 justify-end pt-2">
               {canEditNotes && !editingNotes && (
                 <Button variant="outline" size="sm" onClick={startEditNotes}>
@@ -376,14 +398,15 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
         </DialogContent>
       </Dialog>
 
-      {/* Edit event dialog (for Google events) */}
-      {isGoogle && (
+      {/* Edit event dialog (for external events) */}
+      {isExternal && externalProvider && (
         <CreateEventDialog
           open={editEventOpen}
           onClose={() => {
             setEditEventOpen(false);
             onClose();
           }}
+          provider={externalProvider}
           editEvent={{
             id: item.id,
             summary: item.title,

@@ -1,0 +1,32 @@
+const { createClient } = require('@supabase/supabase-js');
+
+const SUPABASE_URL = 'https://jyzvdowflblxmlahlupo.supabase.co';
+const SERVICE_ROLE_KEY = process.argv[2];
+
+if (!SERVICE_ROLE_KEY) {
+  console.error('Usage: node fix_passwords.js <SERVICE_ROLE_KEY>');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false }
+});
+
+const users = [{"id": "b4e12058-553f-4c53-9f84-4ad2b4444ca2", "email": "doctor_3e20e173@findmed.com.mx", "password": "FindMed2026!"}, {"id": "5a80b082-89a1-4d09-92fd-fcc6b9a1e3cb", "email": "doctor_f63024c0@findmed.com.mx", "password": "FindMed2026!"}, {"id": "aa9c821f-4a3b-4225-bd8c-e885edb5f90b", "email": "nats@gmail.com", "password": "Nat123!"}, {"id": "0bd1e2fb-58f7-4f01-abf5-549a52681986", "email": "dr.adrianMP@findmed.com", "password": "AMP123#"}, {"id": "6354bac8-7145-44c1-84a5-f6a860b20533", "email": "dr.andresGC@findmed.com", "password": "AGC123#"}, {"id": "b74722d3-5b0b-43f8-b8c9-8e3300042882", "email": "dr.gregorioZO@findmed.com", "password": "GZO123#"}, {"id": "cdc47101-3f03-4b0d-bd21-034c9d36d4f9", "email": "dr.briciaD@findmed.com", "password": "BD123#"}, {"id": "83207adc-ab71-4086-a907-e3914e0af793", "email": "docgmirelli@findmed.com", "password": "GM123!"}, {"id": "e057ef02-719b-4c3d-b851-0764b26ff210", "email": "caacosta@doc.findmed.com", "password": "#CarAco123!"}, {"id": "f65386bb-ebaa-47d9-9076-4316b6a688df", "email": "memarquina@doc.findmed.com", "password": "#ManMar123!"}, {"id": "2339a59d-45a3-4d94-be86-a536f85b0dbe", "email": "gzubieta@doc.findmed.com", "password": "#GreZub123!"}, {"id": "03747e5c-619f-4da5-98a5-71a0505fc029", "email": "jecazares@doc.findmed.com", "password": "#JaiEca123!"}, {"id": "f2d674e3-6de6-4d78-b1a7-cf557eb5a40f", "email": "jpmateos@doc.findmed.com", "password": "#JorPma123!"}, {"id": "c6538947-e6ed-4c0e-a015-91ebbf23db55", "email": "rjauregui@doc.findmed.com", "password": "#RobJau123!"}, {"id": "106401a4-02d2-4a6e-90a0-891b61a870c5", "email": "iavedano@doc.findmed.com", "password": "#IvaAve123!"}, {"id": "c1f425d2-b2c2-4d2f-8710-61f2421e2f8a", "email": "fbrito@doc.findmed.com", "password": "#FraBri123!"}, {"id": "e737235e-420d-4370-acf0-929ab678e121", "email": "emichan@doc.findmed.com", "password": "#EveMic123!"}, {"id": "6767da29-c24f-4714-ab84-096bc58e9272", "email": "fbarba@doc.findmed.com", "password": "#FerBar123!"}, {"id": "b2a1cc91-e1f5-49c6-86d8-8063dfe26c8f", "email": "jalcocer@doc.findmed.com", "password": "#JaiAlc123!"}, {"id": "d2524535-fde5-4bab-b6a1-3e953f9fd021", "email": "jvega@doc.findmed.com", "password": "#JorVeg123!"}, {"id": "8aeb6b3d-8514-499e-a0ff-3f4692faecab", "email": "ecueto@doc.findmed.com", "password": "#EdgCue123!"}, {"id": "9d28719c-9a3a-4ca5-a82d-e7140a0fb6aa", "email": "mvelez@doc.findmed.com", "password": "#MauVel123!"}, {"id": "430beb09-de4f-417f-9102-14aeb81fb3a1", "email": "rruz@doc.findmed.com", "password": "#RodRuz123!"}, {"id": "495e0729-c921-4a26-8cef-936a4fb0f526", "email": "ahernandez@doc.findmed.com", "password": "#AntHer123!"}, {"id": "35f292ea-71ed-4bdb-9619-82f67c87ed11", "email": "fsamperio@doc.findmed.com", "password": "#FerSam123!"}, {"id": "eabdfb00-1f7b-4159-9f81-e02ff5814a48", "email": "ganaya@doc.findmed.com", "password": "#GusAna123!"}, {"id": "66953627-eb33-49f3-8947-64521e93e324", "email": "xperez@doc.findmed.com", "password": "#XicPer123!"}, {"id": "aae5daa9-0d34-46c3-98e6-43141f90a2e8", "email": "rpineda@doc.findmed.com", "password": "#RauPin123!"}, {"id": "42ab6411-ceea-41fb-bfe7-1ae2546a5de8", "email": "cdlever@doc.findmed.com", "password": "#CarLev123!"}, {"id": "98394ef5-fb9c-4583-8035-e4ebda69dd88", "email": "amperez@doc.findmed.com", "password": "#AdrPer123!"}, {"id": "a8b0b352-1514-4b38-b43d-432f7831b1d3", "email": "emodiano@doc.findmed.com", "password": "#EduMod123!"}, {"id": "604d049b-e715-46bc-90b2-5432537d3a9b", "email": "orueda@doc.findmed.com", "password": "#OmaRue123!"}, {"id": "9aadf089-e046-4b2a-a097-1d899e8f6c91", "email": "hhernandez@doc.findmed.com", "password": "#HerHer123!"}, {"id": "5eecc3c2-a422-4bf3-9985-8c68d787d84e", "email": "dracosta@doc.findmed.com", "password": "#DiaAco123!"}, {"id": "a81e0318-1958-4672-abe0-e8926b551123", "email": "mpsanchez@doc.findmed.com", "password": "#MarSan123!"}, {"id": "15e18449-c0e2-47d4-983e-b39e49ba025c", "email": "pcampos@doc.findmed.com", "password": "#PauCam123!"}, {"id": "3afa2464-27f7-40b9-ab2f-905426e7b186", "email": "bdelgado@doc.findmed.com", "password": "#BriDel123!"}, {"id": "c8386543-3bcb-44c5-90d9-e570205e2a92", "email": "rgranados@doc.findmed.com", "password": "#RauGra123!"}, {"id": "a552dcb7-758c-4297-896a-28ada340e9ec", "email": "agudino@doc.findmed.com", "password": "#AndGud123!"}, {"id": "080748ba-5dec-4742-82cc-0661ca2b0c7d", "email": "hcastaneda@doc.findmed.com", "password": "#HerCast123!"}, {"id": "1dcfb405-acd5-4a06-8ced-78f03ba0d750", "email": "admin@findmed.com", "password": "FindMed2026!"}, {"id": "d8580940-f4c1-4a7a-b932-98d3e1f07012", "email": "andres@findmed.com", "password": "andres123!"}, {"id": "677383c0-b9a6-4347-8f6a-c11d54b3174c", "email": "thalia@findmed.com", "password": "thalia123!"}, {"id": "6596971d-1531-4796-b1a4-baf4c502398a", "email": "ivan@findmed.com", "password": "ivan123!"}, {"id": "b04b6700-969e-4051-913e-c86825044dd3", "email": "fabian@findmed.com", "password": "fabian123!"}, {"id": "2d61be57-a3cf-4fc3-9aca-01fc3c63eca9", "email": "alejandro@findmed.com", "password": "alejandro123!"}, {"id": "170a3bd4-3722-484f-9b6c-3b2eb6a4584b", "email": "guillermo@findmed.com", "password": "guillermo123@"}, {"id": "548019d1-be78-4882-87f0-f08f2ec3063e", "email": "diego@findmed.com", "password": "diego123!"}, {"id": "738aee07-0772-4c96-91da-f6d8b9644893", "email": "ricardo@findmed.com", "password": "ricardo123!"}, {"id": "0d2d1127-20c2-4fc0-8146-503b2a8f0442", "email": "jafet@findmed.com", "password": "jafet123!"}, {"id": "ee39104e-7546-4c69-87c5-1a8fed5b9f32", "email": "martha@findmed.com", "password": "martha123!"}, {"id": "d962da43-665c-4639-b79d-c5a61452c3ed", "email": "ernesto@findmed.com", "password": "ernesto123!"}];
+
+async function main() {
+  let ok = 0, fail = 0;
+  for (const u of users) {
+    const { error } = await supabase.auth.admin.updateUserById(u.id, { password: u.password });
+    if (error) {
+      console.error('FAIL:', u.email, error.message);
+      fail++;
+    } else {
+      console.log('OK:', u.email);
+      ok++;
+    }
+  }
+  console.log('\nDone:', ok, 'updated,', fail, 'failed');
+}
+
+main();
