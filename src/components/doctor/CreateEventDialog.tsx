@@ -1,8 +1,12 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+
+const MEXICO_TZ = "America/Mexico_City";
+const formatMx = (date: Date, fmt: string) => format(toZonedTime(date, MEXICO_TZ), fmt);
 import {
   Dialog,
   DialogContent,
@@ -28,6 +32,12 @@ interface CreateEventDialogProps {
     start: Date;
     end: Date;
   };
+  /**
+   * Forces the calendar provider used to write the event.
+   * Required when editing an existing event so it goes back to the right calendar.
+   * If omitted (creation flow), the provider is auto-detected from the doctor's connections.
+   */
+  provider?: "google" | "outlook";
 }
 
 export default function CreateEventDialog({
@@ -36,6 +46,7 @@ export default function CreateEventDialog({
   defaultDate,
   defaultStartHour,
   editEvent,
+  provider,
 }: CreateEventDialogProps) {
   const queryClient = useQueryClient();
   const isEdit = !!editEvent;
@@ -47,21 +58,22 @@ export default function CreateEventDialog({
   const [endTime, setEndTime] = useState("10:00");
   const [submitting, setSubmitting] = useState(false);
 
-  // Reset form when dialog opens
+  // Reset form when dialog opens. All form fields represent CDMX local time, since
+  // the doctor reasons in CDMX and the Edge Functions also assume CDMX as the calendar TZ.
   useEffect(() => {
     if (!open) return;
 
     if (editEvent) {
       setSummary(editEvent.summary);
       setDescription(editEvent.description ?? "");
-      setDate(format(editEvent.start, "yyyy-MM-dd"));
-      setStartTime(format(editEvent.start, "HH:mm"));
-      setEndTime(format(editEvent.end, "HH:mm"));
+      setDate(formatMx(editEvent.start, "yyyy-MM-dd"));
+      setStartTime(formatMx(editEvent.start, "HH:mm"));
+      setEndTime(formatMx(editEvent.end, "HH:mm"));
     } else {
       setSummary("");
       setDescription("");
       const d = defaultDate ?? new Date();
-      setDate(format(d, "yyyy-MM-dd"));
+      setDate(formatMx(d, "yyyy-MM-dd"));
       const sh = defaultStartHour ?? 9;
       setStartTime(
         `${String(Math.floor(sh)).padStart(2, "0")}:${String(Math.round((sh % 1) * 60)).padStart(2, "0")}`
@@ -90,21 +102,28 @@ export default function CreateEventDialog({
         return;
       }
 
-      // Detect which calendar provider the doctor uses
-      const { data: doctorData } = await supabase
-        .from("doctors")
-        .select("google_calendar_connected, outlook_calendar_connected")
-        .eq("id", (await supabase.from("users").select("doctor_id").eq("id", session.data.session!.user.id).maybeSingle()).data?.doctor_id ?? "")
-        .maybeSingle();
+      // When editing an external event we MUST use the same provider it came from.
+      // For new events we auto-detect from the doctor's connections.
+      let providerPrefix: "google" | "outlook";
+      if (provider) {
+        providerPrefix = provider;
+      } else {
+        const { data: doctorData } = await supabase
+          .from("doctors")
+          .select("google_calendar_connected, outlook_calendar_connected")
+          .eq("id", (await supabase.from("users").select("doctor_id").eq("id", session.data.session!.user.id).maybeSingle()).data?.doctor_id ?? "")
+          .maybeSingle();
 
-      const useOutlook = doctorData?.outlook_calendar_connected && !doctorData?.google_calendar_connected;
+        const useOutlook = doctorData?.outlook_calendar_connected && !doctorData?.google_calendar_connected;
+        providerPrefix = useOutlook ? "outlook" : "google";
+      }
 
+      // Build naive ISO timestamps (no TZ suffix). The Edge Functions wrap these with
+      // timeZone: "America/Mexico_City" when sending to Google/Outlook.
       const startAt = `${date}T${startTime}:00`;
       const endAt = `${date}T${endTime}:00`;
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-      const providerPrefix = useOutlook ? "outlook" : "google";
       const endpoint = isEdit
         ? `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-update-event`
         : `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-create-event`;
@@ -156,9 +175,17 @@ export default function CreateEventDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? "Editar evento" : "Crear evento"}</DialogTitle>
           <DialogDescription>
-            {isEdit
-              ? "Se actualizará en tu Google Calendar conectado."
-              : "Se creará en tu Google Calendar conectado."}
+            {(() => {
+              const target =
+                provider === "outlook"
+                  ? "Outlook Calendar"
+                  : provider === "google"
+                  ? "Google Calendar"
+                  : "tu calendario conectado";
+              return isEdit
+                ? `Se actualizará en ${target}.`
+                : `Se creará en ${target}.`;
+            })()}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">

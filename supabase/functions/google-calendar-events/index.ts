@@ -49,27 +49,44 @@ serve(async (req) => {
     const userId = payload.sub as string;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Get doctor
-    const { data: userData } = await supabase
-      .from("users")
-      .select("doctor_id")
-      .eq("id", userId)
-      .maybeSingle();
+    // Resolve target doctor. Default = the doctor whose user is authenticated.
+    // If the caller passes ?doctor_id=…, they must be admin/superadmin.
+    const url = new URL(req.url);
+    const requestedDoctorId = url.searchParams.get("doctor_id");
+    let targetDoctorId: string | null = null;
 
-    if (!userData?.doctor_id) {
-      return new Response(JSON.stringify({ error: "No eres un doctor" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (requestedDoctorId) {
+      const { data: isAdmin } = await supabase.rpc("is_admin_or_superadmin", { _user_id: userId });
+      if (!isAdmin) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      targetDoctorId = requestedDoctorId;
+    } else {
+      const { data: userData } = await supabase
+        .from("users")
+        .select("doctor_id")
+        .eq("id", userId)
+        .maybeSingle();
+      if (!userData?.doctor_id) {
+        return new Response(JSON.stringify({ error: "No eres un doctor" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      targetDoctorId = userData.doctor_id;
     }
 
     const { data: doctor } = await supabase
       .from("doctors")
       .select("google_refresh_token_ref, google_calendar_id, google_calendar_connected")
-      .eq("id", userData.doctor_id)
+      .eq("id", targetDoctorId)
       .maybeSingle();
 
     if (!doctor?.google_calendar_connected || !doctor.google_refresh_token_ref || !doctor.google_calendar_id) {
+      // Doctor simply has no Google calendar — empty list, no error.
       return new Response(JSON.stringify({ events: [] }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -77,7 +94,6 @@ serve(async (req) => {
     }
 
     // Parse date range from query params
-    const url = new URL(req.url);
     const timeMin = url.searchParams.get("timeMin");
     const timeMax = url.searchParams.get("timeMax");
 
@@ -103,7 +119,7 @@ serve(async (req) => {
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
       console.error("Token refresh failed:", tokenData);
-      return new Response(JSON.stringify({ events: [], error: "Error al refrescar token" }), {
+      return new Response(JSON.stringify({ events: [], error: "calendar_not_synced" }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
