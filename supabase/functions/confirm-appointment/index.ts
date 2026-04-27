@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -73,12 +74,16 @@ Deno.serve(async (req) => {
   if (resolvedAppointmentId) {
     appointmentQuery = appointmentQuery.eq("id", resolvedAppointmentId);
   } else {
-    // Find by patient phone - get the latest scheduled appointment
-    const { data: patientRow } = await supabase
+    // Find by patient phone — match against both Mexican variants so calls
+    // from n8n with `+52` or `+521` formats both resolve correctly.
+    const phoneVariants = mxPhoneLookupVariants(normalizeMxPhone(patient_phone!));
+    const { data: patientMatches } = await supabase
       .from("patients")
       .select("id")
-      .eq("phone", patient_phone!)
-      .maybeSingle();
+      .in("phone", phoneVariants)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const patientRow = patientMatches?.[0];
 
     if (!patientRow) {
       return new Response(JSON.stringify({ error: "Paciente no encontrado" }), {

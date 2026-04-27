@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,21 +7,10 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function normalizePhone(raw: string): string {
-  // Strip everything except digits and leading +
-  let digits = raw.replace(/[^\d+]/g, "");
-  // If it starts with +, keep it; otherwise assume MX
-  if (digits.startsWith("+")) return digits;
-  // Remove leading 0 if present
-  if (digits.startsWith("0")) digits = digits.slice(1);
-  // If 10 digits, assume MX country code
-  if (digits.length === 10) return `+52${digits}`;
-  // If 12 digits starting with 52, add +
-  if (digits.length === 12 && digits.startsWith("52")) return `+${digits}`;
-  return `+${digits}`;
-}
-
-function generateToken(): string {
+// Token generator for `reservation_sessions.token` only — a 72h triage link,
+// distinct from the patient-facing /gestionar manage token (which lives in
+// _shared/manage-token.ts and writes to a different table).
+function generateSessionToken(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
   let token = "";
   for (let i = 0; i < 32; i++) {
@@ -121,15 +111,19 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Normalize phone and upsert patient
-  const phone = normalizePhone(patient_phone);
+  // Normalize phone and upsert patient. We canonicalize to `+52XXXXXXXXXX`
+  // for inserts but look up by both Mexican variants (`+52` / `+521`) so we
+  // don't create duplicates against rows from older flows.
+  const phone = normalizeMxPhone(patient_phone);
+  const phoneVariants = mxPhoneLookupVariants(phone);
 
-  // Try to find existing patient by phone
-  const { data: existingPatient } = await supabase
+  const { data: existingMatches } = await supabase
     .from("patients")
     .select("id")
-    .eq("phone", phone)
-    .maybeSingle();
+    .in("phone", phoneVariants)
+    .order("created_at", { ascending: true })
+    .limit(1);
+  const existingPatient = existingMatches?.[0];
 
   let patientId: string;
 
@@ -157,7 +151,7 @@ Deno.serve(async (req) => {
   }
 
   // Create reservation session (expires in 72 hours)
-  const token = generateToken();
+  const token = generateSessionToken();
   const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
   const { data: session, error: sessionError } = await supabase

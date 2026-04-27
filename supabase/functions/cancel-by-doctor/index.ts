@@ -1,19 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createManageToken } from "../_shared/manage-token.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-function generateToken(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let token = "";
-  for (let i = 0; i < 32; i++) {
-    token += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return token;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -204,18 +196,13 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Generate new manage token for rescheduling (expires when appointment would have ended)
-  const rescheduleToken = generateToken();
-  const expiresAt = appointment.end_at;
-  await supabase.from("appointment_manage_tokens").insert({
-    appointment_id: appointment_id,
-    token: rescheduleToken,
-    expires_at: expiresAt,
-    patient_phone: patient?.phone ?? "",
+  // Generate new manage token for rescheduling (expires when appointment would have ended).
+  const { manageUrl: rescheduleUrl } = await createManageToken({
+    supabase,
+    appointmentId: appointment_id,
+    expiresAt: appointment.end_at,
+    patientPhone: patient?.phone ?? "",
   });
-
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
-  const rescheduleUrl = `${baseUrl}/gestionar?token=${rescheduleToken}`;
 
   // Insert notification for doctor
   await supabase.from("notifications").insert({

@@ -1,19 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createManageToken } from "../_shared/manage-token.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-function generateToken(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let token = "";
-  for (let i = 0; i < 32; i++) {
-    token += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return token;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -53,7 +45,6 @@ Deno.serve(async (req) => {
     );
   }
 
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -95,17 +86,15 @@ Deno.serve(async (req) => {
         body: `${patient?.full_name ?? "Paciente"} no confirmó a tiempo. La cita del ${appt.start_at?.split("T")[0] ?? ""} fue cancelada.`,
       });
 
-      // Generate reschedule token
-      const rescheduleToken = generateToken();
-      const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-      await supabase.from("appointment_manage_tokens").insert({
-        appointment_id: appt.id,
-        token: rescheduleToken,
-        expires_at: expiresAt,
-        patient_phone: patient?.phone ?? "",
+      // Generate reschedule token. Auto-cancellation gives the patient 24h to
+      // act on the link, regardless of when the original appointment was —
+      // hence the +24h expiry instead of the appointment's `end_at`.
+      const { manageUrl: rescheduleUrl } = await createManageToken({
+        supabase,
+        appointmentId: appt.id,
+        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+        patientPhone: patient?.phone ?? "",
       });
-
-      const rescheduleUrl = `${baseUrl}/gestionar?token=${rescheduleToken}`;
 
       // Dispatch webhooks
       try {
