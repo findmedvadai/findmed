@@ -92,6 +92,7 @@ export type Database = {
           end_at: string
           google_event_id: string | null
           id: string
+          office_id: string | null
           outlook_event_id: string | null
           patient_id: string
           start_at: string
@@ -111,6 +112,7 @@ export type Database = {
           end_at: string
           google_event_id?: string | null
           id?: string
+          office_id?: string | null
           outlook_event_id?: string | null
           patient_id: string
           start_at: string
@@ -130,6 +132,7 @@ export type Database = {
           end_at?: string
           google_event_id?: string | null
           id?: string
+          office_id?: string | null
           outlook_event_id?: string | null
           patient_id?: string
           start_at?: string
@@ -279,12 +282,95 @@ export type Database = {
           },
         ]
       }
+      doctor_offices: {
+        Row: {
+          address: string | null
+          appointment_duration_minutes: number
+          city_id: string | null
+          created_at: string
+          doctor_id: string
+          google_calendar_connected: boolean
+          google_calendar_id: string | null
+          google_refresh_token_ref: string | null
+          id: string
+          is_active: boolean
+          is_deleted: boolean
+          name: string
+          outlook_calendar_connected: boolean
+          outlook_calendar_id: string | null
+          outlook_refresh_token_ref: string | null
+          updated_at: string
+          zone_id: string | null
+        }
+        Insert: {
+          address?: string | null
+          appointment_duration_minutes?: number
+          city_id?: string | null
+          created_at?: string
+          doctor_id: string
+          google_calendar_connected?: boolean
+          google_calendar_id?: string | null
+          google_refresh_token_ref?: string | null
+          id?: string
+          is_active?: boolean
+          is_deleted?: boolean
+          name: string
+          outlook_calendar_connected?: boolean
+          outlook_calendar_id?: string | null
+          outlook_refresh_token_ref?: string | null
+          updated_at?: string
+          zone_id?: string | null
+        }
+        Update: {
+          address?: string | null
+          appointment_duration_minutes?: number
+          city_id?: string | null
+          created_at?: string
+          doctor_id?: string
+          google_calendar_connected?: boolean
+          google_calendar_id?: string | null
+          google_refresh_token_ref?: string | null
+          id?: string
+          is_active?: boolean
+          is_deleted?: boolean
+          name?: string
+          outlook_calendar_connected?: boolean
+          outlook_calendar_id?: string | null
+          outlook_refresh_token_ref?: string | null
+          updated_at?: string
+          zone_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctor_offices_city_id_fkey"
+            columns: ["city_id"]
+            isOneToOne: false
+            referencedRelation: "cities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_offices_doctor_id_fkey"
+            columns: ["doctor_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_offices_zone_id_fkey"
+            columns: ["zone_id"]
+            isOneToOne: false
+            referencedRelation: "zones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctor_weekly_availability: {
         Row: {
           doctor_id: string
           end_time: string
           id: string
           is_enabled: boolean
+          office_id: string
           start_time: string
           weekday: number
         }
@@ -293,6 +379,7 @@ export type Database = {
           end_time: string
           id?: string
           is_enabled?: boolean
+          office_id: string
           start_time: string
           weekday: number
         }
@@ -301,6 +388,7 @@ export type Database = {
           end_time?: string
           id?: string
           is_enabled?: boolean
+          office_id?: string
           start_time?: string
           weekday?: number
         }
@@ -632,6 +720,7 @@ export type Database = {
           doctor_id: string
           expires_at: string
           id: string
+          office_id: string | null
           patient_id: string
           symptoms: string | null
           token: string
@@ -642,6 +731,7 @@ export type Database = {
           doctor_id: string
           expires_at: string
           id?: string
+          office_id?: string | null
           patient_id: string
           symptoms?: string | null
           token: string
@@ -652,6 +742,7 @@ export type Database = {
           doctor_id?: string
           expires_at?: string
           id?: string
+          office_id?: string | null
           patient_id?: string
           symptoms?: string | null
           token?: string

@@ -46,7 +46,9 @@ import {
   Eye,
   EyeOff,
   Trash2,
+  Building2,
 } from "lucide-react";
+import OfficeManager from "@/components/office/OfficeManager";
 
 /* ───────── types ───────── */
 
@@ -112,6 +114,7 @@ export default function Doctores() {
   const [filterStatus, setFilterStatus] = useState("all");
 
   const [selectedDoctor, setSelectedDoctor] = useState<DoctorRow | null>(null);
+  const [manageOfficesFor, setManageOfficesFor] = useState<DoctorRow | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
 
@@ -290,6 +293,10 @@ export default function Doctores() {
           onEdit={() => {
             setShowEdit(true);
           }}
+          onManageOffices={() => {
+            setManageOfficesFor(selectedDoctor);
+            setSelectedDoctor(null);
+          }}
           onDelete={() => {
             deleteDoctorMut.mutate(selectedDoctor.id);
             setSelectedDoctor(null);
@@ -322,6 +329,20 @@ export default function Doctores() {
           }}
         />
       )}
+
+      {/* Per-doctor office manager. */}
+      <Dialog open={!!manageOfficesFor} onOpenChange={(o) => !o && setManageOfficesFor(null)}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Consultorios — {manageOfficesFor?.full_name}</DialogTitle>
+            <DialogDescription>
+              Gestiona los consultorios del doctor. Cada consultorio tiene su propia ubicación,
+              calendario, duración de cita y disponibilidad semanal.
+            </DialogDescription>
+          </DialogHeader>
+          {manageOfficesFor && <OfficeManager doctorId={manageOfficesFor.id} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -336,6 +357,7 @@ function DoctorDetailDialog({
   onClose,
   onToggleActive,
   onEdit,
+  onManageOffices,
   onDelete,
 }: {
   doctor: DoctorRow;
@@ -343,6 +365,7 @@ function DoctorDetailDialog({
   onClose: () => void;
   onToggleActive: () => void;
   onEdit: () => void;
+  onManageOffices: () => void;
   onDelete: () => void;
 }) {
   const [showPassword, setShowPassword] = useState(false);
@@ -454,6 +477,9 @@ function DoctorDetailDialog({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          <Button variant="outline" size="sm" className="gap-1" onClick={onManageOffices}>
+            <Building2 className="h-3 w-3" /> Consultorios
+          </Button>
           <Button variant="outline" size="sm" onClick={onToggleActive}>
             {doctor.is_active ? "Desactivar" : "Activar"}
           </Button>

@@ -17,6 +17,10 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
+function encodeState(doctorId: string, officeId: string): string {
+  return `${doctorId}:${officeId}`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -45,8 +49,25 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
     const userId = payload.sub as string;
+
+    const url = new URL(req.url);
+    let officeId = url.searchParams.get("office_id");
+    if (!officeId) {
+      try {
+        const body = await req.clone().json();
+        officeId = body?.office_id ?? null;
+      } catch {
+        // No body.
+      }
+    }
+    if (!officeId) {
+      return new Response(JSON.stringify({ error: "office_id requerido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const { data: userData } = await supabase
@@ -54,16 +75,32 @@ serve(async (req) => {
       .select("doctor_id")
       .eq("id", userId)
       .maybeSingle();
+    const { data: isAdmin } = await supabase.rpc("is_admin_or_superadmin", {
+      _user_id: userId,
+    });
 
-    if (!userData?.doctor_id) {
-      return new Response(JSON.stringify({ error: "No eres un doctor" }), {
+    const { data: office } = await supabase
+      .from("doctor_offices")
+      .select("id, doctor_id, is_deleted")
+      .eq("id", officeId)
+      .maybeSingle();
+
+    if (!office || office.is_deleted) {
+      return new Response(JSON.stringify({ error: "Consultorio no encontrado" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!isAdmin && office.doctor_id !== userData?.doctor_id) {
+      return new Response(JSON.stringify({ error: "No autorizado para este consultorio" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/outlook-calendar-callback`;
-    const state = userData.doctor_id;
+    const state = encodeState(office.doctor_id, office.id);
 
     const params = new URLSearchParams({
       client_id: OUTLOOK_CLIENT_ID,
@@ -76,7 +113,6 @@ serve(async (req) => {
     });
 
     const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
-
     return new Response(JSON.stringify({ url: authUrl }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

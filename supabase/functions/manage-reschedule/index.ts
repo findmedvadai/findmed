@@ -65,10 +65,11 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get current appointment
+  // Get current appointment, including its office_id so we keep the
+  // reschedule on the same office.
   const { data: oldAppt } = await supabase
     .from("appointments")
-    .select("id, doctor_id, patient_id, symptoms, google_event_id, outlook_event_id, status")
+    .select("id, doctor_id, office_id, patient_id, symptoms, google_event_id, outlook_event_id, status, start_at")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -79,11 +80,22 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get doctor info
+  // Doctor display name only — calendar and duration come from the office.
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
+    .select("full_name")
     .eq("id", oldAppt.doctor_id)
+    .maybeSingle();
+
+  // Office: source of truth for calendars + duration.
+  const { data: office } = await supabase
+    .from("doctor_offices")
+    .select(
+      "id, name, address, appointment_duration_minutes, " +
+        "google_refresh_token_ref, google_calendar_id, google_calendar_connected, " +
+        "outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected"
+    )
+    .eq("id", oldAppt.office_id)
     .maybeSingle();
 
   const { data: patient } = await supabase
@@ -92,14 +104,7 @@ Deno.serve(async (req) => {
     .eq("id", oldAppt.patient_id)
     .maybeSingle();
 
-  // Get duration
-  const { data: settings } = await supabase
-    .from("doctor_schedule_settings")
-    .select("appointment_duration_minutes")
-    .eq("doctor_id", oldAppt.doctor_id)
-    .maybeSingle();
-
-  const durationMinutes = settings?.appointment_duration_minutes ?? 30;
+  const durationMinutes = office?.appointment_duration_minutes ?? 30;
 
   // Calculate new times with explicit Mexico City offset (-06:00)
   const startAt = `${date}T${slot_start}:00-06:00`;
@@ -111,7 +116,7 @@ Deno.serve(async (req) => {
 
   // Helper to get Google access token
   const getGoogleAccessToken = async (): Promise<string | null> => {
-    if (!doctor?.google_calendar_connected || !doctor.google_refresh_token_ref) return null;
+    if (!office?.google_calendar_connected || !office.google_refresh_token_ref) return null;
     try {
       const res = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
@@ -119,7 +124,7 @@ Deno.serve(async (req) => {
         body: new URLSearchParams({
           client_id: GOOGLE_CLIENT_ID,
           client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: doctor.google_refresh_token_ref,
+          refresh_token: office.google_refresh_token_ref,
           grant_type: "refresh_token",
         }),
       });
@@ -134,7 +139,7 @@ Deno.serve(async (req) => {
   const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
   const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
   const getOutlookAccessToken = async (): Promise<string | null> => {
-    if (!doctor?.outlook_calendar_connected || !doctor.outlook_refresh_token_ref || !OUTLOOK_CLIENT_ID) return null;
+    if (!office?.outlook_calendar_connected || !office.outlook_refresh_token_ref || !OUTLOOK_CLIENT_ID) return null;
     try {
       const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
         method: "POST",
@@ -142,7 +147,7 @@ Deno.serve(async (req) => {
         body: new URLSearchParams({
           client_id: OUTLOOK_CLIENT_ID,
           client_secret: OUTLOOK_CLIENT_SECRET,
-          refresh_token: doctor.outlook_refresh_token_ref,
+          refresh_token: office.outlook_refresh_token_ref,
           grant_type: "refresh_token",
           scope: "offline_access Calendars.ReadWrite",
         }),
@@ -160,8 +165,8 @@ Deno.serve(async (req) => {
 
   if (oldAppt.status !== "cancelled") {
     // Delete old Google event
-    if (googleAccessToken && oldAppt.google_event_id && doctor?.google_calendar_id) {
-      const calendarId = encodeURIComponent(doctor.google_calendar_id);
+    if (googleAccessToken && oldAppt.google_event_id && office?.google_calendar_id) {
+      const calendarId = encodeURIComponent(office.google_calendar_id);
       try {
         await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${oldAppt.google_event_id}`,
@@ -173,8 +178,8 @@ Deno.serve(async (req) => {
     }
 
     // Delete old Outlook event
-    if (outlookAccessToken && oldAppt.outlook_event_id && doctor?.outlook_calendar_id) {
-      const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+    if (outlookAccessToken && oldAppt.outlook_event_id && office?.outlook_calendar_id) {
+      const calendarId = encodeURIComponent(office.outlook_calendar_id);
       try {
         await fetch(
           `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(oldAppt.outlook_event_id)}`,
@@ -197,11 +202,12 @@ Deno.serve(async (req) => {
   const autoConfirmed = hoursUntilAppt < 48;
   const newStatus = autoConfirmed ? "confirmed" : "scheduled";
 
-  // 3. Create new appointment
+  // 3. Create new appointment, keeping the same office assignment.
   const { data: newAppt, error: apptError } = await supabase
     .from("appointments")
     .insert({
       doctor_id: oldAppt.doctor_id,
+      office_id: oldAppt.office_id,
       patient_id: oldAppt.patient_id,
       start_at: startAt,
       end_at: endAt,
@@ -223,8 +229,8 @@ Deno.serve(async (req) => {
   let newOutlookEventId: string | null = null;
 
   const gcToken = googleAccessToken ?? await getGoogleAccessToken();
-  if (gcToken && doctor?.google_calendar_id) {
-    const calendarId = encodeURIComponent(doctor.google_calendar_id);
+  if (gcToken && office?.google_calendar_id) {
+    const calendarId = encodeURIComponent(office.google_calendar_id);
     try {
       const eventBody = {
         summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
@@ -259,8 +265,8 @@ Deno.serve(async (req) => {
   }
 
   const olToken = outlookAccessToken ?? await getOutlookAccessToken();
-  if (olToken && doctor?.outlook_calendar_id) {
-    const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+  if (olToken && office?.outlook_calendar_id) {
+    const calendarId = encodeURIComponent(office.outlook_calendar_id);
     try {
       const eventBody = {
         subject: `Cita: ${patient?.full_name ?? "Paciente"}`,

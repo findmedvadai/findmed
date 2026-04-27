@@ -87,26 +87,39 @@ Deno.serve(async (req) => {
     });
   }
 
-  const { doctor_id, patient_name, patient_phone, symptoms } = body;
+  const { doctor_id, office_id, patient_name, patient_phone, symptoms } = body;
 
-  if (!doctor_id || !patient_name || !patient_phone) {
+  if (!doctor_id || !office_id || !patient_name || !patient_phone) {
     return new Response(
-      JSON.stringify({ error: "Missing required fields: doctor_id, patient_name, patient_phone" }),
+      JSON.stringify({ error: "Missing required fields: doctor_id, office_id, patient_name, patient_phone" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
-  // Validate doctor exists and is active
+  // Validate doctor exists and is active.
   const { data: doctor, error: doctorError } = await supabase
     .from("doctors")
     .select("id, full_name")
     .eq("id", doctor_id)
     .eq("is_active", true)
     .maybeSingle();
-
   if (doctorError || !doctor) {
     return new Response(
       JSON.stringify({ error: "Doctor not found or inactive" }),
+      { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Validate office exists, belongs to that doctor, and is active.
+  const { data: office } = await supabase
+    .from("doctor_offices")
+    .select("id, name, address, doctor_id, is_active, is_deleted")
+    .eq("id", office_id)
+    .eq("doctor_id", doctor_id)
+    .maybeSingle();
+  if (!office || !office.is_active || office.is_deleted) {
+    return new Response(
+      JSON.stringify({ error: "Office not found or inactive" }),
       { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
@@ -158,6 +171,7 @@ Deno.serve(async (req) => {
     .from("reservation_sessions")
     .insert({
       doctor_id,
+      office_id,
       patient_id: patientId,
       token,
       symptoms: symptoms || null,
@@ -186,6 +200,9 @@ Deno.serve(async (req) => {
       expires_at: expiresAt,
       patient_id: patientId,
       doctor_name: doctor.full_name,
+      office_id: office.id,
+      office_name: office.name,
+      office_address: office.address,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );

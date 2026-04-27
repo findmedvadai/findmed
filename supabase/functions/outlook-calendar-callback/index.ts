@@ -1,11 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function decodeState(raw: string): { doctorId: string; officeId: string } | null {
+  const parts = raw.split(":");
+  if (parts.length !== 2) return null;
+  const [doctorId, officeId] = parts;
+  if (!doctorId || !officeId) return null;
+  return { doctorId, officeId };
+}
+
 serve(async (req) => {
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state"); // doctor_id
+    const state = url.searchParams.get("state");
     const error = url.searchParams.get("error");
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -21,12 +29,19 @@ serve(async (req) => {
     if (error) {
       return redirectTo(`/outlook-calendar-success?error=${encodeURIComponent(`Microsoft rechazó la conexión: ${error}`)}`);
     }
-
     if (!code || !state) {
       return redirectTo(`/outlook-calendar-success?error=${encodeURIComponent("Faltan parámetros")}`);
     }
 
-    // Exchange code for tokens
+    const decoded = decodeState(state);
+    if (!decoded) {
+      return redirectTo(
+        `/outlook-calendar-success?error=${encodeURIComponent(
+          "Sesión OAuth caducada por actualización del sistema. Inténtalo de nuevo desde Configuración."
+        )}`
+      );
+    }
+
     const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -45,30 +60,31 @@ serve(async (req) => {
       console.error("Token exchange failed:", tokenData);
       return redirectTo(`/outlook-calendar-success?error=${encodeURIComponent("No se pudo obtener el token de Microsoft")}`);
     }
-
     const { refresh_token } = tokenData;
-
     if (!refresh_token) {
       console.error("No refresh_token returned.");
       return redirectTo(`/outlook-calendar-success?error=${encodeURIComponent("No se recibió refresh token. Inténtalo de nuevo.")}`);
     }
 
-    // Store refresh token and disconnect Google if connected
-    const doctorId = state;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+    // Note: in the legacy single-office flow, connecting Outlook would
+    // disconnect Google to avoid two providers writing into the same calendar.
+    // Per-office now this constraint is handled at the office level — each
+    // office can only have ONE provider at a time, so we clear the Google
+    // fields on this same office.
     const { error: updateError } = await supabase
-      .from("doctors")
+      .from("doctor_offices")
       .update({
         outlook_refresh_token_ref: refresh_token,
         outlook_calendar_connected: false,
         outlook_calendar_id: null,
-        // Disconnect Google
         google_calendar_connected: false,
         google_calendar_id: null,
         google_refresh_token_ref: null,
       })
-      .eq("id", doctorId);
+      .eq("id", decoded.officeId)
+      .eq("doctor_id", decoded.doctorId);
 
     if (updateError) {
       console.error("DB update error:", updateError);

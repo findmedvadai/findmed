@@ -46,6 +46,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
@@ -62,6 +64,8 @@ interface GoogleEvent {
   end: string;
   description: string | null;
   htmlLink: string;
+  office_id?: string;
+  office_name?: string;
 }
 
 const START_HOUR = 7;
@@ -109,6 +113,23 @@ export default function Agenda() {
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createEventDate, setCreateEventDate] = useState<Date | undefined>();
   const [createEventHour, setCreateEventHour] = useState<number | undefined>();
+  // "all" = aggregate across every office of the doctor.
+  const [officeFilter, setOfficeFilter] = useState<string>("all");
+
+  const { data: offices = [] } = useQuery({
+    queryKey: ["doctor-offices-for-agenda", doctorId],
+    queryFn: async () => {
+      if (!doctorId) return [] as { id: string; name: string }[];
+      const { data } = await supabase
+        .from("doctor_offices")
+        .select("id, name")
+        .eq("doctor_id", doctorId)
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: true });
+      return (data ?? []) as { id: string; name: string }[];
+    },
+    enabled: !!doctorId,
+  });
 
   // Current time for red line indicator
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -128,35 +149,48 @@ export default function Agenda() {
   );
 
   const { data: appointments } = useQuery({
-    queryKey: ["doctor-appointments", doctorId, weekKey],
+    queryKey: ["doctor-appointments", doctorId, weekKey, officeFilter],
     queryFn: async () => {
       if (!doctorId) return [];
-      const { data, error } = await supabase
+      let q = supabase
         .from("appointments")
-        .select("id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
+        .select(
+          "id, office_id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, " +
+            "patients(full_name, phone), doctor_offices(name)"
+        )
         .eq("doctor_id", doctorId)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
         .in("status", ["scheduled", "confirmed", "completed"])
         .order("start_at", { ascending: true });
+      if (officeFilter !== "all") q = q.eq("office_id", officeFilter);
+      const { data, error } = await q;
       if (error) throw error;
       return data ?? [];
     },
     enabled: !!doctorId,
   });
 
+  const buildExternalUrl = (provider: "google" | "outlook") => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const params = new URLSearchParams({
+      timeMin: weekStart.toISOString(),
+      timeMax: weekEnd.toISOString(),
+    });
+    if (officeFilter !== "all") params.set("office_id", officeFilter);
+    return `${supabaseUrl}/functions/v1/${provider}-calendar-events?${params.toString()}`;
+  };
+
   const { data: googleEvents } = useQuery({
-    queryKey: ["google-calendar-events", doctorId, weekKey],
+    queryKey: ["google-calendar-events", doctorId, weekKey, officeFilter],
     queryFn: async () => {
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) return [];
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-      const response = await fetch(
-        `${supabaseUrl}/functions/v1/google-calendar-events?timeMin=${encodeURIComponent(weekStart.toISOString())}&timeMax=${encodeURIComponent(weekEnd.toISOString())}`,
-        { headers: { Authorization: `Bearer ${token}`, apikey: anonKey } }
-      );
+      const response = await fetch(buildExternalUrl("google"), {
+        headers: { Authorization: `Bearer ${token}`, apikey: anonKey },
+      });
       if (!response.ok) return [];
       const data = await response.json();
       return (data.events || []) as GoogleEvent[];
@@ -166,17 +200,15 @@ export default function Agenda() {
   });
 
   const { data: outlookEvents } = useQuery({
-    queryKey: ["outlook-calendar-events", doctorId, weekKey],
+    queryKey: ["outlook-calendar-events", doctorId, weekKey, officeFilter],
     queryFn: async () => {
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) return [];
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-      const response = await fetch(
-        `${supabaseUrl}/functions/v1/outlook-calendar-events?timeMin=${encodeURIComponent(weekStart.toISOString())}&timeMax=${encodeURIComponent(weekEnd.toISOString())}`,
-        { headers: { Authorization: `Bearer ${token}`, apikey: anonKey } }
-      );
+      const response = await fetch(buildExternalUrl("outlook"), {
+        headers: { Authorization: `Bearer ${token}`, apikey: anonKey },
+      });
       if (!response.ok) return [];
       const data = await response.json();
       return (data.events || []) as GoogleEvent[];
@@ -189,6 +221,7 @@ export default function Agenda() {
     const items: CalendarItem[] = [];
     for (const appt of appointments || []) {
       const patient = appt.patients as { full_name: string; phone: string } | null;
+      const officeRow = appt.doctor_offices as { name: string } | null;
       items.push({
         id: appt.id,
         type: "appointment",
@@ -199,6 +232,8 @@ export default function Agenda() {
         phone: patient?.phone ?? undefined,
         symptoms: appt.symptoms ?? undefined,
         doctorNotes: appt.doctor_notes ?? undefined,
+        officeId: appt.office_id ?? undefined,
+        officeName: officeRow?.name,
       });
     }
     const googleEventIds = new Set(
@@ -214,10 +249,10 @@ export default function Agenda() {
         title: e.summary,
         htmlLink: e.htmlLink,
         description: e.description ?? undefined,
+        officeId: e.office_id,
+        officeName: e.office_name,
       });
     }
-    // Add Outlook events. Same visual treatment as Google but tagged so the detail
-    // dialog can show the right badge / route delete & edit to the right endpoint.
     const outlookEventIds = new Set(
       (appointments || []).map((a) => a.outlook_event_id).filter(Boolean)
     );
@@ -231,6 +266,8 @@ export default function Agenda() {
         title: e.summary,
         htmlLink: e.htmlLink,
         description: e.description ?? undefined,
+        officeId: e.office_id,
+        officeName: e.office_name,
       });
     }
     return items;
@@ -290,9 +327,22 @@ export default function Agenda() {
   return (
     <div className="flex h-full flex-col gap-2">
       {/* Header */}
-      <div className="flex items-center justify-between px-1">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold text-foreground capitalize">{monthLabel}</h1>
+          {offices.length > 1 && (
+            <Select value={officeFilter} onValueChange={setOfficeFilter}>
+              <SelectTrigger className="h-8 w-44 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los consultorios</SelectItem>
+                {offices.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -466,12 +516,15 @@ export default function Agenda() {
                         left: `calc(${leftPercent}% + 1px)`,
                         width: `calc(${widthPercent}% - 2px)`,
                       }}
-                       title={`${item.title}\n${formatMexicoTime(item.start, "HH:mm")} - ${formatMexicoTime(item.end, "HH:mm")}${item.symptoms ? `\n${item.symptoms}` : ""}`}
+                       title={`${item.title}\n${formatMexicoTime(item.start, "HH:mm")} - ${formatMexicoTime(item.end, "HH:mm")}${item.officeName ? `\n${item.officeName}` : ""}${item.symptoms ? `\n${item.symptoms}` : ""}`}
                     >
                       <div className="font-semibold truncate">{item.title}</div>
                       <div className="truncate opacity-80">
                         {formatMexicoTime(item.start, "HH:mm")} - {formatMexicoTime(item.end, "HH:mm")}
                       </div>
+                      {officeFilter === "all" && item.officeName && (
+                        <div className="truncate opacity-70 text-[9px] mt-0.5">{item.officeName}</div>
+                      )}
                     </div>
                   );
                 })}
@@ -488,12 +541,34 @@ export default function Agenda() {
         doctorId={doctorId ?? ""}
       />
 
-      <CreateEventDialog
-        open={createEventOpen}
-        onClose={() => setCreateEventOpen(false)}
-        defaultDate={createEventDate}
-        defaultStartHour={createEventHour}
-      />
+      {createEventOpen && (
+        // CreateEventDialog needs an explicit office (each office has its own
+        // calendar). When the doctor is in "Todos los consultorios" view we
+        // pick the only office if there's just one; otherwise we keep the
+        // dialog closed and ask them to filter first.
+        (() => {
+          const targetOfficeId =
+            officeFilter !== "all"
+              ? officeFilter
+              : offices.length === 1
+              ? offices[0].id
+              : null;
+          if (!targetOfficeId) {
+            setCreateEventOpen(false);
+            toast.info("Selecciona un consultorio para crear eventos.");
+            return null;
+          }
+          return (
+            <CreateEventDialog
+              open={createEventOpen}
+              onClose={() => setCreateEventOpen(false)}
+              defaultDate={createEventDate}
+              defaultStartHour={createEventHour}
+              officeId={targetOfficeId}
+            />
+          );
+        })()
+      )}
     </div>
   );
 }

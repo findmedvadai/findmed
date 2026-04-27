@@ -24,6 +24,8 @@ interface CreateEventDialogProps {
   onClose: () => void;
   defaultDate?: Date;
   defaultStartHour?: number;
+  /** Office to write the event into. Required: each office has its own calendar. */
+  officeId: string;
   /** If provided, the dialog is in "edit" mode */
   editEvent?: {
     id: string;
@@ -35,7 +37,7 @@ interface CreateEventDialogProps {
   /**
    * Forces the calendar provider used to write the event.
    * Required when editing an existing event so it goes back to the right calendar.
-   * If omitted (creation flow), the provider is auto-detected from the doctor's connections.
+   * If omitted (creation flow), the provider is auto-detected from the office's connections.
    */
   provider?: "google" | "outlook";
 }
@@ -45,6 +47,7 @@ export default function CreateEventDialog({
   onClose,
   defaultDate,
   defaultStartHour,
+  officeId,
   editEvent,
   provider,
 }: CreateEventDialogProps) {
@@ -102,19 +105,20 @@ export default function CreateEventDialog({
         return;
       }
 
-      // When editing an external event we MUST use the same provider it came from.
-      // For new events we auto-detect from the doctor's connections.
+      // Auto-detect provider from the OFFICE's connections (post-mejora-2 each
+      // office has its own calendar). Editing forces the original provider.
       let providerPrefix: "google" | "outlook";
       if (provider) {
         providerPrefix = provider;
       } else {
-        const { data: doctorData } = await supabase
-          .from("doctors")
+        const { data: officeData } = await supabase
+          .from("doctor_offices")
           .select("google_calendar_connected, outlook_calendar_connected")
-          .eq("id", (await supabase.from("users").select("doctor_id").eq("id", session.data.session!.user.id).maybeSingle()).data?.doctor_id ?? "")
+          .eq("id", officeId)
           .maybeSingle();
 
-        const useOutlook = doctorData?.outlook_calendar_connected && !doctorData?.google_calendar_connected;
+        const useOutlook =
+          officeData?.outlook_calendar_connected && !officeData?.google_calendar_connected;
         providerPrefix = useOutlook ? "outlook" : "google";
       }
 
@@ -130,6 +134,7 @@ export default function CreateEventDialog({
 
       const payload = isEdit
         ? {
+            office_id: officeId,
             event_id: editEvent!.id,
             summary: summary.trim(),
             description: description.trim() || undefined,
@@ -137,6 +142,7 @@ export default function CreateEventDialog({
             end_at: endAt,
           }
         : {
+            office_id: officeId,
             summary: summary.trim(),
             description: description.trim() || undefined,
             start_at: startAt,

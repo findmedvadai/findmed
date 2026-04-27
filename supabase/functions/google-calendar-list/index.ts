@@ -1,11 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { resolveOfficeForCaller, parseTargetParams } from "../_shared/office-resolver.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -28,77 +24,47 @@ serve(async (req) => {
     const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-    // Auth check
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "No autorizado" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "No autorizado" }, 401);
     }
-
     const token = authHeader.replace("Bearer ", "");
     const payload = decodeJwtPayload(token);
     if (!payload?.sub || !payload?.exp || (payload.exp as number) < Math.floor(Date.now() / 1000)) {
-      return new Response(JSON.stringify({ error: "Token inválido" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Token inválido" }, 401);
     }
-
     const userId = payload.sub as string;
+
+    const { officeId } = parseTargetParams(req);
+    if (!officeId) {
+      return jsonResponse({ error: "office_id requerido" }, 400);
+    }
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const resolved = await resolveOfficeForCaller(supabase, userId, officeId);
+    if ("error" in resolved) return jsonResponse({ error: resolved.error }, resolved.status);
+    const office = resolved.office;
 
-    // Get doctor_id
-    const { data: userData } = await supabase
-      .from("users")
-      .select("doctor_id")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (!userData?.doctor_id) {
-      return new Response(JSON.stringify({ error: "No eres un doctor" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!office.google_refresh_token_ref) {
+      return jsonResponse({ error: "No hay token de Google para este consultorio. Conecta primero." }, 400);
     }
 
-    // Get refresh token
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("google_refresh_token_ref")
-      .eq("id", userData.doctor_id)
-      .maybeSingle();
-
-    if (!doctor?.google_refresh_token_ref) {
-      return new Response(JSON.stringify({ error: "No hay token de Google. Conecta primero." }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Exchange refresh token for access token
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
-        refresh_token: doctor.google_refresh_token_ref,
+        refresh_token: office.google_refresh_token_ref,
         grant_type: "refresh_token",
       }),
     });
-
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
       console.error("Token refresh failed:", tokenData);
-      return new Response(JSON.stringify({ error: "Error al obtener acceso a Google" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Error al obtener acceso a Google" }, 400);
     }
 
-    // List calendars
     const calRes = await fetch(
       "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=owner",
       { headers: { Authorization: `Bearer ${tokenData.access_token}` } }
@@ -111,15 +77,9 @@ serve(async (req) => {
       primary: c.primary || false,
     }));
 
-    return new Response(JSON.stringify({ calendars }), {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ calendars });
   } catch (error) {
     console.error("Error in google-calendar-list:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Error desconocido" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return jsonResponse({ error: error instanceof Error ? error.message : "Error desconocido" }, 500);
   }
 });

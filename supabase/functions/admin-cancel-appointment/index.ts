@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
 
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, doctor_id, patient_id, status, start_at, end_at, google_event_id, outlook_event_id")
+    .select("id, doctor_id, office_id, patient_id, status, start_at, end_at, google_event_id, outlook_event_id")
     .eq("id", appointment_id)
     .maybeSingle();
 
@@ -55,12 +55,21 @@ Deno.serve(async (req) => {
 
   const { data: doctor } = await supabase
     .from("doctors")
-    .select(
-      "full_name, google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-    )
+    .select("full_name")
     .eq("id", appointment.doctor_id)
     .maybeSingle();
+
+  const { data: office } = appointment.office_id
+    ? await supabase
+        .from("doctor_offices")
+        .select(
+          "id, name, address, " +
+            "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
+            "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
+        )
+        .eq("id", appointment.office_id)
+        .maybeSingle()
+    : { data: null };
 
   const { data: patient } = await supabase
     .from("patients")
@@ -69,12 +78,12 @@ Deno.serve(async (req) => {
     .maybeSingle();
 
   // Delete external events (best-effort).
-  if (appointment.google_event_id && doctor?.google_calendar_connected && doctor.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken(doctor);
+  if (appointment.google_event_id && office?.google_calendar_connected && office.google_calendar_id) {
+    const accessToken = await getGoogleAccessToken(office);
     if (accessToken) {
       try {
         await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(doctor.google_calendar_id)}/events/${appointment.google_event_id}`,
+          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(office.google_calendar_id)}/events/${appointment.google_event_id}`,
           { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
         );
       } catch (err) {
@@ -83,12 +92,12 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (appointment.outlook_event_id && doctor?.outlook_calendar_connected && doctor.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken(doctor);
+  if (appointment.outlook_event_id && office?.outlook_calendar_connected && office.outlook_calendar_id) {
+    const accessToken = await getOutlookAccessToken(office);
     if (accessToken) {
       try {
         await fetch(
-          `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(doctor.outlook_calendar_id)}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
+          `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(office.outlook_calendar_id)}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
           { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
         );
       } catch (err) {
@@ -131,6 +140,9 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             doctor_name: doctor?.full_name ?? null,
             doctor_id: appointment.doctor_id,
+            office_id: appointment.office_id,
+            office_name: office?.name ?? null,
+            office_address: office?.address ?? null,
             start_at: appointment.start_at,
             end_at: appointment.end_at,
             notify_patient: true,

@@ -33,13 +33,21 @@ export interface SlotValidationResult {
 interface ValidateSlotInput {
   supabase: SupabaseClient;
   doctorId: string;
+  /**
+   * Office to validate against. When provided we conflict-check ONLY against
+   * that office's appointments and external calendars. When omitted we fall
+   * back to the doctor-wide check (kept for backward compat with paths that
+   * haven't been migrated to multi-office yet — should be removed once they
+   * all pass office_id).
+   */
+  officeId?: string;
   startAt: string; // ISO 8601 with offset, e.g. "2026-04-27T08:00:00-06:00" or with Z
   endAt: string;
   excludeAppointmentId?: string;
 }
 
 export async function validateSlotAvailable(input: ValidateSlotInput): Promise<SlotValidationResult> {
-  const { supabase, doctorId, startAt, endAt, excludeAppointmentId } = input;
+  const { supabase, doctorId, officeId, startAt, endAt, excludeAppointmentId } = input;
 
   const startMs = new Date(startAt).getTime();
   const endMs = new Date(endAt).getTime();
@@ -52,14 +60,18 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
 
   const conflicts: SlotConflict[] = [];
 
-  // 1. Internal appointments
+  // 1. Internal appointments. Scope to the office when provided — different
+  // offices of the same doctor can have overlapping appointments only because
+  // of human error elsewhere; we still want to allow concurrent slots in
+  // different offices (different physical locations).
   let q = supabase
     .from("appointments")
-    .select("id, start_at, end_at, status")
+    .select("id, start_at, end_at, status, office_id")
     .eq("doctor_id", doctorId)
     .in("status", ["scheduled", "confirmed", "completed"])
     .lt("start_at", new Date(endMs).toISOString())
     .gt("end_at", new Date(startMs).toISOString());
+  if (officeId) q = q.eq("office_id", officeId);
   if (excludeAppointmentId) q = q.neq("id", excludeAppointmentId);
 
   const { data: overlaps } = await q;
@@ -75,15 +87,38 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
     return { available: false, conflicts };
   }
 
-  // 2./3. External calendars (only if doctor has them connected)
-  const { data: doctor } = await supabase
-    .from("doctors")
-    .select(
-      "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-    )
-    .eq("id", doctorId)
-    .maybeSingle();
+  // 2./3. External calendars: read from the office row when provided, else
+  // from the legacy doctors row.
+  let doctor: {
+    google_calendar_connected?: boolean | null;
+    google_refresh_token_ref?: string | null;
+    google_calendar_id?: string | null;
+    outlook_calendar_connected?: boolean | null;
+    outlook_refresh_token_ref?: string | null;
+    outlook_calendar_id?: string | null;
+  } | null = null;
+
+  if (officeId) {
+    const { data } = await supabase
+      .from("doctor_offices")
+      .select(
+        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
+          "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
+      )
+      .eq("id", officeId)
+      .maybeSingle();
+    doctor = data;
+  } else {
+    const { data } = await supabase
+      .from("doctors")
+      .select(
+        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
+          "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
+      )
+      .eq("id", doctorId)
+      .maybeSingle();
+    doctor = data;
+  }
 
   if (!doctor) return { available: true, conflicts: [] };
 
