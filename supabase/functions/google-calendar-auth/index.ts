@@ -11,11 +11,16 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-    return payload;
+    return JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
   } catch {
     return null;
   }
+}
+
+// State format: `${doctor_id}:${office_id}`. Two UUIDs joined by `:` —
+// unambiguous and keeps the callback logic trivial.
+function encodeState(doctorId: string, officeId: string): string {
+  return `${doctorId}:${officeId}`;
 }
 
 serve(async (req) => {
@@ -46,8 +51,6 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    // Check expiration
     const now = Math.floor(Date.now() / 1000);
     if ((payload.exp as number) < now) {
       return new Response(JSON.stringify({ error: "Token expirado" }), {
@@ -55,35 +58,64 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
     const userId = payload.sub as string;
 
-    // Use service role to query the users table
+    // office_id: required. Comes from `?office_id=…` query param OR JSON body.
+    const url = new URL(req.url);
+    let officeId = url.searchParams.get("office_id");
+    if (!officeId) {
+      try {
+        const body = await req.clone().json();
+        officeId = body?.office_id ?? null;
+      } catch {
+        // No body, fall through to error.
+      }
+    }
+    if (!officeId) {
+      return new Response(JSON.stringify({ error: "office_id requerido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { data: userData, error: userError } = await supabase
+    // Resolve the doctor for this user. Admin can connect calendars on behalf
+    // of any doctor (passing the office's doctor_id implicitly via office_id);
+    // a doctor can only connect their own offices.
+    const { data: userData } = await supabase
       .from("users")
       .select("doctor_id")
       .eq("id", userId)
       .maybeSingle();
 
-    if (userError) {
-      console.error("Error fetching user:", userError);
-      return new Response(JSON.stringify({ error: "Error al verificar usuario" }), {
-        status: 500,
+    const { data: isAdmin } = await supabase.rpc("is_admin_or_superadmin", {
+      _user_id: userId,
+    });
+
+    // Verify the office exists and belongs to a doctor the caller can act on.
+    const { data: office } = await supabase
+      .from("doctor_offices")
+      .select("id, doctor_id, is_deleted")
+      .eq("id", officeId)
+      .maybeSingle();
+
+    if (!office || office.is_deleted) {
+      return new Response(JSON.stringify({ error: "Consultorio no encontrado" }), {
+        status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    if (!userData?.doctor_id) {
-      return new Response(JSON.stringify({ error: "No eres un doctor" }), {
+    if (!isAdmin && office.doctor_id !== userData?.doctor_id) {
+      return new Response(JSON.stringify({ error: "No autorizado para este consultorio" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
-    const state = userData.doctor_id;
+    const state = encodeState(office.doctor_id, office.id);
 
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
@@ -96,7 +128,6 @@ serve(async (req) => {
     });
 
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-
     return new Response(JSON.stringify({ url: authUrl }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -23,6 +23,7 @@ import { createManageToken } from "../_shared/manage-token.ts";
 
 interface CreateBody {
   doctor_id: string;
+  office_id: string;
   start_at: string;
   end_at: string;
   patient: { full_name: string; phone: string };
@@ -48,30 +49,45 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  const { doctor_id, start_at, end_at, patient, symptoms, notify_patient_whatsapp } = body;
-  if (!doctor_id || !start_at || !end_at || !patient?.full_name?.trim() || !patient?.phone?.trim()) {
-    return jsonResponse({ error: "doctor_id, start_at, end_at, patient.full_name y patient.phone son requeridos" }, 400);
+  const { doctor_id, office_id, start_at, end_at, patient, symptoms, notify_patient_whatsapp } = body;
+  if (!doctor_id || !office_id || !start_at || !end_at || !patient?.full_name?.trim() || !patient?.phone?.trim()) {
+    return jsonResponse(
+      { error: "doctor_id, office_id, start_at, end_at, patient.full_name y patient.phone son requeridos" },
+      400
+    );
   }
 
-  // Verify doctor exists and is active.
+  // Verify doctor.
   const { data: doctor } = await supabase
     .from("doctors")
-    .select(
-      "id, full_name, is_active, is_deleted, " +
-        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-    )
+    .select("id, full_name, is_active, is_deleted")
     .eq("id", doctor_id)
     .maybeSingle();
-
   if (!doctor || !doctor.is_active || doctor.is_deleted) {
     return jsonResponse({ error: "Doctor no encontrado o inactivo" }, 404);
   }
 
-  // Slot availability — backend authoritative check.
+  // Verify office belongs to that doctor and is active. Calendar tokens come
+  // from the office, NOT the doctor (legacy doctors fields are deprecated).
+  const { data: office } = await supabase
+    .from("doctor_offices")
+    .select(
+      "id, doctor_id, name, address, is_active, is_deleted, " +
+        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
+        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
+    )
+    .eq("id", office_id)
+    .eq("doctor_id", doctor_id)
+    .maybeSingle();
+  if (!office || !office.is_active || office.is_deleted) {
+    return jsonResponse({ error: "Consultorio no encontrado o inactivo" }, 404);
+  }
+
+  // Slot availability — scoped to the office.
   const validation = await validateSlotAvailable({
     supabase,
     doctorId: doctor_id,
+    officeId: office_id,
     startAt: start_at,
     endAt: end_at,
   });
@@ -119,6 +135,7 @@ Deno.serve(async (req) => {
     .from("appointments")
     .insert({
       doctor_id,
+      office_id,
       patient_id: patientId,
       start_at,
       end_at,
@@ -139,13 +156,13 @@ Deno.serve(async (req) => {
   const syncWarnings: string[] = [];
 
   // External calendar sync: best-effort. Failures don't roll back the appointment.
-  if (doctor.google_calendar_connected && doctor.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken(doctor);
+  if (office.google_calendar_connected && office.google_calendar_id) {
+    const accessToken = await getGoogleAccessToken(office);
     if (!accessToken) {
       syncWarnings.push("google");
     } else {
       try {
-        const calendarId = encodeURIComponent(doctor.google_calendar_id);
+        const calendarId = encodeURIComponent(office.google_calendar_id);
         const eventBody = {
           summary: `Cita: ${fullName}`,
           description: symptoms?.trim() ? `Síntomas: ${symptoms.trim()}` : undefined,
@@ -180,13 +197,13 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (doctor.outlook_calendar_connected && doctor.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken(doctor);
+  if (office.outlook_calendar_connected && office.outlook_calendar_id) {
+    const accessToken = await getOutlookAccessToken(office);
     if (!accessToken) {
       syncWarnings.push("outlook");
     } else {
       try {
-        const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+        const calendarId = encodeURIComponent(office.outlook_calendar_id);
         const eventBody = {
           subject: `Cita: ${fullName}`,
           body: symptoms?.trim() ? { contentType: "Text", content: `Síntomas: ${symptoms.trim()}` } : undefined,
@@ -281,6 +298,9 @@ Deno.serve(async (req) => {
             patient_phone: normalizedPhone,
             doctor_name: doctor.full_name,
             doctor_id,
+            office_id,
+            office_name: office.name,
+            office_address: office.address,
             start_at,
             end_at,
             symptoms: symptoms?.trim() || null,
@@ -303,6 +323,9 @@ Deno.serve(async (req) => {
             patient_name: fullName,
             doctor_name: doctor.full_name,
             doctor_id,
+            office_id,
+            office_name: office.name,
+            office_address: office.address,
             start_at,
             end_at,
             notify_patient: !!notify_patient_whatsapp,

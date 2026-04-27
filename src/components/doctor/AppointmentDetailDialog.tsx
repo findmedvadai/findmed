@@ -48,6 +48,9 @@ export interface CalendarItem {
   phone?: string;
   symptoms?: string;
   doctorNotes?: string;
+  // Office tag for the multi-office "all" view label.
+  officeId?: string;
+  officeName?: string;
   htmlLink?: string;
   description?: string;
 }
@@ -189,7 +192,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
           apikey: anonKey,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ event_id: item.id }),
+        body: JSON.stringify({ event_id: item.id, office_id: item.officeId }),
       });
 
       const data = await res.json();
@@ -399,7 +402,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       </Dialog>
 
       {/* Edit event dialog (for external events) */}
-      {isExternal && externalProvider && (
+      {isExternal && externalProvider && item.officeId && (
         <CreateEventDialog
           open={editEventOpen}
           onClose={() => {
@@ -407,6 +410,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
             onClose();
           }}
           provider={externalProvider}
+          officeId={item.officeId}
           editEvent={{
             id: item.id,
             summary: item.title,

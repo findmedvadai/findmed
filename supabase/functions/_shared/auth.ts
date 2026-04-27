@@ -47,3 +47,39 @@ export async function requireAdmin(
 
   return { ok: true, userId };
 }
+
+/**
+ * Like requireAdmin but also accepts a doctor user provided they are the
+ * `expectedDoctorId`. Used by office CRUD endpoints where both an admin and
+ * the office's owning doctor are valid callers.
+ */
+export async function requireAdminOrDoctor(
+  req: Request,
+  supabase: SupabaseClient,
+  expectedDoctorId: string
+): Promise<{ ok: true; userId: string; isAdmin: boolean } | { ok: false; status: number; error: string }> {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return { ok: false, status: 401, error: "Unauthorized" };
+  const token = authHeader.slice("Bearer ".length);
+
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+  const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const { data: claimsData, error: claimsErr } = await anon.auth.getClaims(token);
+  if (claimsErr || !claimsData?.claims?.sub) {
+    return { ok: false, status: 401, error: "Invalid token" };
+  }
+  const userId = claimsData.claims.sub as string;
+
+  const [{ data: isAdmin }, { data: userRow }] = await Promise.all([
+    supabase.rpc("is_admin_or_superadmin", { _user_id: userId }),
+    supabase.from("users").select("doctor_id").eq("id", userId).maybeSingle(),
+  ]);
+
+  if (isAdmin) return { ok: true, userId, isAdmin: true };
+  if (userRow?.doctor_id === expectedDoctorId) return { ok: true, userId, isAdmin: false };
+  return { ok: false, status: 403, error: "Forbidden" };
+}

@@ -47,10 +47,11 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get session
+  // Get session — includes office_id chosen at triage time so the appointment
+  // and the external calendar event both go to the right place.
   const { data: session, error: sessionError } = await supabase
     .from("reservation_sessions")
-    .select("id, doctor_id, patient_id, symptoms, used_at, expires_at")
+    .select("id, doctor_id, office_id, patient_id, symptoms, used_at, expires_at")
     .eq("id", session_id)
     .maybeSingle();
 
@@ -75,16 +76,34 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get doctor settings for duration
-  const { data: settings } = await supabase
-    .from("doctor_schedule_settings")
-    .select("appointment_duration_minutes")
-    .eq("doctor_id", session.doctor_id)
+  if (!session.office_id) {
+    return new Response(JSON.stringify({ error: "Sesión sin consultorio asignado" }), {
+      status: 410,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Office: duration + calendar config.
+  const { data: office } = await supabase
+    .from("doctor_offices")
+    .select(
+      "id, name, address, appointment_duration_minutes, " +
+        "google_refresh_token_ref, google_calendar_id, google_calendar_connected, " +
+        "outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected"
+    )
+    .eq("id", session.office_id)
     .maybeSingle();
 
-  const durationMinutes = settings?.appointment_duration_minutes ?? 30;
+  if (!office) {
+    return new Response(JSON.stringify({ error: "Consultorio no encontrado" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
-  // Calculate start_at and end_at with explicit Mexico City offset (-06:00)
+  const durationMinutes = office.appointment_duration_minutes ?? 30;
+
+  // Calculate start_at and end_at with explicit Mexico City offset (-06:00).
   const startAt = `${date}T${slot_start}:00-06:00`;
   const slotParts = slot_start.split(":").map(Number);
   const totalMinutes = slotParts[0] * 60 + slotParts[1] + durationMinutes;
@@ -92,7 +111,6 @@ Deno.serve(async (req) => {
   const endMM = String(totalMinutes % 60).padStart(2, "0");
   const endAt = `${date}T${endHH}:${endMM}:00-06:00`;
 
-  // Get patient and doctor info
   const { data: patient } = await supabase
     .from("patients")
     .select("full_name, phone")
@@ -101,7 +119,7 @@ Deno.serve(async (req) => {
 
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
+    .select("full_name")
     .eq("id", session.doctor_id)
     .maybeSingle();
 
@@ -111,11 +129,12 @@ Deno.serve(async (req) => {
   const autoConfirmed = hoursUntilAppt < 48;
   const appointmentStatus = autoConfirmed ? "confirmed" : "scheduled";
 
-  // Create appointment
+  // Create appointment, scoped to the assigned office.
   const { data: appointment, error: apptError } = await supabase
     .from("appointments")
     .insert({
       doctor_id: session.doctor_id,
+      office_id: session.office_id,
       patient_id: session.patient_id,
       start_at: startAt,
       end_at: endAt,
@@ -137,7 +156,7 @@ Deno.serve(async (req) => {
   let googleEventId: string | null = null;
   let outlookEventId: string | null = null;
 
-  if (doctor?.google_calendar_connected && doctor.google_refresh_token_ref && doctor.google_calendar_id) {
+  if (office.google_calendar_connected && office.google_refresh_token_ref && office.google_calendar_id) {
     try {
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
@@ -145,14 +164,14 @@ Deno.serve(async (req) => {
         body: new URLSearchParams({
           client_id: GOOGLE_CLIENT_ID,
           client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: doctor.google_refresh_token_ref,
+          refresh_token: office.google_refresh_token_ref,
           grant_type: "refresh_token",
         }),
       });
 
       const tokenData = await tokenRes.json();
       if (tokenRes.ok && tokenData.access_token) {
-        const calendarId = encodeURIComponent(doctor.google_calendar_id);
+        const calendarId = encodeURIComponent(office.google_calendar_id);
         const eventBody = {
           summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
           description: session.symptoms ? `Síntomas: ${session.symptoms}` : undefined,
@@ -184,7 +203,7 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error("Error creating Google Calendar event:", err);
     }
-  } else if (doctor?.outlook_calendar_connected && doctor.outlook_refresh_token_ref && doctor.outlook_calendar_id && OUTLOOK_CLIENT_ID) {
+  } else if (office.outlook_calendar_connected && office.outlook_refresh_token_ref && office.outlook_calendar_id && OUTLOOK_CLIENT_ID) {
     try {
       const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
         method: "POST",
@@ -192,7 +211,7 @@ Deno.serve(async (req) => {
         body: new URLSearchParams({
           client_id: OUTLOOK_CLIENT_ID,
           client_secret: OUTLOOK_CLIENT_SECRET,
-          refresh_token: doctor.outlook_refresh_token_ref,
+          refresh_token: office.outlook_refresh_token_ref,
           grant_type: "refresh_token",
           scope: "offline_access Calendars.ReadWrite",
         }),
@@ -200,7 +219,7 @@ Deno.serve(async (req) => {
 
       const tokenData = await tokenRes.json();
       if (tokenRes.ok && tokenData.access_token) {
-        const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+        const calendarId = encodeURIComponent(office.outlook_calendar_id);
         const eventBody = {
           subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
           body: session.symptoms ? { contentType: "Text", content: `Síntomas: ${session.symptoms}` } : undefined,
@@ -276,6 +295,9 @@ Deno.serve(async (req) => {
             patient_name: patient?.full_name,
             patient_phone: patient?.phone,
             doctor_name: doctor?.full_name,
+            office_id: office.id,
+            office_name: office.name,
+            office_address: office.address,
             start_at: startAt,
             end_at: endAt,
             symptoms: session.symptoms,
@@ -292,6 +314,9 @@ Deno.serve(async (req) => {
             appointment_id: appointment.id,
             patient_phone: patient?.phone ?? null,
             patient_name: patient?.full_name ?? null,
+            office_id: office.id,
+            office_name: office.name,
+            office_address: office.address,
             previous_status: null,
             new_status: appointmentStatus,
             start_at: startAt,

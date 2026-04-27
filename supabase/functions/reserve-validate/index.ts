@@ -41,10 +41,11 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Find session by token
+  // Find session by token. office_id is the assigned office for this triage
+  // — we surface its name and address to the patient on the reservation page.
   const { data: session, error: sessionError } = await supabase
     .from("reservation_sessions")
-    .select("id, doctor_id, patient_id, symptoms, expires_at, used_at")
+    .select("id, doctor_id, office_id, patient_id, symptoms, expires_at, used_at")
     .eq("token", token)
     .maybeSingle();
 
@@ -71,14 +72,27 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get doctor info
+  // Doctor name (display only; the address now comes from the office).
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, address")
+    .select("full_name")
     .eq("id", session.doctor_id)
     .maybeSingle();
 
-  // Get patient info
+  // Office that the agent assigned during triage. Falls back gracefully when
+  // a legacy session predates the office migration.
+  let officeName: string | null = null;
+  let officeAddress: string | null = null;
+  if (session.office_id) {
+    const { data: office } = await supabase
+      .from("doctor_offices")
+      .select("name, address")
+      .eq("id", session.office_id)
+      .maybeSingle();
+    officeName = office?.name ?? null;
+    officeAddress = office?.address ?? null;
+  }
+
   const { data: patient } = await supabase
     .from("patients")
     .select("full_name")
@@ -89,9 +103,14 @@ Deno.serve(async (req) => {
     JSON.stringify({
       session_id: session.id,
       doctor_id: session.doctor_id,
+      office_id: session.office_id,
       patient_id: session.patient_id,
       doctor_name: doctor?.full_name ?? "Doctor",
-      doctor_address: doctor?.address ?? null,
+      // Kept for backward compatibility with existing /reserva markup; same value
+      // as office_address.
+      doctor_address: officeAddress,
+      office_name: officeName,
+      office_address: officeAddress,
       patient_name: patient?.full_name ?? "Paciente",
       symptoms: session.symptoms,
     }),

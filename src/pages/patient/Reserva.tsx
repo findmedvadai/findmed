@@ -14,9 +14,13 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 interface SessionData {
   session_id: string;
   doctor_id: string;
+  office_id: string | null;
   patient_id: string;
   doctor_name: string;
+  // doctor_address kept for backward compatibility but we now read office_address.
   doctor_address: string | null;
+  office_name: string | null;
+  office_address: string | null;
   patient_name: string;
   symptoms: string | null;
 }
@@ -77,7 +81,13 @@ export default function Reserva() {
     fetch(`${SUPABASE_URL}/functions/v1/reserve-slots`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
-      body: JSON.stringify({ doctor_id: session.doctor_id, date: dateStr }),
+      // Slot fetching is now keyed on office_id assigned during triage. Falls
+      // back to doctor_id only for sessions that predate the office migration.
+      body: JSON.stringify(
+        session.office_id
+          ? { office_id: session.office_id, date: dateStr }
+          : { doctor_id: session.doctor_id, date: dateStr }
+      ),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -180,14 +190,17 @@ export default function Reserva() {
   return (
     <div className="min-h-screen bg-background p-4">
       <div className="max-w-lg mx-auto space-y-6">
-        {/* Doctor header */}
+        {/* Doctor + assigned office header */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">{session.doctor_name}</CardTitle>
-            {session.doctor_address && (
+            {session.office_name && (
+              <p className="text-sm font-medium text-foreground/80">{session.office_name}</p>
+            )}
+            {(session.office_address || session.doctor_address) && (
               <div className="flex items-start gap-2 text-sm text-muted-foreground">
                 <MapPin className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>{session.doctor_address}</span>
+                <span>{session.office_address ?? session.doctor_address}</span>
               </div>
             )}
           </CardHeader>

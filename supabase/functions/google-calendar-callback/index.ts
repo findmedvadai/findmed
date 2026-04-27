@@ -1,11 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// State decoder counterpart of google-calendar-auth. Format `${doctorId}:${officeId}`.
+function decodeState(raw: string): { doctorId: string; officeId: string } | null {
+  const parts = raw.split(":");
+  if (parts.length !== 2) return null;
+  const [doctorId, officeId] = parts;
+  if (!doctorId || !officeId) return null;
+  return { doctorId, officeId };
+}
+
 serve(async (req) => {
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state"); // doctor_id
+    const state = url.searchParams.get("state");
     const error = url.searchParams.get("error");
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -21,12 +30,20 @@ serve(async (req) => {
     if (error) {
       return redirectTo(`/google-calendar-success?error=${encodeURIComponent(`Google rechazó la conexión: ${error}`)}`);
     }
-
     if (!code || !state) {
       return redirectTo(`/google-calendar-success?error=${encodeURIComponent("Faltan parámetros")}`);
     }
 
-    // Exchange code for tokens
+    const decoded = decodeState(state);
+    if (!decoded) {
+      // Could be a stale OAuth flow started before the multi-office migration.
+      return redirectTo(
+        `/google-calendar-success?error=${encodeURIComponent(
+          "Sesión OAuth caducada por actualización del sistema. Inténtalo de nuevo desde Configuración."
+        )}`
+      );
+    }
+
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -38,32 +55,35 @@ serve(async (req) => {
         grant_type: "authorization_code",
       }),
     });
-
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
       console.error("Token exchange failed:", tokenData);
       return redirectTo(`/google-calendar-success?error=${encodeURIComponent("No se pudo obtener el token de Google")}`);
     }
-
     const { refresh_token } = tokenData;
-
     if (!refresh_token) {
       console.error("No refresh_token returned.");
-      return redirectTo(`/google-calendar-success?error=${encodeURIComponent("No se recibió refresh token. Revoca el acceso en tu cuenta de Google e inténtalo de nuevo.")}`);
+      return redirectTo(
+        `/google-calendar-success?error=${encodeURIComponent(
+          "No se recibió refresh token. Revoca el acceso en tu cuenta de Google e inténtalo de nuevo."
+        )}`
+      );
     }
 
-    // Store refresh token
-    const doctorId = state;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+    // Write the refresh token to the office row (NOT the doctors row). The
+    // `connected` flag stays false until the doctor picks a calendar from
+    // the list returned by google-calendar-list.
     const { error: updateError } = await supabase
-      .from("doctors")
+      .from("doctor_offices")
       .update({
         google_refresh_token_ref: refresh_token,
         google_calendar_connected: false,
         google_calendar_id: null,
       })
-      .eq("id", doctorId);
+      .eq("id", decoded.officeId)
+      .eq("doctor_id", decoded.doctorId);
 
     if (updateError) {
       console.error("DB update error:", updateError);

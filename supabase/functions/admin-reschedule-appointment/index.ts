@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, doctor_id, patient_id, status, start_at, end_at, symptoms, google_event_id, outlook_event_id")
+    .select("id, doctor_id, office_id, patient_id, status, start_at, end_at, symptoms, google_event_id, outlook_event_id")
     .eq("id", appointment_id)
     .maybeSingle();
 
@@ -51,11 +51,11 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "No se puede reagendar una cita cancelada" }, 409);
   }
 
-  // Slot availability — exclude the appointment being moved so it doesn't
-  // conflict with itself.
+  // Slot availability — scoped to the same office, excluding the moved appt.
   const validation = await validateSlotAvailable({
     supabase,
     doctorId: appointment.doctor_id,
+    officeId: appointment.office_id ?? undefined,
     startAt: start_at,
     endAt: end_at,
     excludeAppointmentId: appointment_id,
@@ -75,15 +75,24 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "No se pudo reagendar la cita", details: updateErr.message }, 500);
   }
 
-  // External calendar sync (best-effort).
+  // External calendar sync — read tokens off the appointment's office.
   const { data: doctor } = await supabase
     .from("doctors")
-    .select(
-      "full_name, google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-    )
+    .select("full_name")
     .eq("id", appointment.doctor_id)
     .maybeSingle();
+
+  const { data: office } = appointment.office_id
+    ? await supabase
+        .from("doctor_offices")
+        .select(
+          "id, name, address, " +
+            "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
+            "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
+        )
+        .eq("id", appointment.office_id)
+        .maybeSingle()
+    : { data: null };
 
   const { data: patient } = await supabase
     .from("patients")
@@ -95,12 +104,12 @@ Deno.serve(async (req) => {
   const symptomsText = appointment.symptoms?.trim() ?? "";
 
   // Google
-  if (doctor?.google_calendar_connected && doctor.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken(doctor);
+  if (office?.google_calendar_connected && office.google_calendar_id) {
+    const accessToken = await getGoogleAccessToken(office);
     if (!accessToken) {
       syncWarnings.push("google");
     } else {
-      const calendarId = encodeURIComponent(doctor.google_calendar_id);
+      const calendarId = encodeURIComponent(office.google_calendar_id);
       const eventBody = {
         summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
         description: symptomsText ? `Síntomas: ${symptomsText}` : undefined,
@@ -162,12 +171,12 @@ Deno.serve(async (req) => {
   }
 
   // Outlook
-  if (doctor?.outlook_calendar_connected && doctor.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken(doctor);
+  if (office?.outlook_calendar_connected && office.outlook_calendar_id) {
+    const accessToken = await getOutlookAccessToken(office);
     if (!accessToken) {
       syncWarnings.push("outlook");
     } else {
-      const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+      const calendarId = encodeURIComponent(office.outlook_calendar_id);
       const eventBody = {
         subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
         body: symptomsText ? { contentType: "Text", content: `Síntomas: ${symptomsText}` } : undefined,
@@ -269,6 +278,9 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             doctor_name: doctor?.full_name ?? null,
             doctor_id: appointment.doctor_id,
+            office_id: appointment.office_id,
+            office_name: office?.name ?? null,
+            office_address: office?.address ?? null,
             notify_patient: true,
             notify_doctor: true,
           },

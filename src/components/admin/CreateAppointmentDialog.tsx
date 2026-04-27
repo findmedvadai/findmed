@@ -30,6 +30,8 @@ interface Props {
   onClose: () => void;
   /** Pre-selected doctor when the calendar is filtered by one. */
   defaultDoctorId?: string | null;
+  /** Pre-selected office (when calendar filtered to a specific office). */
+  defaultOfficeId?: string | null;
   /** Pre-filled CDMX-local date (yyyy-MM-dd). */
   defaultDate?: string;
   /** Pre-filled CDMX-local time (HH:mm). */
@@ -39,6 +41,12 @@ interface Props {
 interface DoctorOption {
   id: string;
   full_name: string;
+}
+
+interface OfficeOption {
+  id: string;
+  name: string;
+  appointment_duration_minutes: number;
 }
 
 const TIME_HM_REGEX = /^\d{2}:\d{2}$/;
@@ -61,12 +69,14 @@ export default function CreateAppointmentDialog({
   open,
   onClose,
   defaultDoctorId,
+  defaultOfficeId,
   defaultDate,
   defaultTime,
 }: Props) {
   const queryClient = useQueryClient();
 
   const [doctorId, setDoctorId] = useState<string>("");
+  const [officeId, setOfficeId] = useState<string>("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
   const [duration, setDuration] = useState(30);
@@ -77,11 +87,13 @@ export default function CreateAppointmentDialog({
   const [symptoms, setSymptoms] = useState("");
   const [notifyPatient, setNotifyPatient] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [durationManuallyEdited, setDurationManuallyEdited] = useState(false);
 
   // Reset form when reopening.
   useEffect(() => {
     if (!open) return;
     setDoctorId(defaultDoctorId ?? "");
+    setOfficeId(defaultOfficeId ?? "");
     setDate(defaultDate ?? formatMx(new Date(), "yyyy-MM-dd"));
     setStartTime(defaultTime ?? "09:00");
     setSearchQuery("");
@@ -90,7 +102,8 @@ export default function CreateAppointmentDialog({
     setPhone("");
     setSymptoms("");
     setNotifyPatient(false);
-  }, [open, defaultDoctorId, defaultDate, defaultTime]);
+    setDurationManuallyEdited(false);
+  }, [open, defaultDoctorId, defaultOfficeId, defaultDate, defaultTime]);
 
   const { data: doctors = [] } = useQuery<DoctorOption[]>({
     queryKey: ["admin-create-appt-doctors"],
@@ -105,28 +118,37 @@ export default function CreateAppointmentDialog({
     },
   });
 
-  // Default duration from the doctor's settings (falls back to 30).
-  const { data: doctorSettings } = useQuery({
-    queryKey: ["admin-create-appt-settings", doctorId],
+  // Active offices for the selected doctor.
+  const { data: offices = [] } = useQuery<OfficeOption[]>({
+    queryKey: ["admin-create-appt-offices", doctorId],
     queryFn: async () => {
-      if (!doctorId) return null;
+      if (!doctorId) return [];
       const { data } = await supabase
-        .from("doctor_schedule_settings")
-        .select("appointment_duration_minutes")
+        .from("doctor_offices")
+        .select("id, name, appointment_duration_minutes")
         .eq("doctor_id", doctorId)
-        .maybeSingle();
-      return data;
+        .eq("is_active", true)
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: true });
+      return (data ?? []) as OfficeOption[];
     },
     enabled: !!doctorId,
   });
 
-  // Sync duration when doctor changes (only if user hasn't customized).
-  const [durationManuallyEdited, setDurationManuallyEdited] = useState(false);
+  // Auto-pick when the doctor has exactly one active office.
   useEffect(() => {
-    if (!durationManuallyEdited && doctorSettings) {
-      setDuration(doctorSettings.appointment_duration_minutes ?? 30);
-    }
-  }, [doctorSettings, durationManuallyEdited]);
+    if (!officeId && offices.length === 1) setOfficeId(offices[0].id);
+    // If the current office is no longer in the list (e.g. doctor changed),
+    // clear the selection.
+    if (officeId && !offices.find((o) => o.id === officeId)) setOfficeId("");
+  }, [offices, officeId]);
+
+  // Sync duration with the SELECTED OFFICE (was doctor-level pre-mejora-2).
+  useEffect(() => {
+    if (durationManuallyEdited) return;
+    const o = offices.find((x) => x.id === officeId);
+    if (o) setDuration(o.appointment_duration_minutes ?? 30);
+  }, [offices, officeId, durationManuallyEdited]);
 
   // End time derived from start + duration; users edit duration, not end-time.
   const endTime = useMemo(() => addMinutesToHm(startTime, duration), [startTime, duration]);
@@ -151,6 +173,7 @@ export default function CreateAppointmentDialog({
         },
         body: JSON.stringify({
           doctor_id: doctorId,
+          office_id: officeId,
           start_at: startAt,
           end_at: endAt,
           patient: {
@@ -202,6 +225,7 @@ export default function CreateAppointmentDialog({
 
   const canSubmit =
     !!doctorId &&
+    !!officeId &&
     !!date &&
     TIME_HM_REGEX.test(startTime) &&
     duration > 0 &&
@@ -233,7 +257,7 @@ export default function CreateAppointmentDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="doctor">Doctor *</Label>
-            <Select value={doctorId} onValueChange={setDoctorId}>
+            <Select value={doctorId} onValueChange={(v) => { setDoctorId(v); setOfficeId(""); }}>
               <SelectTrigger id="doctor">
                 <SelectValue placeholder="Selecciona un doctor" />
               </SelectTrigger>
@@ -246,6 +270,29 @@ export default function CreateAppointmentDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {doctorId && (
+            <div className="space-y-1.5">
+              <Label htmlFor="office">Consultorio *</Label>
+              <Select value={officeId} onValueChange={setOfficeId}>
+                <SelectTrigger id="office">
+                  <SelectValue placeholder={offices.length ? "Selecciona un consultorio" : "Sin consultorios activos"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {offices.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {offices.length === 0 && (
+                <p className="text-xs text-destructive">
+                  Este doctor no tiene consultorios activos. Crea uno desde el panel de doctores.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

@@ -22,11 +22,14 @@ Deno.serve(async (req) => {
   const windowStart = new Date(now.getTime() + 47 * 60 * 60 * 1000).toISOString();
   const windowEnd = new Date(now.getTime() + 49 * 60 * 60 * 1000).toISOString();
 
+  // Pull office info too — its address now replaces the doctor's, and its
+  // name goes into the WhatsApp template as an additive field.
   const { data: appointments, error } = await supabase
     .from("appointments")
     .select(`
-      id, start_at, end_at, doctor_id, patient_id,
-      doctors(full_name, address),
+      id, start_at, end_at, doctor_id, office_id, patient_id,
+      doctors(full_name),
+      doctor_offices(name, address),
       patients(full_name, phone)
     `)
     .eq("status", "scheduled")
@@ -56,7 +59,8 @@ Deno.serve(async (req) => {
 
   for (const appt of appointments) {
     const patient = appt.patients as { full_name: string; phone: string } | null;
-    const doctor = appt.doctors as { full_name: string; address: string | null } | null;
+    const doctor = appt.doctors as { full_name: string } | null;
+    const office = appt.doctor_offices as { name: string; address: string | null } | null;
 
     // Check for existing valid manage token
     const { data: existingToken } = await supabase
@@ -108,7 +112,12 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             patient_name: patient?.full_name ?? null,
             doctor_name: doctor?.full_name ?? null,
-            doctor_address: doctor?.address ?? null,
+            // doctor_address is preserved for backward compat but is now
+            // sourced from the office, since the doctor's column is deprecated.
+            doctor_address: office?.address ?? null,
+            office_id: appt.office_id,
+            office_name: office?.name ?? null,
+            office_address: office?.address ?? null,
             start_at: appt.start_at,
             manage_url: manageUrl,
             min_confirm_hours_before: minConfirmHours,

@@ -80,6 +80,9 @@ interface CalendarItem {
   specialtyName?: string | null;
   status?: string;
   symptoms?: string | null;
+  // Office (both appointment and external events have one).
+  officeId?: string | null;
+  officeName?: string | null;
   // External-only
   description?: string | null;
   htmlLink?: string | null;
@@ -91,6 +94,7 @@ interface AppointmentRow {
   end_at: string;
   status: string;
   symptoms: string | null;
+  office_id: string | null;
   google_event_id: string | null;
   outlook_event_id: string | null;
   patients: { full_name: string } | null;
@@ -99,6 +103,7 @@ interface AppointmentRow {
     full_name: string;
     doctor_specialties: { specialty_id: string; specialties: { id: string; name: string; color: string | null } | null }[];
   } | null;
+  doctor_offices: { id: string; name: string } | null;
 }
 
 interface ExternalApiEvent {
@@ -195,6 +200,7 @@ function FilterCombobox({
 export default function Calendario() {
   const [weekStart, setWeekStart] = useState(() => getMexicoWeekBounds(new Date()).start);
   const [filterDoctor, setFilterDoctor] = useState("all");
+  const [filterOffice, setFilterOffice] = useState("all");
   const [filterSpecialty, setFilterSpecialty] = useState("all");
   const [showCancelled, setShowCancelled] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
@@ -250,6 +256,23 @@ export default function Calendario() {
     return map;
   }, [allSpecialties]);
 
+  // Offices for the doctor sub-filter (only when a doctor is filtered).
+  const filteredDoctorIdEarly = filterDoctor === "all" ? null : filterDoctor;
+  const { data: doctorOfficeOptions = [] } = useQuery({
+    queryKey: ["admin-calendar-offices", filteredDoctorIdEarly],
+    queryFn: async () => {
+      if (!filteredDoctorIdEarly) return [] as { id: string; name: string }[];
+      const { data } = await supabase
+        .from("doctor_offices")
+        .select("id, name")
+        .eq("doctor_id", filteredDoctorIdEarly)
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: true });
+      return (data ?? []) as { id: string; name: string }[];
+    },
+    enabled: !!filteredDoctorIdEarly,
+  });
+
   // Appointments. We always load all statuses including cancelled and filter
   // client-side via the toggle, so flipping it is instant (no refetch).
   const { data: rawAppointments, isLoading } = useQuery({
@@ -258,9 +281,10 @@ export default function Calendario() {
       const { data, error } = await supabase
         .from("appointments")
         .select(`
-          id, start_at, end_at, status, symptoms, google_event_id, outlook_event_id,
+          id, start_at, end_at, status, symptoms, office_id, google_event_id, outlook_event_id,
           patients(full_name),
-          doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name, color)))
+          doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name, color))),
+          doctor_offices(id, name)
         `)
         .gte("start_at", weekStart.toISOString())
         .lte("start_at", weekEnd.toISOString())
@@ -355,6 +379,8 @@ export default function Calendario() {
         specialtyName: firstSpec?.specialties?.name ?? null,
         status: a.status,
         symptoms: a.symptoms,
+        officeId: a.office_id ?? a.doctor_offices?.id ?? null,
+        officeName: a.doctor_offices?.name ?? null,
       });
     }
 
@@ -380,6 +406,8 @@ export default function Calendario() {
           doctorName: filteredDoctorRow?.full_name,
           description: e.description,
           htmlLink: e.htmlLink,
+          officeId: (e as any).office_id ?? null,
+          officeName: (e as any).office_name ?? null,
         });
       }
       for (const e of outlookResp?.events ?? []) {
@@ -394,6 +422,8 @@ export default function Calendario() {
           doctorName: filteredDoctorRow?.full_name,
           description: e.description,
           htmlLink: e.htmlLink,
+          officeId: (e as any).office_id ?? null,
+          officeName: (e as any).office_name ?? null,
         });
       }
     }
@@ -401,18 +431,20 @@ export default function Calendario() {
     return items;
   }, [rawAppointments, googleResp, outlookResp, filteredDoctorId, filteredDoctorRow, showCancelled]);
 
-  // Apply filters (doctor + specialty). External events bypass specialty filter
-  // (they don't carry one) but get filtered out if the user picks a specialty.
+  // Apply filters (doctor + office + specialty). External events bypass
+  // specialty filter (they don't carry one) but get filtered out if the user
+  // picks a specialty.
   const filteredItems = useMemo(() => {
     return calendarItems.filter((i) => {
       if (filterDoctor !== "all" && i.doctorId !== filterDoctor) return false;
+      if (filterOffice !== "all" && i.officeId !== filterOffice) return false;
       if (filterSpecialty !== "all") {
         if (i.type !== "appointment") return false;
         if (i.specialtyId !== filterSpecialty) return false;
       }
       return true;
     });
-  }, [calendarItems, filterDoctor, filterSpecialty]);
+  }, [calendarItems, filterDoctor, filterOffice, filterSpecialty]);
 
   const itemsByDay = useMemo(() => {
     const map: Record<number, CalendarItem[]> = {};
@@ -534,11 +566,23 @@ export default function Calendario() {
       <div className="flex items-center gap-2 px-1 flex-wrap">
         <FilterCombobox
           value={filterDoctor}
-          onChange={setFilterDoctor}
+          onChange={(v) => {
+            setFilterDoctor(v);
+            setFilterOffice("all");
+          }}
           options={doctorOptions}
           placeholder="Buscar doctor..."
           allLabel="Todos los doctores"
         />
+        {filteredDoctorIdEarly && doctorOfficeOptions.length > 0 && (
+          <FilterCombobox
+            value={filterOffice}
+            onChange={setFilterOffice}
+            options={doctorOfficeOptions}
+            placeholder="Buscar consultorio..."
+            allLabel="Todos los consultorios"
+          />
+        )}
         <FilterCombobox
           value={filterSpecialty}
           onChange={setFilterSpecialty}
@@ -805,6 +849,7 @@ export default function Calendario() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultDoctorId={filteredDoctorId}
+        defaultOfficeId={filterOffice !== "all" ? filterOffice : null}
         defaultDate={createDate}
         defaultTime={createTime}
       />

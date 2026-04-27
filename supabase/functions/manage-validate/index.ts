@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
 
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, start_at, end_at, status, doctor_id, patient_id, symptoms")
+    .select("id, start_at, end_at, status, doctor_id, office_id, patient_id, symptoms")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -106,22 +106,32 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get doctor info + timezone
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name, address")
+    .select("full_name")
     .eq("id", appointment.doctor_id)
     .maybeSingle();
+
+  // Address now lives on the office. Pull it for the patient-facing page.
+  let officeName: string | null = null;
+  let officeAddress: string | null = null;
+  if (appointment.office_id) {
+    const { data: office } = await supabase
+      .from("doctor_offices")
+      .select("name, address")
+      .eq("id", appointment.office_id)
+      .maybeSingle();
+    officeName = office?.name ?? null;
+    officeAddress = office?.address ?? null;
+  }
 
   const { data: settings } = await supabase
     .from("doctor_schedule_settings")
     .select("timezone")
     .eq("doctor_id", appointment.doctor_id)
     .maybeSingle();
-
   const timezone = settings?.timezone ?? "America/Mexico_City";
 
-  // Get patient info
   const { data: patient } = await supabase
     .from("patients")
     .select("full_name")
@@ -132,8 +142,12 @@ Deno.serve(async (req) => {
     JSON.stringify({
       appointment_id: appointment.id,
       doctor_id: appointment.doctor_id,
+      office_id: appointment.office_id,
+      office_name: officeName,
+      office_address: officeAddress,
       doctor_name: doctor?.full_name ?? "Doctor",
-      doctor_address: doctor?.address ?? null,
+      // Backward compat for older /gestionar markup that reads `doctor_address`.
+      doctor_address: officeAddress,
       patient_name: patient?.full_name ?? "Paciente",
       start_at: toLocalISOString(appointment.start_at, timezone),
       end_at: toLocalISOString(appointment.end_at, timezone),

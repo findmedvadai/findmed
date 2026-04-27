@@ -1,3 +1,21 @@
+// Patient flow entry point. Called by the n8n agent with `{ ciudad, especialidad, zona? }`.
+//
+// Returns an array of (doctor, office) pairs that match all of:
+//   * the doctor has the requested specialty
+//   * the office is active and not deleted
+//   * the office's city matches `ciudad`
+//   * the office's zone matches `zona` (if provided)
+//
+// The "many results" semantics that n8n already counts on come from the
+// query naturally: any number of qualifying offices may be returned. When
+// nothing matches, we return an empty array — n8n's existing branch for
+// "Sin Match" will route the conversation to a human advisor.
+//
+// We do NOT fall back to city-only when zone-specific yields nothing — that
+// would mask "no doctor in this zone" cases the agent should treat as Sin
+// Match. Each result row carries office_id / office_name / office_address
+// so the agent can hand them back to triage-webhook unambiguously.
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -10,7 +28,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
-
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -21,7 +38,6 @@ Deno.serve(async (req) => {
   // --- API Key validation ---
   const authHeader = req.headers.get("Authorization") ?? "";
   const rawKey = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
   if (!rawKey.startsWith("fm_")) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -53,8 +69,6 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
-  // Update last_used_at (fire-and-forget)
   supabase.from("api_keys").update({ last_used_at: new Date().toISOString() } as any).eq("id", apiKey.id).then(() => {});
 
   // --- Parse body ---
@@ -67,9 +81,7 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   const { ciudad, especialidad, zona } = body;
-
   if (!ciudad || !especialidad) {
     return new Response(
       JSON.stringify({ error: "Missing required fields: ciudad, especialidad" }),
@@ -77,31 +89,28 @@ Deno.serve(async (req) => {
     );
   }
 
-  // --- Normalize search term ---
+  // Specialty stem: drop common Spanish suffixes so "ginecología", "ginecólogo",
+  // "gineco" all map to a stable root for ILIKE matching.
   const normalizeSpecialty = (term: string): string => {
     let t = term.trim().toLowerCase();
-    t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    t = t.normalize("NFD").replace(/[̀-ͯ]/g, "");
     t = t.replace(/(log[ií]a|logo|loga|ista|[ií]a|ico|ica)$/i, "");
     return t.length >= 3 ? t : term.trim().toLowerCase();
   };
-
   const searchRoot = normalizeSpecialty(especialidad);
 
-  // --- Step 1: Find doctor IDs matching specialty ---
+  // 1. Doctor IDs that have the requested specialty.
   const { data: specialtyMatches, error: specErr } = await supabase
     .from("doctor_specialties")
     .select("doctor_id, specialties!inner(name)")
     .ilike("specialties.name", `%${searchRoot}%`);
-
   if (specErr) {
     return new Response(
       JSON.stringify({ error: "Query error", details: specErr.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-
-  const doctorIds = (specialtyMatches || []).map((m: any) => m.doctor_id);
-
+  const doctorIds = [...new Set((specialtyMatches || []).map((m: any) => m.doctor_id))];
   if (doctorIds.length === 0) {
     return new Response(
       JSON.stringify({ success: true, total: 0, doctors: [] }),
@@ -109,28 +118,22 @@ Deno.serve(async (req) => {
     );
   }
 
-  // --- Step 2: Resolve city ID by name ---
+  // 2. City IDs by name.
   const { data: cityRows } = await supabase
     .from("cities")
     .select("id, name")
     .ilike("name", `%${ciudad}%`);
-
   const cityIds = (cityRows || []).map((c: any) => c.id);
-
   if (cityIds.length === 0) {
     return new Response(
       JSON.stringify({ success: true, total: 0, doctors: [] }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-
-  // Build city name map
   const cityMap: Record<string, string> = {};
-  for (const c of cityRows || []) {
-    cityMap[c.id] = c.name;
-  }
+  for (const c of cityRows || []) cityMap[c.id] = c.name;
 
-  // --- Step 3: Resolve zone ID if provided ---
+  // 3. Zone IDs by name (optional).
   let zoneIds: string[] | null = null;
   if (zona) {
     const { data: zoneRows } = await supabase
@@ -138,79 +141,78 @@ Deno.serve(async (req) => {
       .select("id, name")
       .ilike("name", `%${zona}%`)
       .in("city_id", cityIds);
-
     zoneIds = (zoneRows || []).map((z: any) => z.id);
+    if (zoneIds.length === 0) {
+      // Zone explicitly requested but not found in any of the candidate
+      // cities — short-circuit to "Sin Match". No fallback.
+      return new Response(
+        JSON.stringify({ success: true, total: 0, doctors: [] }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
   }
 
-  // --- Step 4: Query doctors with direct fields ---
-  let q = supabase
-    .from("doctors")
-    .select("id, full_name, phone, address, city_id, zone_id")
-    .in("id", doctorIds)
+  // 4. Match against active doctor_offices. Filter by:
+  //    - doctor in specialty matches
+  //    - office active + not deleted
+  //    - office.city_id in candidate cities
+  //    - office.zone_id in candidate zones (if zona provided)
+  // We also filter out offices whose owning doctor is inactive/deleted, since
+  // those should never show to patients (the spec says "doctores con 0 consultorios
+  // activos no aparecen" but the inverse — active offices of inactive doctors —
+  // is also out of bounds).
+  let officeQuery = supabase
+    .from("doctor_offices")
+    .select(
+      "id, doctor_id, name, address, city_id, zone_id, " +
+        "doctors!inner(id, full_name, phone, is_active, is_deleted)"
+    )
     .eq("is_active", true)
     .eq("is_deleted", false)
-    .in("city_id", cityIds);
+    .in("doctor_id", doctorIds)
+    .in("city_id", cityIds)
+    .eq("doctors.is_active", true)
+    .eq("doctors.is_deleted", false);
 
   if (zoneIds && zoneIds.length > 0) {
-    q = q.in("zone_id", zoneIds);
+    officeQuery = officeQuery.in("zone_id", zoneIds);
   }
 
-  let { data: doctors, error: docErr } = await q;
-
-  if (docErr) {
+  const { data: offices, error: officeErr } = await officeQuery;
+  if (officeErr) {
     return new Response(
-      JSON.stringify({ error: "Query error", details: docErr.message }),
+      JSON.stringify({ error: "Query error", details: officeErr.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
+  const officeRows = (offices ?? []) as any[];
 
-  let fallback = false;
-
-  // Step 4b: Fallback — if zone was sent but no results, retry without zone filter
-  if (zona && (!doctors || doctors.length === 0)) {
-    const { data: fallbackDoctors, error: fbErr } = await supabase
-      .from("doctors")
-      .select("id, full_name, phone, address, city_id, zone_id")
-      .in("id", doctorIds)
-      .eq("is_active", true)
-      .eq("is_deleted", false)
-      .in("city_id", cityIds);
-
-    if (fbErr) {
-      return new Response(
-        JSON.stringify({ error: "Query error", details: fbErr.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    doctors = fallbackDoctors;
-    fallback = true;
+  if (officeRows.length === 0) {
+    return new Response(
+      JSON.stringify({ success: true, total: 0, doctors: [] }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
-  // --- Step 5: Build zone name map for matched doctors ---
-  const matchedZoneIds = [...new Set((doctors || []).map((d: any) => d.zone_id).filter(Boolean))];
+  // 5. Resolve zone names for the matched offices.
+  const matchedZoneIds = [...new Set(officeRows.map((o) => o.zone_id).filter(Boolean))];
   const zoneMap: Record<string, string> = {};
-
   if (matchedZoneIds.length > 0) {
     const { data: zoneRows } = await supabase
       .from("zones")
       .select("id, name")
       .in("id", matchedZoneIds);
-
-    for (const z of zoneRows || []) {
-      zoneMap[z.id] = z.name;
-    }
+    for (const z of zoneRows || []) zoneMap[z.id] = z.name;
   }
 
-  // --- Step 6: Get all specialties for matched doctors ---
-  const matchedIds = (doctors || []).map((d: any) => d.id);
-  let specialtiesMap: Record<string, string[]> = {};
-
-  if (matchedIds.length > 0) {
+  // 6. Specialties for each matched doctor.
+  const matchedDoctorIds = [...new Set(officeRows.map((o) => o.doctor_id))];
+  const specialtiesMap: Record<string, string[]> = {};
+  if (matchedDoctorIds.length > 0) {
     const { data: allSpecs } = await supabase
       .from("doctor_specialties")
       .select("doctor_id, specialties(name)")
-      .in("doctor_id", matchedIds);
-
+      .in("doctor_id", matchedDoctorIds);
     for (const row of allSpecs || []) {
       const did = (row as any).doctor_id;
       const sname = (row as any).specialties?.name;
@@ -219,26 +221,28 @@ Deno.serve(async (req) => {
     }
   }
 
-  // --- Step 7: Format response ---
-  const result = (doctors || []).map((d: any) => ({
-    id: d.id,
-    full_name: d.full_name,
-    phone: d.phone,
-    address: d.address,
-    city: cityMap[d.city_id] || null,
-    zone: zoneMap[d.zone_id] || null,
-    specialties: specialtiesMap[d.id] || [],
+  // 7. Format response. One row per (doctor, office) pair. The constraint
+  //    `(doctor_id, zone_id)` unique among active offices guarantees that
+  //    when zona is provided there is at most one office per matching doctor.
+  const result = officeRows.map((o) => ({
+    // Doctor fields (preserved for backward compatibility with the agent).
+    id: o.doctors.id,
+    full_name: o.doctors.full_name,
+    phone: o.doctors.phone,
+    specialties: specialtiesMap[o.doctors.id] || [],
+    // Office fields — these are what the agent should pass to triage-webhook.
+    office_id: o.id,
+    office_name: o.name,
+    office_address: o.address,
+    address: o.address, // alias for legacy n8n templates that read `address`
+    city: cityMap[o.city_id] || null,
+    zone: zoneMap[o.zone_id] || null,
   }));
 
-  result.sort((a: any, b: any) => (a.zone || "").localeCompare(b.zone || ""));
-
-  const responseBody: any = { success: true, total: result.length, fallback, doctors: result };
-  if (fallback) {
-    responseBody.fallback_reason = `No se encontraron doctores en la zona '${zona}'. Mostrando todos los doctores de la especialidad en la ciudad.`;
-  }
+  result.sort((a, b) => (a.zone || "").localeCompare(b.zone || ""));
 
   return new Response(
-    JSON.stringify(responseBody),
+    JSON.stringify({ success: true, total: result.length, doctors: result }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });

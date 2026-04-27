@@ -65,10 +65,10 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Get appointment
+  // Get appointment (now scoped by office for downstream calendar sync).
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, status, google_event_id, outlook_event_id, doctor_id, patient_id, start_at")
+    .select("id, status, google_event_id, outlook_event_id, doctor_id, office_id, patient_id, start_at")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -117,14 +117,29 @@ Deno.serve(async (req) => {
     body: `${patient?.full_name ?? "Paciente"} canceló su cita del ${cancelDate}`,
   });
 
-  if (appointment.google_event_id) {
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("google_refresh_token_ref, google_calendar_id, google_calendar_connected")
-      .eq("id", appointment.doctor_id)
+  // Calendar sync now reads tokens off the appointment's office, not doctors.
+  let office: {
+    google_refresh_token_ref: string | null;
+    google_calendar_id: string | null;
+    google_calendar_connected: boolean;
+    outlook_refresh_token_ref: string | null;
+    outlook_calendar_id: string | null;
+    outlook_calendar_connected: boolean;
+  } | null = null;
+  if (appointment.office_id) {
+    const { data: officeRow } = await supabase
+      .from("doctor_offices")
+      .select(
+        "google_refresh_token_ref, google_calendar_id, google_calendar_connected, " +
+          "outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected"
+      )
+      .eq("id", appointment.office_id)
       .maybeSingle();
+    office = officeRow ?? null;
+  }
 
-    if (doctor?.google_calendar_connected && doctor.google_refresh_token_ref && doctor.google_calendar_id) {
+  if (appointment.google_event_id) {
+    if (office?.google_calendar_connected && office.google_refresh_token_ref && office.google_calendar_id) {
       try {
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
           method: "POST",
@@ -132,14 +147,14 @@ Deno.serve(async (req) => {
           body: new URLSearchParams({
             client_id: GOOGLE_CLIENT_ID,
             client_secret: GOOGLE_CLIENT_SECRET,
-            refresh_token: doctor.google_refresh_token_ref,
+            refresh_token: office.google_refresh_token_ref,
             grant_type: "refresh_token",
           }),
         });
 
         const tokenData = await tokenRes.json();
         if (tokenRes.ok && tokenData.access_token) {
-          const calendarId = encodeURIComponent(doctor.google_calendar_id);
+          const calendarId = encodeURIComponent(office.google_calendar_id);
           await fetch(
             `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${appointment.google_event_id}`,
             {
@@ -154,17 +169,10 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Delete Outlook Calendar event if exists
   if (appointment.outlook_event_id) {
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
-      .eq("id", appointment.doctor_id)
-      .maybeSingle();
-
     const OC_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
     const OC_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
-    if (doctor?.outlook_calendar_connected && doctor.outlook_refresh_token_ref && doctor.outlook_calendar_id && OC_ID) {
+    if (office?.outlook_calendar_connected && office.outlook_refresh_token_ref && office.outlook_calendar_id && OC_ID) {
       try {
         const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
           method: "POST",
@@ -172,14 +180,14 @@ Deno.serve(async (req) => {
           body: new URLSearchParams({
             client_id: OC_ID,
             client_secret: OC_SECRET,
-            refresh_token: doctor.outlook_refresh_token_ref,
+            refresh_token: office.outlook_refresh_token_ref,
             grant_type: "refresh_token",
             scope: "offline_access Calendars.ReadWrite",
           }),
         });
         const tokenData = await tokenRes.json();
         if (tokenRes.ok && tokenData.access_token) {
-          const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
+          const calendarId = encodeURIComponent(office.outlook_calendar_id);
           await fetch(
             `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
             {
