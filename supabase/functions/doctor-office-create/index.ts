@@ -75,9 +75,15 @@ Deno.serve(async (req) => {
     .single();
 
   if (error) {
-    // Postgres unique violation code 23505 → friendly message for the zone
-    // collision.
     if (error.code === "23505") {
+      const isNameConflict =
+        error.message?.includes("name") || error.details?.includes("name");
+      if (isNameConflict) {
+        return jsonResponse(
+          { error: "name_taken", message: "Ya tienes un consultorio activo con ese nombre." },
+          409
+        );
+      }
       return jsonResponse(
         { error: "zone_taken", message: "Ya tienes un consultorio activo en esa zona." },
         409

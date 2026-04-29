@@ -261,14 +261,14 @@ export default function Calendario() {
   const { data: doctorOfficeOptions = [] } = useQuery({
     queryKey: ["admin-calendar-offices", filteredDoctorIdEarly],
     queryFn: async () => {
-      if (!filteredDoctorIdEarly) return [] as { id: string; name: string; display_color: string }[];
+      if (!filteredDoctorIdEarly) return [] as { id: string; name: string; display_color: string; google_calendar_connected: boolean; outlook_calendar_connected: boolean }[];
       const { data } = await supabase
         .from("doctor_offices")
-        .select("id, name, display_color")
+        .select("id, name, display_color, google_calendar_connected, outlook_calendar_connected")
         .eq("doctor_id", filteredDoctorIdEarly)
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
-      return (data ?? []) as { id: string; name: string; display_color: string }[];
+      return (data ?? []) as { id: string; name: string; display_color: string; google_calendar_connected: boolean; outlook_calendar_connected: boolean }[];
     },
     enabled: !!filteredDoctorIdEarly,
   });
@@ -307,10 +307,10 @@ export default function Calendario() {
   );
 
   // External calendars are only fetched when filtering by a single doctor and
-  // that doctor has the relevant calendar connected. This keeps the "all
-  // doctors" view fast and avoids API rate-limit issues.
-  const googleEnabled = !!filteredDoctorId && !!filteredDoctorRow?.google_calendar_connected;
-  const outlookEnabled = !!filteredDoctorId && !!filteredDoctorRow?.outlook_calendar_connected;
+  // that doctor has the relevant calendar connected on at least one office.
+  // Reading from doctor_offices (not deprecated doctors.google_calendar_connected).
+  const googleEnabled = !!filteredDoctorId && doctorOfficeOptions.some((o) => o.google_calendar_connected);
+  const outlookEnabled = !!filteredDoctorId && doctorOfficeOptions.some((o) => o.outlook_calendar_connected);
 
   const { data: googleResp } = useQuery({
     queryKey: ["admin-calendar-google-events", filteredDoctorId, weekKey],

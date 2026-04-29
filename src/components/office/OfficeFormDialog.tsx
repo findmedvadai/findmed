@@ -144,7 +144,10 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
       const data = await res.json();
       if (!res.ok) {
         if (data.error === "zone_taken") {
-          throw new Error(data.message ?? "Ya tienes un consultorio en esa zona.");
+          throw new Error(data.message ?? "Ya tienes un consultorio activo en esa zona.");
+        }
+        if (data.error === "name_taken") {
+          throw new Error(data.message ?? "Ya tienes un consultorio activo con ese nombre.");
         }
         throw new Error(data?.error || "Error al guardar");
       }
