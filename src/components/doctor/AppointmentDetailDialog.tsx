@@ -160,28 +160,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       if (error) throw error;
       return id;
     },
-    onSuccess: async (id) => {
-      // Insert admin notification for completed appointment
-      try {
-        const [{ data: doctorData }, { data: apptData }] = await Promise.all([
-          supabase.from("doctors").select("full_name").eq("id", doctorId).single(),
-          supabase.from("appointments").select("patient_id").eq("id", id).single(),
-        ]);
-        if (apptData?.patient_id) {
-          const { data: patientData } = await supabase
-            .from("patients").select("full_name").eq("id", apptData.patient_id).single();
-          await supabase.from("notifications").insert({
-            doctor_id: doctorId,
-            appointment_id: id,
-            recipient_role: "admin",
-            type: "appointment_completed",
-            title: "Cita completada con notas",
-            body: `Dr. ${doctorData?.full_name ?? "Doctor"} completó notas para ${patientData?.full_name ?? "Paciente"}`,
-          } as any);
-        }
-      } catch (e) {
-        console.error("Error inserting admin notification:", e);
-      }
+    onSuccess: async (_id) => {
       toast.success("Notas guardadas");
       invalidate();
       setEditingNotes(false);
@@ -357,6 +336,13 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
                 {formatMx(item.start, "HH:mm")} – {formatMx(item.end, "HH:mm")}
               </span>
             </div>
+
+            {!isExternal && item.officeName && (
+              <div>
+                <span className="text-muted-foreground">Consultorio: </span>
+                <span className="font-medium">{item.officeName}</span>
+              </div>
+            )}
 
             {!isExternal && item.symptoms && (
               <div>

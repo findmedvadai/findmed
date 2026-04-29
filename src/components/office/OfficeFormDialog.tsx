@@ -160,12 +160,22 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
 
   const errors: Record<string, string> = {};
   if (!name.trim()) errors.name = "El nombre es requerido";
-  if (!address.trim()) errors.address = "La dirección es requerida";
-  if (!cityId) errors.cityId = "Selecciona una ciudad";
-  if (!zoneId) errors.zoneId = "Selecciona una zona";
+  if (!isEdit && !address.trim()) errors.address = "La dirección es requerida";
+  if (!isEdit && !cityId) errors.cityId = "Selecciona una ciudad";
+  if (!isEdit && !zoneId) errors.zoneId = "Selecciona una zona";
   if (!duration || duration < 5) errors.duration = "Duración inválida";
   if (!displayColor) errors.displayColor = "Selecciona un color";
-  const canSubmit = Object.keys(errors).length === 0 && !submitting;
+
+  const isDirty = isEdit
+    ? name.trim() !== (office?.name ?? "") ||
+      address.trim() !== (office?.address ?? "") ||
+      cityId !== (office?.city_id ?? "") ||
+      zoneId !== (office?.zone_id ?? "") ||
+      duration !== (office?.appointment_duration_minutes ?? 30) ||
+      displayColor !== (office?.display_color ?? COLOR_PALETTE[0])
+    : true;
+
+  const canSubmit = Object.keys(errors).length === 0 && !submitting && isDirty;
 
   const [showErrors, setShowErrors] = useState(false);
   const handleSubmit = (e: React.FormEvent) => {

@@ -265,16 +265,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Notification for the admin inbox.
-  await supabase.from("notifications").insert({
-    doctor_id,
-    appointment_id: appointmentId,
-    recipient_role: "admin",
-    type: "appointment_scheduled",
-    title: "Nueva cita (creada por doctor)",
-    body: `${fullName} - ${start_at}`,
-  });
-
   let manageToken: string | null = null;
   let manageUrl: string | null = null;
   try {
