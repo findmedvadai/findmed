@@ -100,7 +100,7 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
     start_at: "2026-03-15T10:00:00-06:00",
     cancel_reason: "doctor",
     message: "Tu cita fue cancelada por el doctor",
-    reschedule_url: "https://app.example.com/gestionar?token=xyz789",
+    manage_url: "https://app.example.com/gestionar?token=xyz789",
   },
   "appointment.auto_cancelled": {
     appointment_id: "uuid-example",
@@ -110,7 +110,7 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
     start_at: "2026-03-15T10:00:00-06:00",
     cancel_reason: "no_confirmation",
     message: "Tu cita fue cancelada automáticamente porque no fue confirmada a tiempo",
-    reschedule_url: "https://app.example.com/gestionar?token=xyz789",
+    manage_url: "https://app.example.com/gestionar?token=xyz789",
   },
   "appointment.rescheduled": {
     appointment_id: "uuid-new-example",
