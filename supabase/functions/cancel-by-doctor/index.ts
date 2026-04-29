@@ -253,7 +253,6 @@ Deno.serve(async (req) => {
             cancel_reason: "doctor",
             message: "Tu cita fue cancelada por el doctor",
             manage_url: rescheduleUrl,
-            reschedule_url: rescheduleUrl,
           },
         }),
       }),
@@ -280,7 +279,7 @@ Deno.serve(async (req) => {
   }
 
   return new Response(
-    JSON.stringify({ success: true, reschedule_url: rescheduleUrl }),
+    JSON.stringify({ success: true, manage_url: rescheduleUrl }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });
