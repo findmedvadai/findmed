@@ -10,11 +10,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TimePicker } from "@/components/ui/time-picker";
 import { supabase } from "@/integrations/supabase/client";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
+import { weekdayLabel } from "@/lib/availability-check";
 
 interface Props {
   open: boolean;
@@ -51,8 +63,12 @@ export default function RescheduleAppointmentDialog({
   const [startTime, setStartTime] = useState("09:00");
   const [duration, setDuration] = useState(originalDuration);
   const [submitting, setSubmitting] = useState(false);
+  const [availabilityWarning, setAvailabilityWarning] = useState<{
+    weekday: number;
+    blocks: { start_time: string; end_time: string }[];
+    office_name: string;
+  } | null>(null);
 
-  // Initialize from the appointment in CDMX local terms each time we open.
   useEffect(() => {
     if (!open) return;
     setDate(formatMx(start, "yyyy-MM-dd"));
@@ -62,33 +78,45 @@ export default function RescheduleAppointmentDialog({
 
   const endTime = useMemo(() => addMinutesToHm(startTime, duration), [startTime, duration]);
 
+  const callReschedule = async (forceOutside: boolean) => {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    if (!token) throw new Error("No autenticado");
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+    const startAt = buildMexicoIso(date, startTime);
+    const endAt = buildMexicoIso(date, endTime);
+
+    return await fetch(`${supabaseUrl}/functions/v1/admin-reschedule-appointment`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appointment_id: appointment.id,
+        start_at: startAt,
+        end_at: endAt,
+        force_outside_availability: forceOutside || undefined,
+      }),
+    });
+  };
+
   const mutation = useMutation({
     mutationFn: async () => {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
-      if (!token) throw new Error("No autenticado");
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-      const startAt = buildMexicoIso(date, startTime);
-      const endAt = buildMexicoIso(date, endTime);
-
-      const res = await fetch(`${supabaseUrl}/functions/v1/admin-reschedule-appointment`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: anonKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          appointment_id: appointment.id,
-          start_at: startAt,
-          end_at: endAt,
-        }),
-      });
-
+      const res = await callReschedule(false);
       const data = await res.json();
       if (!res.ok) {
+        if (data.error === "outside_availability") {
+          setAvailabilityWarning({
+            weekday: data.weekday,
+            blocks: data.blocks ?? [],
+            office_name: data.office_name ?? "",
+          });
+          throw new Error("__OUTSIDE_AVAILABILITY_HANDLED__");
+        }
         if (data.error === "slot_conflict") {
           throw new Error("Slot ocupado: hay otra cita o evento en ese horario.");
         }
@@ -106,13 +134,40 @@ export default function RescheduleAppointmentDialog({
           : warnings.includes("google")
           ? "Google"
           : "Outlook";
-        toast.warning(
-          `Cita reagendada, pero no se pudo sincronizar con ${provider}.`
-        );
+        toast.warning(`Cita reagendada, pero no se pudo sincronizar con ${provider}.`);
       }
       queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
       queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
       queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      onRescheduled?.();
+      onClose();
+    },
+    onError: (err: Error) => {
+      if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
+      toast.error(err.message);
+    },
+  });
+
+  const forceMutation = useMutation({
+    mutationFn: async () => {
+      const res = await callReschedule(true);
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === "slot_conflict") {
+          throw new Error("Slot ocupado: hay otra cita o evento en ese horario.");
+        }
+        throw new Error(data.error || "Error al reagendar");
+      }
+      return data as { sync_warnings: string[] };
+    },
+    onSuccess: (data) => {
+      const warnings = data.sync_warnings ?? [];
+      if (warnings.length === 0) toast.success("Cita reagendada (fuera de disponibilidad)");
+      else toast.warning("Cita reagendada con sincronización parcial.");
+      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      setAvailabilityWarning(null);
       onRescheduled?.();
       onClose();
     },
@@ -149,13 +204,7 @@ export default function RescheduleAppointmentDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="r-start">Nueva hora *</Label>
-              <Input
-                id="r-start"
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                required
-              />
+              <TimePicker value={startTime} onValueChange={setStartTime} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -187,6 +236,55 @@ export default function RescheduleAppointmentDialog({
           </div>
         </form>
       </DialogContent>
+
+      <AlertDialog
+        open={!!availabilityWarning}
+        onOpenChange={(o) => {
+          if (!o) setAvailabilityWarning(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fuera de disponibilidad</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  El nuevo horario está fuera de la disponibilidad configurada del consultorio
+                  {availabilityWarning?.office_name ? ` "${availabilityWarning.office_name}"` : ""} en{" "}
+                  <strong>{availabilityWarning ? weekdayLabel(availabilityWarning.weekday) : ""}</strong>.
+                </p>
+                {availabilityWarning && availabilityWarning.blocks.length > 0 && (
+                  <div>
+                    <p className="text-muted-foreground">Disponibilidad ese día:</p>
+                    <ul className="list-disc list-inside text-muted-foreground">
+                      {availabilityWarning.blocks.map((b, i) => (
+                        <li key={i}>
+                          {b.start_time.slice(0, 5)} – {b.end_time.slice(0, 5)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {availabilityWarning && availabilityWarning.blocks.length === 0 && (
+                  <p className="text-muted-foreground">
+                    Este día no tiene horarios configurados para este consultorio.
+                  </p>
+                )}
+                <p>¿Reagendar de todas formas?</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => forceMutation.mutate()}
+              disabled={forceMutation.isPending}
+            >
+              Reagendar de todas formas
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

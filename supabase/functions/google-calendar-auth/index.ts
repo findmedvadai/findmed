@@ -17,10 +17,16 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-// State format: `${doctor_id}:${office_id}`. Two UUIDs joined by `:` —
-// unambiguous and keeps the callback logic trivial.
-function encodeState(doctorId: string, officeId: string): string {
-  return `${doctorId}:${officeId}`;
+// State format: `${doctor_id}:${office_id}` plus an optional URL-safe base64
+// origin tail (`:b64(origin)`). The origin is the frontend URL that initiated
+// the OAuth flow — we'll redirect there on the callback so it works across
+// localhost / staging / production without depending on a single SITE_URL env.
+function encodeState(doctorId: string, officeId: string, origin?: string | null): string {
+  const base = `${doctorId}:${officeId}`;
+  if (!origin) return base;
+  // base64url-encode the origin so it survives the OAuth round-trip.
+  const b64 = btoa(origin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${base}:${b64}`;
 }
 
 serve(async (req) => {
@@ -61,12 +67,17 @@ serve(async (req) => {
     const userId = payload.sub as string;
 
     // office_id: required. Comes from `?office_id=…` query param OR JSON body.
+    // origin: optional URL of the frontend that started the flow — we use it
+    // to redirect to the right host on the callback (so OAuth works on
+    // localhost during dev without configuring SITE_URL env per environment).
     const url = new URL(req.url);
     let officeId = url.searchParams.get("office_id");
+    let origin = url.searchParams.get("origin");
     if (!officeId) {
       try {
         const body = await req.clone().json();
         officeId = body?.office_id ?? null;
+        origin = origin ?? body?.origin ?? null;
       } catch {
         // No body, fall through to error.
       }
@@ -115,7 +126,7 @@ serve(async (req) => {
     }
 
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
-    const state = encodeState(office.doctor_id, office.id);
+    const state = encodeState(office.doctor_id, office.id, origin);
 
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,

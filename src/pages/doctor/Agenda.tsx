@@ -119,17 +119,24 @@ export default function Agenda() {
   const { data: offices = [] } = useQuery({
     queryKey: ["doctor-offices-for-agenda", doctorId],
     queryFn: async () => {
-      if (!doctorId) return [] as { id: string; name: string }[];
+      if (!doctorId) return [] as { id: string; name: string; display_color: string }[];
       const { data } = await supabase
         .from("doctor_offices")
-        .select("id, name")
+        .select("id, name, display_color")
         .eq("doctor_id", doctorId)
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
-      return (data ?? []) as { id: string; name: string }[];
+      return (data ?? []) as { id: string; name: string; display_color: string }[];
     },
     enabled: !!doctorId,
   });
+
+  // Color lookup by office_id for visual distinction in the calendar grid.
+  const officeColor = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of offices) map.set(o.id, o.display_color);
+    return map;
+  }, [offices]);
 
   // Current time for red line indicator
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -502,6 +509,10 @@ export default function Agenda() {
                   const widthPercent = 100 / totalCols;
                   const leftPercent = col * widthPercent;
 
+                  // Office color is shown as a thicker left border on the
+                  // event chip — gives the doctor a quick visual cue per
+                  // office without changing the chip's main fill.
+                  const officeColorVal = item.officeId ? officeColor.get(item.officeId) : null;
                   return (
                     <div
                       key={item.id}
@@ -515,6 +526,10 @@ export default function Agenda() {
                         height: Math.max(15, height),
                         left: `calc(${leftPercent}% + 1px)`,
                         width: `calc(${widthPercent}% - 2px)`,
+                        ...(officeColorVal && {
+                          borderLeft: `4px solid ${officeColorVal}`,
+                          paddingLeft: "4px",
+                        }),
                       }}
                        title={`${item.title}\n${formatMexicoTime(item.start, "HH:mm")} - ${formatMexicoTime(item.end, "HH:mm")}${item.officeName ? `\n${item.officeName}` : ""}${item.symptoms ? `\n${item.symptoms}` : ""}`}
                     >
@@ -541,34 +556,15 @@ export default function Agenda() {
         doctorId={doctorId ?? ""}
       />
 
-      {createEventOpen && (
-        // CreateEventDialog needs an explicit office (each office has its own
-        // calendar). When the doctor is in "Todos los consultorios" view we
-        // pick the only office if there's just one; otherwise we keep the
-        // dialog closed and ask them to filter first.
-        (() => {
-          const targetOfficeId =
-            officeFilter !== "all"
-              ? officeFilter
-              : offices.length === 1
-              ? offices[0].id
-              : null;
-          if (!targetOfficeId) {
-            setCreateEventOpen(false);
-            toast.info("Selecciona un consultorio para crear eventos.");
-            return null;
-          }
-          return (
-            <CreateEventDialog
-              open={createEventOpen}
-              onClose={() => setCreateEventOpen(false)}
-              defaultDate={createEventDate}
-              defaultStartHour={createEventHour}
-              officeId={targetOfficeId}
-            />
-          );
-        })()
-      )}
+      <CreateEventDialog
+        open={createEventOpen}
+        onClose={() => setCreateEventOpen(false)}
+        defaultDate={createEventDate}
+        defaultStartHour={createEventHour}
+        // Pass office only when filtered to a specific one. In "Todos" view
+        // the dialog renders an in-form office picker.
+        officeId={officeFilter !== "all" ? officeFilter : undefined}
+      />
     </div>
   );
 }

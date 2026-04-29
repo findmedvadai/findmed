@@ -1,13 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// State decoder counterpart of google-calendar-auth. Format `${doctorId}:${officeId}`.
-function decodeState(raw: string): { doctorId: string; officeId: string } | null {
+// State decoder counterpart of google-calendar-auth. Two formats accepted:
+//   * `${doctorId}:${officeId}`                — legacy
+//   * `${doctorId}:${officeId}:${b64(origin)}` — current
+function decodeState(
+  raw: string
+): { doctorId: string; officeId: string; origin: string | null } | null {
   const parts = raw.split(":");
-  if (parts.length !== 2) return null;
-  const [doctorId, officeId] = parts;
+  if (parts.length < 2) return null;
+  const [doctorId, officeId, b64Origin] = parts;
   if (!doctorId || !officeId) return null;
-  return { doctorId, officeId };
+  let origin: string | null = null;
+  if (b64Origin) {
+    try {
+      const padded = b64Origin.replace(/-/g, "+").replace(/_/g, "/");
+      origin = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+    } catch {
+      origin = null;
+    }
+  }
+  return { doctorId, officeId, origin };
 }
 
 serve(async (req) => {
@@ -21,11 +34,19 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-    const SITE_URL = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
+    const SITE_URL_FALLBACK = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
 
+    // Resolve which origin to redirect to: prefer the one encoded in `state`
+    // by the frontend that initiated this flow; fall back to SITE_URL.
+    let redirectOrigin = SITE_URL_FALLBACK;
+    if (state) {
+      const decodedState = decodeState(state);
+      if (decodedState?.origin) redirectOrigin = decodedState.origin;
+    }
+
     const redirectTo = (path: string) =>
-      new Response(null, { status: 302, headers: { Location: `${SITE_URL}${path}` } });
+      new Response(null, { status: 302, headers: { Location: `${redirectOrigin}${path}` } });
 
     if (error) {
       return redirectTo(`/google-calendar-success?error=${encodeURIComponent(`Google rechazó la conexión: ${error}`)}`);
