@@ -221,3 +221,31 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** (A) Corregir `event_type` en `manage-cancel`. (B) Agregar helper `getOrCreateManageUrl` en `_shared/manage-token.ts` (lookup de token existente o crea uno nuevo) y llamarlo en `admin-cancel-appointment` y `doctor-office-delete`. (C) Agregar campo `manage_url` junto a `reschedule_url` en `cancel-by-doctor` y `auto-cancel-unconfirmed`.
 
 **Lección aprendida:** Todos los webhooks de cancelación deben seguir el mismo contrato: `event_type` específico por actor (patient/doctor/admin/auto) y campo `manage_url` presente siempre. Al agregar un nuevo flujo de cancelación, verificar contra este checklist antes de desplegar.
+
+---
+
+## 2026-04-29 — Consultorio duplicado por estado de edición perdido durante glitch de UI
+
+**Categoría:** frontend / datos
+
+**Síntoma:** Doctor tenía dos consultorios "Bosques" activos en `doctor_offices`. Citas y disponibilidad estaban repartidas entre los dos.
+
+**Causa raíz:** El formulario `OfficeFormDialog` en modo edición perdió el estado `editingOffice` (probablemente durante el flash de UI vacía por invalidación agresiva de TanStack Query, antes de ese fix). Al abrirse sin `office` prop, el formulario llamó al endpoint de crear en lugar de actualizar. No había restricción UNIQUE en `(doctor_id, name)` que lo hubiera bloqueado.
+
+**Solución aplicada:** (A) Migración SQL `20260429200000_cleanup_duplicate_offices.sql` que mueve las citas al consultorio original, elimina disponibilidad y sesiones del duplicado, y hace soft-delete del duplicado. (B) `CREATE UNIQUE INDEX doctor_offices_active_name_unique ON doctor_offices(doctor_id, name) WHERE is_active AND NOT is_deleted`. (C) Actualizar `doctor-office-create` EF para devolver `name_taken` cuando se viola la nueva constraint. (D) `OfficeFormDialog` maneja `name_taken` con mensaje amigable.
+
+**Lección aprendida:** Las constraints de unicidad deben reflejar las invariantes del negocio desde el inicio. Si el negocio dicta "un nombre de consultorio único por doctor activo", eso debe ser una constraint en DB, no solo validación en frontend. Las constraints previenen corrupción de datos aunque haya bugs de UI.
+
+---
+
+## 2026-04-29 — Eventos de Google Calendar no aparecían en calendario del admin
+
+**Categoría:** frontend
+
+**Síntoma:** Al filtrar el calendario admin por un doctor, aparecían los eventos de Outlook pero no los de Google, aunque el doctor tenía Google Calendar conectado en su consultorio.
+
+**Causa raíz:** `Calendario.tsx` derivaba `googleEnabled` / `outlookEnabled` de `filteredDoctorRow?.google_calendar_connected`, que lee de la tabla `doctors`. Ese campo está **deprecated** desde Mejora 2 — ahora el estado de conexión vive en `doctor_offices`. El campo en `doctors` estaba en `false` para Google (nunca actualizado) pero en `true` para Outlook (actualizado recientemente por coincidencia al conectar el consultorio duplicado).
+
+**Solución aplicada:** Ampliar la query `doctorOfficeOptions` en `Calendario.tsx` para incluir `google_calendar_connected, outlook_calendar_connected`. Derivar las flags `googleEnabled` / `outlookEnabled` con `.some(o => o.google_calendar_connected)` sobre los consultorios del doctor filtrado.
+
+**Lección aprendida:** Cuando un campo migra de una tabla a otra (aquí: de `doctors` a `doctor_offices`), hacer grep de todos los sitios que leen el campo viejo y actualizarlos en la misma sesión. Un campo deprecated en el schema es invisible para el compilador — solo búsqueda explícita lo revela.
