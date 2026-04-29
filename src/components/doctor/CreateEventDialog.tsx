@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 const MEXICO_TZ = "America/Mexico_City";
 const formatMx = (date: Date, fmt: string) => format(toZonedTime(date, MEXICO_TZ), fmt);
+const todayMx = () => formatMx(new Date(), "yyyy-MM-dd");
 import {
   Dialog,
   DialogContent,
@@ -15,12 +16,23 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { TimePicker } from "@/components/ui/time-picker";
+import { weekdayLabel } from "@/lib/availability-check";
 
 interface CreateEventDialogProps {
   open: boolean;
@@ -89,6 +101,32 @@ export default function CreateEventDialog({
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
   const [submitting, setSubmitting] = useState(false);
+  // Office duration (minutes) — used to auto-fill endTime.
+  const [officeDuration, setOfficeDuration] = useState<number>(60);
+
+  // Helper: add duration minutes to HH:mm string.
+  const addMinutes = (hm: string, mins: number): string => {
+    const [h, m] = hm.split(":").map(Number);
+    const total = h * 60 + m + mins;
+    const newH = Math.floor(((total % 1440) + 1440) % 1440 / 60);
+    const newM = ((total % 60) + 60) % 60;
+    return `${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`;
+  };
+
+  // Fetch office appointment_duration_minutes whenever the selected office changes.
+  useEffect(() => {
+    if (!officeId) return;
+    supabase
+      .from("doctor_offices")
+      .select("appointment_duration_minutes")
+      .eq("id", officeId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.appointment_duration_minutes) {
+          setOfficeDuration(data.appointment_duration_minutes);
+        }
+      });
+  }, [officeId]);
 
   // Reset form when dialog opens. All form fields represent CDMX local time, since
   // the doctor reasons in CDMX and the Edge Functions also assume CDMX as the calendar TZ.
@@ -107,22 +145,90 @@ export default function CreateEventDialog({
       const d = defaultDate ?? new Date();
       setDate(formatMx(d, "yyyy-MM-dd"));
       const sh = defaultStartHour ?? 9;
-      setStartTime(
-        `${String(Math.floor(sh)).padStart(2, "0")}:${String(Math.round((sh % 1) * 60)).padStart(2, "0")}`
-      );
-      const eh = (defaultStartHour ?? 9) + 1;
-      setEndTime(
-        `${String(Math.floor(eh)).padStart(2, "0")}:${String(Math.round((eh % 1) * 60)).padStart(2, "0")}`
-      );
+      const st = `${String(Math.floor(sh)).padStart(2, "0")}:${String(Math.round((sh % 1) * 60)).padStart(2, "0")}`;
+      setStartTime(st);
+      setEndTime(addMinutes(st, officeDuration));
     }
     // Pre-select the only office automatically when no prop and exactly 1 exists.
     if (!officeIdProp && offices.length === 1) {
       setOfficeIdState(offices[0].id);
     }
-  }, [open, editEvent, defaultDate, defaultStartHour, officeIdProp, offices]);
+  }, [open, editEvent, defaultDate, defaultStartHour, officeIdProp, offices, officeDuration]);
+
+  // When start time changes (and not in edit mode), recalculate end time.
+  useEffect(() => {
+    if (!isEdit && startTime && officeDuration) {
+      setEndTime(addMinutes(startTime, officeDuration));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startTime, officeDuration]);
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) onClose();
+  };
+
+  // The outside-availability soft-warning state. Same UX as the admin path:
+  // backend returns 409 outside_availability with the office's enabled
+  // blocks; we surface them and let the user override.
+  const [availabilityWarning, setAvailabilityWarning] = useState<{
+    weekday: number;
+    blocks: { start_time: string; end_time: string }[];
+    office_name: string;
+  } | null>(null);
+
+  const callApi = async (forceOutside: boolean) => {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    if (!token) throw new Error("No estás autenticado");
+
+    let providerPrefix: "google" | "outlook";
+    if (provider) {
+      providerPrefix = provider;
+    } else {
+      const { data: officeData } = await supabase
+        .from("doctor_offices")
+        .select("google_calendar_connected, outlook_calendar_connected")
+        .eq("id", officeId)
+        .maybeSingle();
+      const useOutlook =
+        officeData?.outlook_calendar_connected && !officeData?.google_calendar_connected;
+      providerPrefix = useOutlook ? "outlook" : "google";
+    }
+
+    const startAt = `${date}T${startTime}:00-06:00`;
+    const endAt = `${date}T${endTime}:00-06:00`;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    const endpoint = isEdit
+      ? `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-update-event`
+      : `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-create-event`;
+
+    const payload: Record<string, unknown> = {
+      office_id: officeId,
+      summary: summary.trim(),
+      description: description.trim() || undefined,
+      start_at: startAt,
+      end_at: endAt,
+      force_outside_availability: forceOutside || undefined,
+    };
+    if (isEdit) payload.event_id = editEvent!.id;
+
+    return await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const finishSuccess = () => {
+    toast.success(isEdit ? "Evento actualizado" : "Evento creado en calendario");
+    queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
+    queryClient.invalidateQueries({ queryKey: ["outlook-calendar-events"] });
+    onClose();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -135,76 +241,35 @@ export default function CreateEventDialog({
 
     setSubmitting(true);
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
-      if (!token) {
-        toast.error("No estás autenticado");
-        return;
-      }
-
-      // Auto-detect provider from the OFFICE's connections (post-mejora-2 each
-      // office has its own calendar). Editing forces the original provider.
-      let providerPrefix: "google" | "outlook";
-      if (provider) {
-        providerPrefix = provider;
-      } else {
-        const { data: officeData } = await supabase
-          .from("doctor_offices")
-          .select("google_calendar_connected, outlook_calendar_connected")
-          .eq("id", officeId)
-          .maybeSingle();
-
-        const useOutlook =
-          officeData?.outlook_calendar_connected && !officeData?.google_calendar_connected;
-        providerPrefix = useOutlook ? "outlook" : "google";
-      }
-
-      // Build naive ISO timestamps (no TZ suffix). The Edge Functions wrap these with
-      // timeZone: "America/Mexico_City" when sending to Google/Outlook.
-      const startAt = `${date}T${startTime}:00`;
-      const endAt = `${date}T${endTime}:00`;
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-      const endpoint = isEdit
-        ? `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-update-event`
-        : `${supabaseUrl}/functions/v1/${providerPrefix}-calendar-create-event`;
-
-      const payload = isEdit
-        ? {
-            office_id: officeId,
-            event_id: editEvent!.id,
-            summary: summary.trim(),
-            description: description.trim() || undefined,
-            start_at: startAt,
-            end_at: endAt,
-          }
-        : {
-            office_id: officeId,
-            summary: summary.trim(),
-            description: description.trim() || undefined,
-            start_at: startAt,
-            end_at: endAt,
-          };
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: anonKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
+      const res = await callApi(false);
       const data = await res.json();
-      if (!res.ok || data.error) {
+      if (!res.ok) {
+        if (data.error === "outside_availability") {
+          setAvailabilityWarning({
+            weekday: data.weekday,
+            blocks: data.blocks ?? [],
+            office_name: data.office_name ?? "",
+          });
+          return;
+        }
         throw new Error(data.error || (isEdit ? "Error al actualizar evento" : "Error al crear evento"));
       }
+      finishSuccess();
+    } catch (err: any) {
+      toast.error(err.message || "Error al guardar evento");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-      toast.success(isEdit ? "Evento actualizado" : "Evento creado en calendario");
-      queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
-      queryClient.invalidateQueries({ queryKey: ["outlook-calendar-events"] });
-      onClose();
+  const handleForceCreate = async () => {
+    setAvailabilityWarning(null);
+    setSubmitting(true);
+    try {
+      const res = await callApi(true);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al guardar evento");
+      finishSuccess();
     } catch (err: any) {
       toast.error(err.message || "Error al guardar evento");
     } finally {
@@ -281,6 +346,7 @@ export default function CreateEventDialog({
               id="date"
               type="date"
               value={date}
+              min={todayMx()}
               onChange={(e) => setDate(e.target.value)}
               required
             />
@@ -307,6 +373,52 @@ export default function CreateEventDialog({
           </div>
         </form>
       </DialogContent>
+
+      <AlertDialog
+        open={!!availabilityWarning}
+        onOpenChange={(o) => {
+          if (!o) setAvailabilityWarning(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fuera de disponibilidad</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  El horario que elegiste está fuera de la disponibilidad configurada del consultorio
+                  {availabilityWarning?.office_name ? ` "${availabilityWarning.office_name}"` : ""} en{" "}
+                  <strong>{availabilityWarning ? weekdayLabel(availabilityWarning.weekday) : ""}</strong>.
+                </p>
+                {availabilityWarning && availabilityWarning.blocks.length > 0 && (
+                  <div>
+                    <p className="text-muted-foreground">Disponibilidad ese día:</p>
+                    <ul className="list-disc list-inside text-muted-foreground">
+                      {availabilityWarning.blocks.map((b, i) => (
+                        <li key={i}>
+                          {b.start_time.slice(0, 5)} – {b.end_time.slice(0, 5)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {availabilityWarning && availabilityWarning.blocks.length === 0 && (
+                  <p className="text-muted-foreground">
+                    Este día no tiene horarios configurados para este consultorio.
+                  </p>
+                )}
+                <p>¿Crear el evento de todas formas?</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleForceCreate} disabled={submitting}>
+              Crear de todas formas
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

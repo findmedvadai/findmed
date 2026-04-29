@@ -1,13 +1,19 @@
-// Single-table weekly availability editor across ALL of a doctor's offices.
-// Each block carries its own office selector; multiple blocks can share a day
-// (split shifts) or a doctor can run two offices on the same day with
-// non-overlapping hours.
+// Weekly availability across ALL of a doctor's offices, grouped by day.
 //
-// Validation is local (no overlap within the same office on the same day) and
-// runs on save. Times use the design-system TimePicker (shadcn-based) instead
-// of native <input type="time">.
+// Layout: one section per day of the week (fixed, not selectable). Inside
+// each day's section, a list of blocks; each block carries its own office
+// selector, start/end times, and an enable toggle. Adding a block to a day
+// just appends a new row to that section.
+//
+// Multiple blocks per day per office are valid as long as they don't overlap
+// (validated locally on save). Multiple blocks per day across different
+// offices are always valid (different physical locations).
+//
+// IMPORTANT: do NOT default `data` to `[]` in useQuery — the literal default
+// would generate a fresh array reference on every render and trigger an
+// infinite setRows → re-render loop with the dependency-array effect below.
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -33,7 +39,6 @@ interface AvailabilityRow {
   end_time: string;
   is_enabled: boolean;
   _temp?: boolean;
-  _index?: number;
 }
 
 const WEEKDAYS = [
@@ -56,7 +61,6 @@ function timeToMinutes(t: string): number {
 }
 
 function findOverlap(rows: AvailabilityRow[]): { officeId: string; weekday: number } | null {
-  // Group by (office_id, weekday) and check pairwise overlap.
   const groups = new Map<string, AvailabilityRow[]>();
   for (const r of rows.filter((x) => x.is_enabled)) {
     const key = `${r.office_id}|${r.weekday}`;
@@ -86,7 +90,7 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
   const offKey = ["doctor-offices", doctorId];
   const avKey = ["doctor-all-availability", doctorId];
 
-  const { data: offices = [] } = useQuery<OfficeRow[]>({
+  const { data: offices } = useQuery<OfficeRow[]>({
     queryKey: offKey,
     queryFn: async () => {
       const { data } = await supabase
@@ -97,10 +101,15 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
         .order("created_at", { ascending: true });
       return (data ?? []) as OfficeRow[];
     },
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
   });
-  const activeOffices = useMemo(() => offices.filter((o) => o.is_active), [offices]);
+  const activeOffices = useMemo(
+    () => (offices ?? []).filter((o) => o.is_active),
+    [offices]
+  );
 
-  const { data: existing = [], isLoading } = useQuery<AvailabilityRow[]>({
+  const { data: existing, isLoading } = useQuery<AvailabilityRow[]>({
     queryKey: avKey,
     queryFn: async () => {
       const { data } = await supabase
@@ -111,18 +120,24 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
         .order("start_time", { ascending: true });
       return (data ?? []) as AvailabilityRow[];
     },
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
   });
 
   const [rows, setRows] = useState<AvailabilityRow[]>([]);
   useEffect(() => {
-    if (existing) setRows(existing);
+    if (existing) setRows(existing.map((r) => ({
+      ...r,
+      start_time: r.start_time.slice(0, 5),
+      end_time: r.end_time.slice(0, 5),
+    })));
   }, [existing]);
 
   const update = (idx: number, patch: Partial<AvailabilityRow>) => {
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   };
 
-  const addRow = () => {
+  const addRowForDay = (weekday: number) => {
     if (activeOffices.length === 0) {
       toast.error("Crea al menos un consultorio antes de agregar disponibilidad.");
       return;
@@ -132,7 +147,7 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
       {
         office_id: activeOffices[0].id,
         doctor_id: doctorId,
-        weekday: 1,
+        weekday,
         start_time: "09:00",
         end_time: "13:00",
         is_enabled: true,
@@ -161,7 +176,7 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
       const overlap = findOverlap(rows);
       if (overlap) {
         const wdName = WEEKDAYS.find((w) => w.value === overlap.weekday)?.label ?? "";
-        const offName = offices.find((o) => o.id === overlap.officeId)?.name ?? "";
+        const offName = (offices ?? []).find((o) => o.id === overlap.officeId)?.name ?? "";
         throw new Error(`Bloques traslapados en ${offName} (${wdName}). Ajusta los horarios.`);
       }
 
@@ -198,131 +213,114 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Cargando…</p>;
+  if (isLoading && rows.length === 0) {
+    return <p className="text-sm text-muted-foreground">Cargando…</p>;
+  }
 
-  // Sorted copy for stable rendering. We track original index inside the
-  // unsorted array via the row's _index, set just before render.
-  const indexed = rows.map((r, i) => ({ ...r, _index: i }));
-  const sorted = [...indexed].sort(
-    (a, b) =>
-      a.weekday - b.weekday ||
-      timeToMinutes(a.start_time) - timeToMinutes(b.start_time)
-  );
+  // Build (weekday → [{row, originalIndex}]) once for stable rendering.
+  const rowsByDay = new Map<number, Array<AvailabilityRow & { _index: number }>>();
+  for (const wd of WEEKDAYS) rowsByDay.set(wd.value, []);
+  rows.forEach((r, i) => {
+    rowsByDay.get(r.weekday)?.push({ ...r, _index: i });
+  });
+  for (const list of rowsByDay.values()) {
+    list.sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
+  }
 
   return (
     <div className="space-y-3">
-      {sorted.length === 0 && (
-        <Card>
-          <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            Aún no tienes horarios. Agrega tu primer bloque para empezar a recibir citas.
-          </CardContent>
-        </Card>
-      )}
-
-      {sorted.length > 0 && (
-        <div className="rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">Activo</th>
-                <th className="px-3 py-2 text-left font-medium">Día</th>
-                <th className="px-3 py-2 text-left font-medium">Inicio</th>
-                <th className="px-3 py-2 text-left font-medium">Fin</th>
-                <th className="px-3 py-2 text-left font-medium">Consultorio</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((row) => (
-                <tr key={row._index} className="border-t">
-                  <td className="px-3 py-2">
-                    <Switch
-                      checked={row.is_enabled}
-                      onCheckedChange={(v) => update(row._index!, { is_enabled: v })}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <Select
-                      value={String(row.weekday)}
-                      onValueChange={(v) => update(row._index!, { weekday: Number(v) })}
-                      disabled={!row.is_enabled}
-                    >
-                      <SelectTrigger className="h-8 w-32">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {WEEKDAYS.map((wd) => (
-                          <SelectItem key={wd.value} value={String(wd.value)}>
-                            {wd.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <TimePicker
-                      value={row.start_time}
-                      onValueChange={(v) => update(row._index!, { start_time: v })}
-                      disabled={!row.is_enabled}
-                      className="h-8 w-28"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <TimePicker
-                      value={row.end_time}
-                      onValueChange={(v) => update(row._index!, { end_time: v })}
-                      disabled={!row.is_enabled}
-                      className="h-8 w-28"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <Select
-                      value={row.office_id}
-                      onValueChange={(v) => update(row._index!, { office_id: v })}
-                      disabled={!row.is_enabled}
-                    >
-                      <SelectTrigger className="h-8 w-44">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {activeOffices.map((o) => (
-                          <SelectItem key={o.id} value={o.id}>
-                            <span className="inline-flex items-center gap-2">
-                              <span
-                                className="inline-block h-2 w-2 rounded-full"
-                                style={{ backgroundColor: o.display_color }}
-                              />
-                              {o.name}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-destructive"
-                      onClick={() => removeRow(row._index!)}
-                      title="Borrar bloque"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between">
-        <Button variant="outline" size="sm" onClick={addRow} className="gap-1">
-          <Plus className="h-4 w-4" /> Agregar bloque
-        </Button>
+      {WEEKDAYS.map((wd) => {
+        const dayRows = rowsByDay.get(wd.value) ?? [];
+        return (
+          <Card key={wd.value}>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold">{wd.label}</h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => addRowForDay(wd.value)}
+                  className="h-7 gap-1 text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Agregar bloque
+                </Button>
+              </div>
+              {dayRows.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sin bloques configurados.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dayRows.map((row) => {
+                    const officeColor =
+                      activeOffices.find((o) => o.id === row.office_id)?.display_color ?? "#6B7280";
+                    return (
+                      <div
+                        key={row._index}
+                        className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 p-2"
+                      >
+                        <span
+                          className="inline-block h-6 w-1 shrink-0 rounded-sm"
+                          style={{ backgroundColor: officeColor }}
+                          aria-hidden
+                        />
+                        <Switch
+                          checked={row.is_enabled}
+                          onCheckedChange={(v) => update(row._index, { is_enabled: v })}
+                        />
+                        <TimePicker
+                          value={row.start_time}
+                          onValueChange={(v) => update(row._index, { start_time: v })}
+                          disabled={!row.is_enabled}
+                          className="h-8 w-28"
+                        />
+                        <span className="text-xs text-muted-foreground">a</span>
+                        <TimePicker
+                          value={row.end_time}
+                          onValueChange={(v) => update(row._index, { end_time: v })}
+                          disabled={!row.is_enabled}
+                          className="h-8 w-28"
+                        />
+                        <Select
+                          value={row.office_id}
+                          onValueChange={(v) => update(row._index, { office_id: v })}
+                          disabled={!row.is_enabled}
+                        >
+                          <SelectTrigger className="h-8 flex-1 min-w-[10rem]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeOffices.map((o) => (
+                              <SelectItem key={o.id} value={o.id}>
+                                <span className="inline-flex items-center gap-2">
+                                  <span
+                                    className="inline-block h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: o.display_color }}
+                                  />
+                                  {o.name}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => removeRow(row._index)}
+                          title="Borrar bloque"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
+      <div className="flex justify-end pt-1">
         <Button
-          size="sm"
           onClick={() => saveMutation.mutate()}
           disabled={saveMutation.isPending}
           className="gap-1"

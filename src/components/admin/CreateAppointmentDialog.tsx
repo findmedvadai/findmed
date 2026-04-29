@@ -373,6 +373,7 @@ export default function CreateAppointmentDialog({
                 id="date"
                 type="date"
                 value={date}
+                min={formatMx(new Date(), "yyyy-MM-dd")}
                 onChange={(e) => setDate(e.target.value)}
                 required
               />

@@ -46,6 +46,11 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "appointment_id, start_at y end_at son requeridos" }, 400);
   }
 
+  // Block past slots.
+  if (new Date(start_at) < new Date()) {
+    return jsonResponse({ error: "No se puede reagendar en el pasado" }, 400);
+  }
+
   const { data: appointment } = await supabase
     .from("appointments")
     .select("id, doctor_id, office_id, patient_id, status, start_at, end_at, symptoms, google_event_id, outlook_event_id")

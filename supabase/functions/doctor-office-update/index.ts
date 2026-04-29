@@ -12,6 +12,7 @@ interface Body {
   city_id?: string | null;
   zone_id?: string | null;
   appointment_duration_minutes?: number;
+  display_color?: string;
   is_active?: boolean;
   // Calendar disconnects are also done here so the doctor can drop a stale
   // connection without going through OAuth revocation.
@@ -59,6 +60,7 @@ Deno.serve(async (req) => {
   if (body.zone_id !== undefined) updates.zone_id = body.zone_id;
   if (body.appointment_duration_minutes !== undefined)
     updates.appointment_duration_minutes = body.appointment_duration_minutes;
+  if (body.display_color !== undefined) updates.display_color = body.display_color;
   if (body.is_active !== undefined) updates.is_active = body.is_active;
 
   // Selecting a specific calendar after OAuth.
@@ -90,7 +92,7 @@ Deno.serve(async (req) => {
     .update(updates)
     .eq("id", body.office_id)
     .select(
-      "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, " +
+      "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, " +
         "google_calendar_connected, google_calendar_id, " +
         "outlook_calendar_connected, outlook_calendar_id, " +
         "is_active, is_deleted"

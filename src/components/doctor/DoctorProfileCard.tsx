@@ -23,7 +23,7 @@ export default function DoctorProfileCard({ doctorId }: Props) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("doctors")
-        .select("full_name, phone, address")
+        .select("full_name, phone")
         .eq("id", doctorId)
         .maybeSingle();
       if (error) throw error;
@@ -60,14 +60,12 @@ export default function DoctorProfileCard({ doctorId }: Props) {
 
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
   const [selectedSpecIds, setSelectedSpecIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (profile) {
       setFullName(profile.full_name ?? "");
       setPhone(profile.phone ?? "");
-      setAddress(profile.address ?? "");
     }
   }, [profile]);
 
@@ -83,14 +81,14 @@ export default function DoctorProfileCard({ doctorId }: Props) {
       if (!trimmedName) throw new Error("El nombre es requerido");
       if (trimmedName.length > 100) throw new Error("El nombre es demasiado largo");
       if (phone.trim().length > 20) throw new Error("El teléfono es demasiado largo");
-      if (address.trim().length > 200) throw new Error("La dirección es demasiado larga");
 
+      // Note: doctor.address is deprecated since Mejora 2 — address now lives
+      // on each office. We don't write it here.
       const { error } = await supabase
         .from("doctors")
         .update({
           full_name: trimmedName,
           phone: phone.trim() || null,
-          address: address.trim() || null,
         })
         .eq("id", doctorId);
       if (error) throw error;
@@ -167,15 +165,6 @@ export default function DoctorProfileCard({ doctorId }: Props) {
               placeholder="+52 555 123 4567"
             />
           </div>
-        </div>
-        <div className="space-y-2">
-          <Label>Dirección</Label>
-          <Input
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            maxLength={200}
-            placeholder="Consultorio, calle, colonia..."
-          />
         </div>
         <Button
           onClick={() => saveProfileMut.mutate()}

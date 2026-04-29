@@ -158,11 +158,22 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const canSubmit = !!name.trim() && !submitting;
+  const errors: Record<string, string> = {};
+  if (!name.trim()) errors.name = "El nombre es requerido";
+  if (!address.trim()) errors.address = "La dirección es requerida";
+  if (!cityId) errors.cityId = "Selecciona una ciudad";
+  if (!zoneId) errors.zoneId = "Selecciona una zona";
+  if (!duration || duration < 5) errors.duration = "Duración inválida";
+  if (!displayColor) errors.displayColor = "Selecciona un color";
+  const canSubmit = Object.keys(errors).length === 0 && !submitting;
 
+  const [showErrors, setShowErrors] = useState(false);
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit) {
+      setShowErrors(true);
+      return;
+    }
     setSubmitting(true);
     submitMutation.mutate(undefined, { onSettled: () => setSubmitting(false) });
   };
@@ -187,21 +198,26 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej. Bosques, Interlomas, Polanco…"
-              required
             />
+            {showErrors && errors.name && (
+              <p className="text-xs text-destructive">{errors.name}</p>
+            )}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="address">Dirección</Label>
+            <Label htmlFor="address">Dirección *</Label>
             <Input
               id="address"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               placeholder="Calle, número, colonia…"
             />
+            {showErrors && errors.address && (
+              <p className="text-xs text-destructive">{errors.address}</p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Ciudad</Label>
+              <Label>Ciudad *</Label>
               <Select
                 value={cityId}
                 onValueChange={(v) => {
@@ -220,9 +236,12 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
                   ))}
                 </SelectContent>
               </Select>
+              {showErrors && errors.cityId && (
+                <p className="text-xs text-destructive">{errors.cityId}</p>
+              )}
             </div>
             <div className="space-y-1.5">
-              <Label>Zona</Label>
+              <Label>Zona *</Label>
               <Select value={zoneId} onValueChange={setZoneId} disabled={!cityId}>
                 <SelectTrigger>
                   <SelectValue placeholder={cityId ? "Selecciona" : "Primero ciudad"} />
@@ -235,6 +254,9 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
                   ))}
                 </SelectContent>
               </Select>
+              {showErrors && errors.zoneId && (
+                <p className="text-xs text-destructive">{errors.zoneId}</p>
+              )}
             </div>
           </div>
           <div className="space-y-1.5">
@@ -253,7 +275,7 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Color del consultorio</Label>
+            <Label>Color del consultorio *</Label>
             <div className="flex flex-wrap gap-2">
               {COLOR_PALETTE.map((c) => (
                 <button

@@ -72,6 +72,11 @@ Deno.serve(async (req) => {
     );
   }
 
+  // Block past slots.
+  if (new Date(start_at) < new Date()) {
+    return jsonResponse({ error: "No se puede agendar en el pasado" }, 400);
+  }
+
   // Verify doctor.
   const { data: doctor } = await supabase
     .from("doctors")
