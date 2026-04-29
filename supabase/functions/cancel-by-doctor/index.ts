@@ -252,6 +252,7 @@ Deno.serve(async (req) => {
             start_at: appointment.start_at,
             cancel_reason: "doctor",
             message: "Tu cita fue cancelada por el doctor",
+            manage_url: rescheduleUrl,
             reschedule_url: rescheduleUrl,
           },
         }),

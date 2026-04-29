@@ -17,6 +17,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 
 interface Body {
   office_id: string;
@@ -142,6 +143,13 @@ Deno.serve(async (req) => {
       supabase.from("doctors").select("full_name").eq("id", appt.doctor_id).maybeSingle(),
     ]);
 
+    const manageUrl = await getOrCreateManageUrl({
+      supabase,
+      appointmentId: appt.id,
+      endAt: appt.end_at,
+      patientPhone: patient?.phone ?? "",
+    }).catch(() => null);
+
     // 4. Inbox notification + outbound webhook so n8n can WhatsApp.
     const eventType =
       cancelReason === "admin" ? "appointment.cancelled_by_admin" : "appointment.cancelled_by_doctor";
@@ -179,6 +187,7 @@ Deno.serve(async (req) => {
               end_at: appt.end_at,
               notify_patient: true,
               notify_doctor: true,
+              manage_url: manageUrl,
             },
           }),
         }),
@@ -200,6 +209,7 @@ Deno.serve(async (req) => {
               office_name: office.name,
               start_at: appt.start_at,
               timestamp: new Date().toISOString(),
+              manage_url: manageUrl,
             },
           }),
         }),
@@ -211,7 +221,17 @@ Deno.serve(async (req) => {
     cancelled++;
   }
 
-  // 5. Soft-delete the office. is_active=false too so the partial unique
+  // 5. Clean up orphan rows that reference this office.
+  //    - doctor_weekly_availability: cascade FK exists but only fires on hard
+  //      DELETE; we're soft-deleting, so we clean explicitly.
+  //    - reservation_sessions: open triage links for this office are now stale;
+  //      delete so patients can't land on a booking flow for a gone office.
+  await Promise.all([
+    supabase.from("doctor_weekly_availability").delete().eq("office_id", body.office_id),
+    supabase.from("reservation_sessions").delete().eq("office_id", body.office_id),
+  ]);
+
+  // 6. Soft-delete the office. is_active=false too so the partial unique
   // index releases the (doctor_id, zone_id) slot for re-use.
   const { error: deleteErr } = await supabase
     .from("doctor_offices")

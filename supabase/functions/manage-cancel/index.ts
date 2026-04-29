@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
         body: JSON.stringify({
-          event_type: "appointment.cancelled",
+          event_type: "appointment.cancelled_by_patient",
           payload: {
             appointment_id: appointment.id,
             patient_name: patient?.full_name,

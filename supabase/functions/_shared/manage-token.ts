@@ -34,6 +34,37 @@ export interface ManageTokenResult {
 }
 
 /**
+ * Return the manage URL for an appointment using an existing token, or create
+ * a new one if none exists. Used by cancel flows that don't generate their own
+ * token (admin-cancel, doctor-office-delete).
+ */
+export async function getOrCreateManageUrl(input: {
+  supabase: SupabaseClient;
+  appointmentId: string;
+  endAt: string;
+  patientPhone: string;
+}): Promise<string> {
+  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
+  const { data: existing } = await input.supabase
+    .from("appointment_manage_tokens")
+    .select("token")
+    .eq("appointment_id", input.appointmentId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existing?.token) {
+    return `${baseUrl}/gestionar?token=${existing.token}`;
+  }
+  const result = await createManageToken({
+    supabase: input.supabase,
+    appointmentId: input.appointmentId,
+    expiresAt: input.endAt,
+    patientPhone: input.patientPhone,
+  });
+  return result.manageUrl;
+}
+
+/**
  * Insert a new manage token for the given appointment and return both the raw
  * token and the patient-facing /gestionar URL. Failure is fatal — caller decides
  * whether to surface or swallow.
