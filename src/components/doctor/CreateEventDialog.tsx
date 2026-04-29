@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 const MEXICO_TZ = "America/Mexico_City";
 const formatMx = (date: Date, fmt: string) => format(toZonedTime(date, MEXICO_TZ), fmt);
@@ -17,15 +18,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { TimePicker } from "@/components/ui/time-picker";
 
 interface CreateEventDialogProps {
   open: boolean;
   onClose: () => void;
   defaultDate?: Date;
   defaultStartHour?: number;
-  /** Office to write the event into. Required: each office has its own calendar. */
-  officeId: string;
+  /**
+   * Office to write the event into. Optional when creating from the "Todos los
+   * consultorios" view — the dialog renders an office picker. Required when
+   * editing an existing event since each event lives in a specific office.
+   */
+  officeId?: string;
   /** If provided, the dialog is in "edit" mode */
   editEvent?: {
     id: string;
@@ -47,12 +54,34 @@ export default function CreateEventDialog({
   onClose,
   defaultDate,
   defaultStartHour,
-  officeId,
+  officeId: officeIdProp,
   editEvent,
   provider,
 }: CreateEventDialogProps) {
   const queryClient = useQueryClient();
+  const { doctorId } = useAuth();
   const isEdit = !!editEvent;
+
+  // When officeIdProp isn't provided (i.e. caller is in "all offices" view),
+  // we render an in-dialog office picker. State holds the chosen value.
+  const [officeIdState, setOfficeIdState] = useState<string>(officeIdProp ?? "");
+  const officeId = officeIdProp ?? officeIdState;
+
+  const { data: offices = [] } = useQuery({
+    queryKey: ["create-event-dialog-offices", doctorId],
+    queryFn: async () => {
+      if (!doctorId) return [] as { id: string; name: string; display_color: string }[];
+      const { data } = await supabase
+        .from("doctor_offices")
+        .select("id, name, display_color")
+        .eq("doctor_id", doctorId)
+        .eq("is_active", true)
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: true });
+      return (data ?? []) as { id: string; name: string; display_color: string }[];
+    },
+    enabled: !!doctorId && !officeIdProp && open,
+  });
 
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
@@ -86,7 +115,11 @@ export default function CreateEventDialog({
         `${String(Math.floor(eh)).padStart(2, "0")}:${String(Math.round((eh % 1) * 60)).padStart(2, "0")}`
       );
     }
-  }, [open, editEvent, defaultDate, defaultStartHour]);
+    // Pre-select the only office automatically when no prop and exactly 1 exists.
+    if (!officeIdProp && offices.length === 1) {
+      setOfficeIdState(offices[0].id);
+    }
+  }, [open, editEvent, defaultDate, defaultStartHour, officeIdProp, offices]);
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) onClose();
@@ -95,6 +128,10 @@ export default function CreateEventDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!summary.trim() || !date || !startTime || !endTime) return;
+    if (!officeId) {
+      toast.error("Selecciona un consultorio");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -195,6 +232,29 @@ export default function CreateEventDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {!officeIdProp && !isEdit && (
+            <div className="space-y-2">
+              <Label htmlFor="office">Consultorio *</Label>
+              <Select value={officeIdState} onValueChange={setOfficeIdState}>
+                <SelectTrigger id="office">
+                  <SelectValue placeholder="Selecciona un consultorio" />
+                </SelectTrigger>
+                <SelectContent>
+                  {offices.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="inline-block h-2 w-2 rounded-full"
+                          style={{ backgroundColor: o.display_color }}
+                        />
+                        {o.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="summary">Título *</Label>
             <Input
@@ -228,23 +288,11 @@ export default function CreateEventDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="startTime">Hora inicio</Label>
-              <Input
-                id="startTime"
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                required
-              />
+              <TimePicker value={startTime} onValueChange={setStartTime} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="endTime">Hora fin</Label>
-              <Input
-                id="endTime"
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                required
-              />
+              <TimePicker value={endTime} onValueChange={setEndTime} />
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">

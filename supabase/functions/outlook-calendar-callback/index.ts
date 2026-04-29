@@ -1,12 +1,23 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-function decodeState(raw: string): { doctorId: string; officeId: string } | null {
+function decodeState(
+  raw: string
+): { doctorId: string; officeId: string; origin: string | null } | null {
   const parts = raw.split(":");
-  if (parts.length !== 2) return null;
-  const [doctorId, officeId] = parts;
+  if (parts.length < 2) return null;
+  const [doctorId, officeId, b64Origin] = parts;
   if (!doctorId || !officeId) return null;
-  return { doctorId, officeId };
+  let origin: string | null = null;
+  if (b64Origin) {
+    try {
+      const padded = b64Origin.replace(/-/g, "+").replace(/_/g, "/");
+      origin = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+    } catch {
+      origin = null;
+    }
+  }
+  return { doctorId, officeId, origin };
 }
 
 serve(async (req) => {
@@ -20,11 +31,17 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID")!;
     const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET")!;
-    const SITE_URL = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
+    const SITE_URL_FALLBACK = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/outlook-calendar-callback`;
 
+    let redirectOrigin = SITE_URL_FALLBACK;
+    if (state) {
+      const decodedState = decodeState(state);
+      if (decodedState?.origin) redirectOrigin = decodedState.origin;
+    }
+
     const redirectTo = (path: string) =>
-      new Response(null, { status: 302, headers: { Location: `${SITE_URL}${path}` } });
+      new Response(null, { status: 302, headers: { Location: `${redirectOrigin}${path}` } });
 
     if (error) {
       return redirectTo(`/outlook-calendar-success?error=${encodeURIComponent(`Microsoft rechazó la conexión: ${error}`)}`);

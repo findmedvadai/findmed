@@ -17,6 +17,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
+import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 import { createManageToken } from "../_shared/manage-token.ts";
@@ -29,6 +30,11 @@ interface CreateBody {
   patient: { full_name: string; phone: string };
   symptoms?: string;
   notify_patient_whatsapp?: boolean;
+  /**
+   * When true, skip the availability soft-check. Set by the frontend after
+   * the user confirms an "outside availability" warning dialog.
+   */
+  force_outside_availability?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -49,7 +55,16 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  const { doctor_id, office_id, start_at, end_at, patient, symptoms, notify_patient_whatsapp } = body;
+  const {
+    doctor_id,
+    office_id,
+    start_at,
+    end_at,
+    patient,
+    symptoms,
+    notify_patient_whatsapp,
+    force_outside_availability,
+  } = body;
   if (!doctor_id || !office_id || !start_at || !end_at || !patient?.full_name?.trim() || !patient?.phone?.trim()) {
     return jsonResponse(
       { error: "doctor_id, office_id, start_at, end_at, patient.full_name y patient.phone son requeridos" },
@@ -81,6 +96,24 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!office || !office.is_active || office.is_deleted) {
     return jsonResponse({ error: "Consultorio no encontrado o inactivo" }, 404);
+  }
+
+  // Availability soft-check — outside the office's configured weekly schedule
+  // we surface a warning to the caller so they can decide. The frontend asks
+  // the user "¿Crear de todas formas?" and re-issues with `force_outside_availability=true`.
+  if (!force_outside_availability) {
+    const av = await checkAvailability(supabase, office_id, start_at, end_at);
+    if (!av.withinAvailability) {
+      return jsonResponse(
+        {
+          error: "outside_availability",
+          weekday: av.weekday,
+          blocks: av.blocksForWeekday,
+          office_name: office.name,
+        },
+        409
+      );
+    }
   }
 
   // Slot availability — scoped to the office.

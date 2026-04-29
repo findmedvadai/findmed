@@ -288,6 +288,7 @@ export type Database = {
           appointment_duration_minutes: number
           city_id: string | null
           created_at: string
+          display_color: string
           doctor_id: string
           google_calendar_connected: boolean
           google_calendar_id: string | null
@@ -307,6 +308,7 @@ export type Database = {
           appointment_duration_minutes?: number
           city_id?: string | null
           created_at?: string
+          display_color?: string
           doctor_id: string
           google_calendar_connected?: boolean
           google_calendar_id?: string | null
@@ -326,6 +328,7 @@ export type Database = {
           appointment_duration_minutes?: number
           city_id?: string | null
           created_at?: string
+          display_color?: string
           doctor_id?: string
           google_calendar_connected?: boolean
           google_calendar_id?: string | null

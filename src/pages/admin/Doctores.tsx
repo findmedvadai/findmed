@@ -401,7 +401,6 @@ function DoctorDetailDialog({
             </span>
           </Row>
           <Row label="Teléfono">{doctor.phone ?? "—"}</Row>
-          <Row label="Dirección">{doctor.address ?? "—"}</Row>
           <Row label="Especialidades">
             <div className="flex flex-wrap gap-1">
               {doctor.doctor_specialties.length === 0 && <span className="text-muted-foreground">—</span>}
@@ -597,9 +596,6 @@ function CreateDoctorDialog({
           <Field label="Teléfono">
             <Input value={form.phone} onChange={(e) => set("phone", e.target.value)} />
           </Field>
-          <Field label="Dirección">
-            <Textarea value={form.address} onChange={(e) => set("address", e.target.value)} rows={2} />
-          </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Ciudad">
               <Select value={form.city_id || "none"} onValueChange={(v) => { set("city_id", v === "none" ? "" : v); set("zone_id", ""); }}>
@@ -732,9 +728,6 @@ function EditDoctorDialog({
           </Field>
           <Field label="Teléfono">
             <Input value={form.phone} onChange={(e) => set("phone", e.target.value)} />
-          </Field>
-          <Field label="Dirección">
-            <Textarea value={form.address} onChange={(e) => set("address", e.target.value)} rows={2} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Ciudad">

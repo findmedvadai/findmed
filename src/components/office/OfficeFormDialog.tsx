@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
 interface OfficeRow {
@@ -25,6 +26,7 @@ interface OfficeRow {
   city_id: string | null;
   zone_id: string | null;
   appointment_duration_minutes: number;
+  display_color: string;
 }
 
 interface Props {
@@ -36,6 +38,16 @@ interface Props {
 }
 
 const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90, 120];
+const COLOR_PALETTE = [
+  "#2563EB",
+  "#16A34A",
+  "#DC2626",
+  "#9333EA",
+  "#EA580C",
+  "#0D9488",
+  "#DB2777",
+  "#65A30D",
+];
 
 export default function OfficeFormDialog({ open, onClose, doctorId, office, onSaved }: Props) {
   const isEdit = !!office;
@@ -44,6 +56,7 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
   const [cityId, setCityId] = useState<string>("");
   const [zoneId, setZoneId] = useState<string>("");
   const [duration, setDuration] = useState(30);
+  const [displayColor, setDisplayColor] = useState<string>(COLOR_PALETTE[0]);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -54,12 +67,14 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
       setCityId(office.city_id ?? "");
       setZoneId(office.zone_id ?? "");
       setDuration(office.appointment_duration_minutes);
+      setDisplayColor(office.display_color || COLOR_PALETTE[0]);
     } else {
       setName("");
       setAddress("");
       setCityId("");
       setZoneId("");
       setDuration(30);
+      setDisplayColor(COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)]);
     }
   }, [open, office]);
 
@@ -106,6 +121,7 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
             city_id: cityId || null,
             zone_id: zoneId || null,
             appointment_duration_minutes: duration,
+            display_color: displayColor,
           }
         : {
             doctor_id: doctorId,
@@ -114,6 +130,7 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
             city_id: cityId || null,
             zone_id: zoneId || null,
             appointment_duration_minutes: duration,
+            display_color: displayColor,
           };
       const res = await fetch(`${supabaseUrl}/functions/v1/${endpoint}`, {
         method: "POST",
@@ -158,7 +175,7 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
           <DialogDescription>
             {isEdit
               ? "Actualiza los datos. La duración aplica a las citas que ya pertenecen a este consultorio."
-              : "Configura nombre, ubicación y duración de cita."}
+              : "Configura nombre, ubicación, color y duración de cita."}
           </DialogDescription>
         </DialogHeader>
 
@@ -234,6 +251,27 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Color del consultorio</Label>
+            <div className="flex flex-wrap gap-2">
+              {COLOR_PALETTE.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setDisplayColor(c)}
+                  className={cn(
+                    "h-8 w-8 rounded-md border-2 transition-all",
+                    displayColor === c ? "border-foreground scale-110" : "border-transparent"
+                  )}
+                  style={{ backgroundColor: c }}
+                  aria-label={`Color ${c}`}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Identifica visualmente las citas de este consultorio en tu calendario.
+            </p>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>

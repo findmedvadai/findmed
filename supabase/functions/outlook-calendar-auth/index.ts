@@ -17,8 +17,11 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function encodeState(doctorId: string, officeId: string): string {
-  return `${doctorId}:${officeId}`;
+function encodeState(doctorId: string, officeId: string, origin?: string | null): string {
+  const base = `${doctorId}:${officeId}`;
+  if (!origin) return base;
+  const b64 = btoa(origin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${base}:${b64}`;
 }
 
 serve(async (req) => {
@@ -53,10 +56,12 @@ serve(async (req) => {
 
     const url = new URL(req.url);
     let officeId = url.searchParams.get("office_id");
+    let origin = url.searchParams.get("origin");
     if (!officeId) {
       try {
         const body = await req.clone().json();
         officeId = body?.office_id ?? null;
+        origin = origin ?? body?.origin ?? null;
       } catch {
         // No body.
       }
@@ -100,7 +105,7 @@ serve(async (req) => {
     }
 
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/outlook-calendar-callback`;
-    const state = encodeState(office.doctor_id, office.id);
+    const state = encodeState(office.doctor_id, office.id, origin);
 
     const params = new URLSearchParams({
       client_id: OUTLOOK_CLIENT_ID,

@@ -8,6 +8,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
+import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 interface Body {
@@ -35,7 +36,12 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  const { appointment_id, start_at, end_at } = body;
+  const { appointment_id, start_at, end_at, force_outside_availability } = body as {
+    appointment_id?: string;
+    start_at?: string;
+    end_at?: string;
+    force_outside_availability?: boolean;
+  };
   if (!appointment_id || !start_at || !end_at) {
     return jsonResponse({ error: "appointment_id, start_at y end_at son requeridos" }, 400);
   }
@@ -49,6 +55,27 @@ Deno.serve(async (req) => {
   if (!appointment) return jsonResponse({ error: "Cita no encontrada" }, 404);
   if (appointment.status === "cancelled") {
     return jsonResponse({ error: "No se puede reagendar una cita cancelada" }, 409);
+  }
+
+  // Availability soft-check on the new slot.
+  if (!force_outside_availability && appointment.office_id) {
+    const av = await checkAvailability(supabase, appointment.office_id, start_at, end_at);
+    if (!av.withinAvailability) {
+      const { data: officeRow } = await supabase
+        .from("doctor_offices")
+        .select("name")
+        .eq("id", appointment.office_id)
+        .maybeSingle();
+      return jsonResponse(
+        {
+          error: "outside_availability",
+          weekday: av.weekday,
+          blocks: av.blocksForWeekday,
+          office_name: officeRow?.name ?? "",
+        },
+        409
+      );
+    }
   }
 
   // Slot availability — scoped to the same office, excluding the moved appt.

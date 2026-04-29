@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkAvailability } from "../_shared/availability-check.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -113,6 +114,19 @@ Deno.serve(async (req) => {
   const endHH = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
   const endMM = String(totalMinutes % 60).padStart(2, "0");
   const endAt = `${date}T${endHH}:${endMM}:00-06:00`;
+
+  // Hard-block: patients can't reschedule outside the office's configured
+  // availability. The reserve-slots endpoint already filters slots, so this
+  // is defensive against direct API misuse.
+  if (oldAppt.office_id) {
+    const av = await checkAvailability(supabase, oldAppt.office_id, startAt, endAt);
+    if (!av.withinAvailability) {
+      return new Response(
+        JSON.stringify({ error: "Este horario no está disponible en el consultorio." }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+  }
 
   // Helper to get Google access token
   const getGoogleAccessToken = async (): Promise<string | null> => {

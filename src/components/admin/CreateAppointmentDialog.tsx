@@ -9,6 +9,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,8 +31,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TimePicker } from "@/components/ui/time-picker";
 import { supabase } from "@/integrations/supabase/client";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
+import { weekdayLabel } from "@/lib/availability-check";
 import PatientAutocomplete, { type PatientLookupResult } from "./PatientAutocomplete";
 
 interface Props {
@@ -153,40 +165,63 @@ export default function CreateAppointmentDialog({
   // End time derived from start + duration; users edit duration, not end-time.
   const endTime = useMemo(() => addMinutesToHm(startTime, duration), [startTime, duration]);
 
+  // The outside-availability soft-warning dialog. We surface the office's
+  // configured blocks so the admin sees why the slot is "out of hours" and
+  // can confirm intentionally.
+  const [availabilityWarning, setAvailabilityWarning] = useState<{
+    weekday: number;
+    blocks: { start_time: string; end_time: string }[];
+    office_name: string;
+  } | null>(null);
+
+  const callCreate = async (forceOutside: boolean) => {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    if (!token) throw new Error("No autenticado");
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+    const startAt = buildMexicoIso(date, startTime);
+    const endAt = buildMexicoIso(date, endTime);
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/admin-create-appointment`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        doctor_id: doctorId,
+        office_id: officeId,
+        start_at: startAt,
+        end_at: endAt,
+        patient: {
+          full_name: fullName.trim(),
+          phone: phone.trim(),
+        },
+        symptoms: symptoms.trim() || undefined,
+        notify_patient_whatsapp: notifyPatient,
+        force_outside_availability: forceOutside || undefined,
+      }),
+    });
+    return res;
+  };
+
   const createMutation = useMutation({
     mutationFn: async () => {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
-      if (!token) throw new Error("No autenticado");
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-      const startAt = buildMexicoIso(date, startTime);
-      const endAt = buildMexicoIso(date, endTime);
-
-      const res = await fetch(`${supabaseUrl}/functions/v1/admin-create-appointment`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: anonKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          doctor_id: doctorId,
-          office_id: officeId,
-          start_at: startAt,
-          end_at: endAt,
-          patient: {
-            full_name: fullName.trim(),
-            phone: phone.trim(),
-          },
-          symptoms: symptoms.trim() || undefined,
-          notify_patient_whatsapp: notifyPatient,
-        }),
-      });
-
+      const res = await callCreate(false);
       const data = await res.json();
       if (!res.ok) {
+        if (data.error === "outside_availability") {
+          // Hand off to confirmation dialog and bail out — no error toast.
+          setAvailabilityWarning({
+            weekday: data.weekday,
+            blocks: data.blocks ?? [],
+            office_name: data.office_name ?? "",
+          });
+          throw new Error("__OUTSIDE_AVAILABILITY_HANDLED__");
+        }
         if (data.error === "slot_conflict") {
           throw new Error("Slot ocupado: ya hay otra cita o evento en ese horario.");
         }
@@ -211,6 +246,43 @@ export default function CreateAppointmentDialog({
       queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
       queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
       queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      onClose();
+    },
+    onError: (err: Error) => {
+      // Silenced sentinel: outside-availability is handled by AlertDialog.
+      if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
+      toast.error(err.message);
+    },
+  });
+
+  // Mutation for "force-create after admin confirmed override".
+  const forceCreateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await callCreate(true);
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === "slot_conflict") {
+          throw new Error("Slot ocupado: ya hay otra cita o evento en ese horario.");
+        }
+        throw new Error(data.error || "Error al crear cita");
+      }
+      return data as { appointment_id: string; patient_id: string; sync_warnings: string[] };
+    },
+    onSuccess: (data) => {
+      const warnings = data.sync_warnings ?? [];
+      if (warnings.length === 0) toast.success("Cita creada (fuera de disponibilidad)");
+      else {
+        const provider = warnings.includes("google") && warnings.includes("outlook")
+          ? "Google y Outlook"
+          : warnings.includes("google")
+          ? "Google"
+          : "Outlook";
+        toast.warning(`Cita creada, pero no se pudo sincronizar con ${provider}.`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      setAvailabilityWarning(null);
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -307,13 +379,7 @@ export default function CreateAppointmentDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="startTime">Hora inicio *</Label>
-              <Input
-                id="startTime"
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                required
-              />
+              <TimePicker value={startTime} onValueChange={setStartTime} />
             </div>
           </div>
 
@@ -406,6 +472,55 @@ export default function CreateAppointmentDialog({
           </div>
         </form>
       </DialogContent>
+
+      <AlertDialog
+        open={!!availabilityWarning}
+        onOpenChange={(o) => {
+          if (!o) setAvailabilityWarning(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fuera de disponibilidad</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  El horario que elegiste está fuera de la disponibilidad configurada del consultorio
+                  {availabilityWarning?.office_name ? ` "${availabilityWarning.office_name}"` : ""} en{" "}
+                  <strong>{availabilityWarning ? weekdayLabel(availabilityWarning.weekday) : ""}</strong>.
+                </p>
+                {availabilityWarning && availabilityWarning.blocks.length > 0 && (
+                  <div>
+                    <p className="text-muted-foreground">Disponibilidad ese día:</p>
+                    <ul className="list-disc list-inside text-muted-foreground">
+                      {availabilityWarning.blocks.map((b, i) => (
+                        <li key={i}>
+                          {b.start_time.slice(0, 5)} – {b.end_time.slice(0, 5)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {availabilityWarning && availabilityWarning.blocks.length === 0 && (
+                  <p className="text-muted-foreground">
+                    Este día no tiene horarios configurados para este consultorio.
+                  </p>
+                )}
+                <p>¿Crear la cita de todas formas?</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => forceCreateMutation.mutate()}
+              disabled={forceCreateMutation.isPending}
+            >
+              Crear de todas formas
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

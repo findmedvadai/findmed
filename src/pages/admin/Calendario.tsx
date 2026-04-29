@@ -261,17 +261,23 @@ export default function Calendario() {
   const { data: doctorOfficeOptions = [] } = useQuery({
     queryKey: ["admin-calendar-offices", filteredDoctorIdEarly],
     queryFn: async () => {
-      if (!filteredDoctorIdEarly) return [] as { id: string; name: string }[];
+      if (!filteredDoctorIdEarly) return [] as { id: string; name: string; display_color: string }[];
       const { data } = await supabase
         .from("doctor_offices")
-        .select("id, name")
+        .select("id, name, display_color")
         .eq("doctor_id", filteredDoctorIdEarly)
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
-      return (data ?? []) as { id: string; name: string }[];
+      return (data ?? []) as { id: string; name: string; display_color: string }[];
     },
     enabled: !!filteredDoctorIdEarly,
   });
+
+  const officeColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of doctorOfficeOptions) map.set(o.id, o.display_color);
+    return map;
+  }, [doctorOfficeOptions]);
 
   // Appointments. We always load all statuses including cancelled and filter
   // client-side via the toggle, so flipping it is instant (no refetch).
@@ -761,7 +767,15 @@ export default function Calendario() {
                     const isExternal = item.type === "google" || item.type === "outlook";
                     const isCancelledAppt = item.type === "appointment" && item.status === "cancelled";
 
-                    const accent = isExternal
+                    // When the admin filters by a specific doctor, switch the
+                    // event's left-border to the office color — this makes
+                    // multi-office days easy to scan. Otherwise we keep the
+                    // specialty color (which is the macro filter across all
+                    // doctors).
+                    const officeAccent = item.officeId ? officeColorMap.get(item.officeId) : null;
+                    const accent = filteredDoctorIdEarly && officeAccent
+                      ? officeAccent
+                      : isExternal
                       ? "#6B7280"
                       : item.specialtyId
                       ? getSpecialtyColor(item.specialtyId, colorMap)

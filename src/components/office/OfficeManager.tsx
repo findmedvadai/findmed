@@ -1,14 +1,13 @@
-// Office manager: list-of-cards UI to create / edit / activate / delete a
-// doctor's offices. Used by both the doctor's Configuracion page and the
-// admin's Doctores page. The Edge Function endpoints
-// (`doctor-office-create/update/delete`) accept either an admin or the
-// office's owning doctor as caller, so this component is identical in both
-// contexts — only the `doctorId` prop changes.
+// Office manager: grid of expanded cards (no collapsed accordions). Each card
+// shows the office's identity, calendar connection, and management actions
+// inline — designed for older, less tech-savvy doctors so nothing important
+// is hidden behind a click.
+//
+// Used by both the doctor's Configuracion page and the admin's Doctores page.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Trash2, Pencil, Building2, Link2, Unlink, AlertTriangle } from "lucide-react";
+import { AlertTriangle, Building2, Loader2, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,11 +21,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import OfficeFormDialog from "./OfficeFormDialog";
 import OfficeCalendarConnector from "./OfficeCalendarConnector";
-import OfficeAvailabilityEditor from "./OfficeAvailabilityEditor";
 
 interface OfficeRow {
   id: string;
@@ -36,11 +33,17 @@ interface OfficeRow {
   city_id: string | null;
   zone_id: string | null;
   appointment_duration_minutes: number;
+  display_color: string;
   google_calendar_connected: boolean;
   google_calendar_id: string | null;
   outlook_calendar_connected: boolean;
   outlook_calendar_id: string | null;
   is_active: boolean;
+}
+
+interface ZoneCity {
+  id: string;
+  name: string;
 }
 
 interface Props {
@@ -51,7 +54,9 @@ export default function OfficeManager({ doctorId }: Props) {
   const queryClient = useQueryClient();
   const [editingOffice, setEditingOffice] = useState<OfficeRow | null>(null);
   const [creating, setCreating] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<{ office: OfficeRow; affected: number } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ office: OfficeRow; affected: number } | null>(
+    null
+  );
 
   const officesKey = ["doctor-offices", doctorId];
 
@@ -61,7 +66,7 @@ export default function OfficeManager({ doctorId }: Props) {
       const { data } = await supabase
         .from("doctor_offices")
         .select(
-          "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, " +
+          "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, " +
             "google_calendar_connected, google_calendar_id, " +
             "outlook_calendar_connected, outlook_calendar_id, is_active"
         )
@@ -70,6 +75,27 @@ export default function OfficeManager({ doctorId }: Props) {
         .order("created_at", { ascending: true });
       return (data ?? []) as OfficeRow[];
     },
+  });
+
+  // City + zone names for display under each office.
+  const { data: locations } = useQuery<{ cities: Record<string, string>; zones: Record<string, string> }>({
+    queryKey: ["office-location-names", offices.map((o) => `${o.city_id}-${o.zone_id}`).join(",")],
+    queryFn: async () => {
+      const cityIds = [...new Set(offices.map((o) => o.city_id).filter(Boolean) as string[])];
+      const zoneIds = [...new Set(offices.map((o) => o.zone_id).filter(Boolean) as string[])];
+      const cityMap: Record<string, string> = {};
+      const zoneMap: Record<string, string> = {};
+      if (cityIds.length > 0) {
+        const { data } = await supabase.from("cities").select("id, name").in("id", cityIds);
+        for (const c of (data ?? []) as ZoneCity[]) cityMap[c.id] = c.name;
+      }
+      if (zoneIds.length > 0) {
+        const { data } = await supabase.from("zones").select("id, name").in("id", zoneIds);
+        for (const z of (data ?? []) as ZoneCity[]) zoneMap[z.id] = z.name;
+      }
+      return { cities: cityMap, zones: zoneMap };
+    },
+    enabled: offices.length > 0,
   });
 
   const callEndpoint = async <T,>(name: string, body: unknown): Promise<T> => {
@@ -141,83 +167,97 @@ export default function OfficeManager({ doctorId }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {offices.length === 0
-            ? "No hay consultorios. Agrega el primero."
-            : `${offices.length} consultorio${offices.length === 1 ? "" : "s"}`}
-        </p>
-        <Button size="sm" onClick={() => setCreating(true)} className="gap-1">
+      <div className="flex items-center justify-end">
+        <Button size="sm" onClick={() => setCreating(true)} className="gap-1.5">
           <Plus className="h-4 w-4" /> Agregar consultorio
         </Button>
       </div>
 
-      <Accordion type="multiple" className="space-y-2">
-        {offices.map((o) => (
-          <AccordionItem key={o.id} value={o.id} className="border rounded-md">
-            <div className="flex items-center justify-between px-3 py-1">
-              <AccordionTrigger className="flex-1 hover:no-underline py-2">
-                <div className="flex items-center gap-3">
-                  <Building2 className="h-4 w-4 text-muted-foreground" />
-                  <div className="text-left">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{o.name}</span>
-                      {!o.is_active && (
-                        <Badge variant="outline" className="text-[10px]">Inactivo</Badge>
-                      )}
-                      {o.google_calendar_connected && (
-                        <Badge variant="outline" className="text-[10px]">Google</Badge>
-                      )}
-                      {o.outlook_calendar_connected && (
-                        <Badge variant="outline" className="text-[10px]">Outlook</Badge>
-                      )}
+      {offices.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center space-y-2">
+            <Building2 className="h-8 w-8 text-muted-foreground/40 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Aún no tienes consultorios. Agrega el primero para empezar a recibir citas.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {offices.map((o) => {
+            const cityName = o.city_id ? locations?.cities[o.city_id] : null;
+            const zoneName = o.zone_id ? locations?.zones[o.zone_id] : null;
+            return (
+              <Card key={o.id} className={!o.is_active ? "opacity-60" : ""}>
+                <CardContent className="p-5 space-y-4">
+                  {/* Header row: identity + actions. */}
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <span
+                        className="mt-1 inline-block h-6 w-1.5 rounded-sm shrink-0"
+                        style={{ backgroundColor: o.display_color }}
+                        aria-hidden
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-base font-semibold leading-none">{o.name}</h3>
+                          {!o.is_active && (
+                            <Badge variant="outline" className="text-[10px]">
+                              Inactivo
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
+                          {o.address && <p>{o.address}</p>}
+                          {(cityName || zoneName) && (
+                            <p>
+                              {[zoneName, cityName].filter(Boolean).join(", ")}
+                            </p>
+                          )}
+                          <p>Duración de cita: {o.appointment_duration_minutes} min</p>
+                        </div>
+                      </div>
                     </div>
-                    {o.address && <p className="text-xs text-muted-foreground">{o.address}</p>}
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          toggleActiveMutation.mutate({ office: o, isActive: !o.is_active })
+                        }
+                        className="gap-1"
+                      >
+                        <Power className="h-3.5 w-3.5" />
+                        {o.is_active ? "Desactivar" : "Activar"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditingOffice(o)}
+                        className="gap-1"
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Editar
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteRequest(o)}
+                        className="gap-1 text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Borrar
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </AccordionTrigger>
-              <div className="flex items-center gap-1 pl-2">
-                <Switch
-                  checked={o.is_active}
-                  onCheckedChange={(v) => toggleActiveMutation.mutate({ office: o, isActive: v })}
-                  aria-label="Activar"
-                />
-                <Button variant="ghost" size="icon" onClick={() => setEditingOffice(o)} className="h-8 w-8">
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDeleteRequest(o)}
-                  className="h-8 w-8 text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <AccordionContent className="px-3 pb-4">
-              <div className="space-y-4">
-                <Card>
-                  <CardContent className="p-4 space-y-3">
-                    <h4 className="text-xs uppercase font-semibold text-muted-foreground">Calendarios</h4>
-                    <OfficeCalendarConnector office={o} />
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4 space-y-3">
-                    <h4 className="text-xs uppercase font-semibold text-muted-foreground">
-                      Disponibilidad semanal
-                    </h4>
-                    <OfficeAvailabilityEditor office={o} />
-                  </CardContent>
-                </Card>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        ))}
-      </Accordion>
 
-      {/* Create / edit dialog. */}
+                  {/* Calendar connection inline. */}
+                  <OfficeCalendarConnector office={o} />
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
       <OfficeFormDialog
         open={creating || !!editingOffice}
         onClose={() => {
@@ -229,7 +269,6 @@ export default function OfficeManager({ doctorId }: Props) {
         onSaved={() => queryClient.invalidateQueries({ queryKey: officesKey })}
       />
 
-      {/* Delete confirmation. */}
       <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
