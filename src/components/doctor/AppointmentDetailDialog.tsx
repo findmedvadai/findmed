@@ -4,6 +4,8 @@ import { format, isPast } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
+import { buildMexicoIso, formatMx as fmx } from "@/lib/timezone";
+import { weekdayLabel } from "@/lib/availability-check";
 
 const MEXICO_TZ = "America/Mexico_City";
 function formatMx(date: Date, fmt: string, opts?: Parameters<typeof format>[2]) {
@@ -29,7 +31,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { TimePicker } from "@/components/ui/time-picker";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
 import CreateEventDialog from "./CreateEventDialog";
@@ -82,6 +87,17 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
   const [editingNotes, setEditingNotes] = useState(false);
   const [editEventOpen, setEditEventOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Reschedule inline form state.
+  const [rescheduling, setRescheduling] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleStart, setRescheduleStart] = useState("09:00");
+  const [rescheduleEnd, setRescheduleEnd] = useState("10:00");
+  const [rescheduleWarning, setRescheduleWarning] = useState<{
+    weekday: number;
+    blocks: { start_time: string; end_time: string }[];
+    office_name: string;
+  } | null>(null);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
@@ -210,6 +226,83 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     }
   };
 
+  const callReschedule = async (forceOutside: boolean) => {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    if (!token) throw new Error("No autenticado");
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    return await fetch(`${supabaseUrl}/functions/v1/doctor-reschedule-appointment`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appointment_id: item!.id,
+        start_at: buildMexicoIso(rescheduleDate, rescheduleStart),
+        end_at: buildMexicoIso(rescheduleDate, rescheduleEnd),
+        force_outside_availability: forceOutside || undefined,
+      }),
+    });
+  };
+
+  const rescheduleMutation = useMutation({
+    mutationFn: async () => {
+      const res = await callReschedule(false);
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === "outside_availability") {
+          setRescheduleWarning({
+            weekday: data.weekday,
+            blocks: data.blocks ?? [],
+            office_name: data.office_name ?? "",
+          });
+          throw new Error("__OUTSIDE_AVAILABILITY_HANDLED__");
+        }
+        if (data.error === "slot_conflict") throw new Error("Slot ocupado: ya hay otra cita en ese horario.");
+        throw new Error(data.error || "Error al reagendar");
+      }
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Cita reagendada");
+      invalidate();
+      setRescheduling(false);
+      onClose();
+    },
+    onError: (err: Error) => {
+      if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
+      toast.error(err.message);
+    },
+  });
+
+  const forceRescheduleMutation = useMutation({
+    mutationFn: async () => {
+      const res = await callReschedule(true);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al reagendar");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Cita reagendada (fuera de disponibilidad)");
+      invalidate();
+      setRescheduleWarning(null);
+      setRescheduling(false);
+      onClose();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const openRescheduleForm = () => {
+    if (!item) return;
+    setRescheduleDate(fmx(item.start, "yyyy-MM-dd"));
+    setRescheduleStart(fmx(item.start, "HH:mm"));
+    setRescheduleEnd(fmx(item.end, "HH:mm"));
+    setRescheduling(true);
+  };
+
   if (!item) return null;
 
   const isExternal = item.type === "google" || item.type === "outlook";
@@ -217,6 +310,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     item.type === "outlook" ? "outlook" : item.type === "google" ? "google" : null;
   const canComplete = item.status === "confirmed" && isPast(item.start);
   const canCancel = item.status === "scheduled" || item.status === "confirmed";
+  const canReschedule = item.status === "scheduled" || item.status === "confirmed";
   const canEditNotes = item.status === "completed";
 
   const handleOpenChange = (isOpen: boolean) => {
@@ -355,51 +449,139 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
 
           {/* Actions for appointments */}
           {!isExternal && (
-            <div className="flex gap-2 justify-end pt-2">
-              {canEditNotes && !editingNotes && (
-                <Button variant="outline" size="sm" onClick={startEditNotes}>
-                  Editar notas
-                </Button>
-              )}
-              {canComplete && (
-                <Button
-                  size="sm"
-                  disabled={completeMutation.isPending}
-                  onClick={() => completeMutation.mutate(item.id)}
-                >
-                  Completar
-                </Button>
-              )}
-              {canCancel && (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="destructive" size="sm">
-                      Cancelar cita
+            <>
+              {/* Reschedule inline form */}
+              {canReschedule && rescheduling && (
+                <div className="space-y-3 rounded-md border border-border p-3">
+                  <p className="text-sm font-medium">Reagendar cita</p>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Fecha</Label>
+                    <Input
+                      type="date"
+                      value={rescheduleDate}
+                      min={fmx(new Date(), "yyyy-MM-dd")}
+                      onChange={(e) => setRescheduleDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Hora inicio</Label>
+                      <TimePicker value={rescheduleStart} onValueChange={setRescheduleStart} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Hora fin</Label>
+                      <TimePicker value={rescheduleEnd} onValueChange={setRescheduleEnd} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRescheduling(false)}
+                      disabled={rescheduleMutation.isPending}
+                    >
+                      Cancelar
                     </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Esta acción no se puede deshacer. El paciente será notificado de la cancelación.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Volver</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => cancelMutation.mutate(item.id)}
-                        disabled={cancelMutation.isPending}
-                      >
-                        Sí, cancelar
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                    <Button
+                      size="sm"
+                      disabled={rescheduleMutation.isPending || !rescheduleDate || !rescheduleStart || !rescheduleEnd}
+                      onClick={() => rescheduleMutation.mutate()}
+                    >
+                      {rescheduleMutation.isPending ? "Reagendando..." : "Confirmar reagenda"}
+                    </Button>
+                  </div>
+                </div>
               )}
-            </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                {canEditNotes && !editingNotes && (
+                  <Button variant="outline" size="sm" onClick={startEditNotes}>
+                    Editar notas
+                  </Button>
+                )}
+                {canReschedule && !rescheduling && (
+                  <Button variant="outline" size="sm" onClick={openRescheduleForm}>
+                    Reagendar
+                  </Button>
+                )}
+                {canComplete && (
+                  <Button
+                    size="sm"
+                    disabled={completeMutation.isPending}
+                    onClick={() => completeMutation.mutate(item.id)}
+                  >
+                    Completar
+                  </Button>
+                )}
+                {canCancel && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" size="sm">
+                        Cancelar cita
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Esta acción no se puede deshacer. El paciente será notificado de la cancelación.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Volver</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => cancelMutation.mutate(item.id)}
+                          disabled={cancelMutation.isPending}
+                        >
+                          Sí, cancelar
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Reschedule outside-availability confirmation */}
+      <AlertDialog
+        open={!!rescheduleWarning}
+        onOpenChange={(o) => { if (!o) setRescheduleWarning(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fuera de disponibilidad</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  El horario elegido está fuera de la disponibilidad configurada del consultorio
+                  {rescheduleWarning?.office_name ? ` "${rescheduleWarning.office_name}"` : ""} en{" "}
+                  <strong>{rescheduleWarning ? weekdayLabel(rescheduleWarning.weekday) : ""}</strong>.
+                </p>
+                {rescheduleWarning && rescheduleWarning.blocks.length > 0 && (
+                  <ul className="list-disc list-inside text-muted-foreground">
+                    {rescheduleWarning.blocks.map((b, i) => (
+                      <li key={i}>{b.start_time.slice(0, 5)} – {b.end_time.slice(0, 5)}</li>
+                    ))}
+                  </ul>
+                )}
+                <p>¿Reagendar de todas formas?</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => forceRescheduleMutation.mutate()}
+              disabled={forceRescheduleMutation.isPending}
+            >
+              Reagendar de todas formas
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit event dialog (for external events) */}
       {isExternal && externalProvider && item.officeId && (

@@ -21,6 +21,7 @@ interface Body {
   city_id?: string | null;
   zone_id?: string | null;
   appointment_duration_minutes?: number;
+  display_color?: string;
 }
 
 Deno.serve(async (req) => {
@@ -55,7 +56,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Doctor no encontrado o inactivo" }, 404);
   }
 
-  const insert = {
+  const insert: Record<string, unknown> = {
     doctor_id: body.doctor_id,
     name: body.name.trim(),
     address: body.address ?? null,
@@ -63,12 +64,13 @@ Deno.serve(async (req) => {
     zone_id: body.zone_id ?? null,
     appointment_duration_minutes: body.appointment_duration_minutes ?? 30,
   };
+  if (body.display_color) insert.display_color = body.display_color;
 
   const { data, error } = await supabase
     .from("doctor_offices")
     .insert(insert)
     .select(
-      "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, is_active, is_deleted"
+      "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, is_active, is_deleted"
     )
     .single();
 

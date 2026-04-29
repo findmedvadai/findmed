@@ -5,7 +5,7 @@
 //
 // Used by both the doctor's Configuracion page and the admin's Doctores page.
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Building2, Loader2, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -75,6 +75,12 @@ export default function OfficeManager({ doctorId }: Props) {
         .order("created_at", { ascending: true });
       return (data ?? []) as OfficeRow[];
     },
+    // Keep previous data while refetching. Without this, every invalidate
+    // (e.g. after editing an office) replaces the array with `undefined`
+    // briefly — which destroys all child component state and makes the
+    // OTHER offices visually flicker / disappear.
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
   });
 
   // City + zone names for display under each office.

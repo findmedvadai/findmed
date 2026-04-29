@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -51,6 +52,19 @@ export default function OfficeCalendarConnector({ office }: Props) {
   const queryClient = useQueryClient();
   const invalidateOffices = () =>
     queryClient.invalidateQueries({ queryKey: ["doctor-offices", office.doctor_id] });
+
+  // Patch a single office field in the cache without triggering a full
+  // refetch — avoids the momentary empty-list flash that refetch causes
+  // on sibling OfficeCalendarConnector instances.
+  const patchOfficeCache = (patch: Record<string, unknown>) => {
+    const key = ["doctor-offices", office.doctor_id];
+    queryClient.setQueryData(key, (old: unknown) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((o: { id: string }) =>
+        o.id === office.id ? { ...o, ...patch } : o
+      );
+    });
+  };
 
   // Per-provider state.
   const [hasGoogleToken, setHasGoogleToken] = useState(false);
@@ -223,6 +237,37 @@ export default function OfficeCalendarConnector({ office }: Props) {
     }
   };
 
+  // Swap the connected calendar within the same account (same refresh token).
+  // Uses setQueryData (not invalidate) so sibling connector cards don't flash.
+  const switchCalendar = async (provider: Provider, newId: string) => {
+    if (!newId) return;
+    const currentId =
+      provider === "google" ? office.google_calendar_id : office.outlook_calendar_id;
+    if (currentId === newId) return;
+    try {
+      await callUpdate({
+        office_id: office.id,
+        ...(provider === "google"
+          ? { google_calendar_id: newId }
+          : { outlook_calendar_id: newId }),
+      });
+      const cals = provider === "google" ? googleCalendars : outlookCalendars;
+      const friendly = cals.find((c) => c.id === newId)?.summary ?? null;
+      if (provider === "google") setGoogleCalendarName(friendly);
+      else setOutlookCalendarName(friendly);
+      toast.success("Calendario actualizado");
+      // Patch only this office's calendar_id in the cache — avoids a full
+      // refetch that would blank out the sibling office's picker briefly.
+      patchOfficeCache(
+        provider === "google"
+          ? { google_calendar_id: newId }
+          : { outlook_calendar_id: newId }
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const performDisconnect = async (provider: Provider) => {
     try {
       await callUpdate({
@@ -347,9 +392,37 @@ export default function OfficeCalendarConnector({ office }: Props) {
 
           {isConnected ? (
             <>
-              {friendlyName && (
-                <p className="text-xs text-muted-foreground truncate">{friendlyName}</p>
-              )}
+              {/* Show the connected calendar name + a picker to swap to a
+                  different calendar from the same account, no re-OAuth. */}
+              <Select
+                value={
+                  provider === "google"
+                    ? office.google_calendar_id ?? ""
+                    : office.outlook_calendar_id ?? ""
+                }
+                onValueChange={(v) => switchCalendar(provider, v)}
+                onOpenChange={(o) => {
+                  if (!o) return;
+                  // Lazy-load the list when the user opens the picker.
+                  const cached = provider === "google" ? googleCalendars : outlookCalendars;
+                  if (cached.length === 0) {
+                    if (provider === "google") void fetchGoogleList();
+                    else void fetchOutlookList();
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder={friendlyName ?? "Calendario conectado"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(provider === "google" ? googleCalendars : outlookCalendars).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.summary}
+                      {c.primary ? " (Principal)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 variant="outline"
                 size="sm"

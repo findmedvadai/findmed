@@ -1,21 +1,18 @@
-// Admin-side appointment creation. Resilient pattern: the appointment is the
-// source of truth — if external calendar (Google/Outlook) sync fails, we still
-// keep the appointment and return a warning to the admin so they can retry the
-// external sync manually.
+// Doctor-side appointment creation. Same resilient pattern as admin-create-appointment:
+// the appointment is the source of truth — external calendar (Google/Outlook) sync
+// failures don't roll back the appointment.
 //
-// Inputs (all required unless noted):
-//   doctor_id: uuid of an active doctor
-//   start_at:  ISO 8601 (with offset) — already in CDMX-equivalent UTC instant
-//   end_at:    ISO 8601 (with offset)
-//   patient: { full_name, phone }
-//   symptoms?: free text → appointments.symptoms
-//   notify_patient_whatsapp?: boolean (default false)
+// Auth: the caller must be either an admin OR the specific doctor identified by
+// `doctor_id` in the body.
 //
-// On success returns { appointment_id, patient_id, sync_warnings: string[] }.
+// Key differences from admin-create-appointment:
+//   - requireAdminOrDoctor instead of requireAdmin
+//   - booking_source = "doctor_manual"
+//   - notification goes to admin inbox (not doctor)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { requireAdmin } from "../_shared/auth.ts";
+import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
@@ -30,10 +27,6 @@ interface CreateBody {
   patient: { full_name: string; phone: string };
   symptoms?: string;
   notify_patient_whatsapp?: boolean;
-  /**
-   * When true, skip the availability soft-check. Set by the frontend after
-   * the user confirms an "outside availability" warning dialog.
-   */
   force_outside_availability?: boolean;
 }
 
@@ -45,15 +38,16 @@ Deno.serve(async (req) => {
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  const auth = await requireAdmin(req, supabase);
-  if (!auth.ok) return jsonResponse({ error: auth.error }, auth.status);
-
   let body: CreateBody;
   try {
     body = await req.json();
   } catch {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
+
+  // Auth: admin or the doctor who owns the appointment.
+  const auth = await requireAdminOrDoctor(req, supabase, body.doctor_id);
+  if (!auth.ok) return jsonResponse({ error: auth.error }, auth.status);
 
   const {
     doctor_id,
@@ -65,6 +59,7 @@ Deno.serve(async (req) => {
     notify_patient_whatsapp,
     force_outside_availability,
   } = body;
+
   if (!doctor_id || !office_id || !start_at || !end_at || !patient?.full_name?.trim() || !patient?.phone?.trim()) {
     return jsonResponse(
       { error: "doctor_id, office_id, start_at, end_at, patient.full_name y patient.phone son requeridos" },
@@ -87,8 +82,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Doctor no encontrado o inactivo" }, 404);
   }
 
-  // Verify office belongs to that doctor and is active. Calendar tokens come
-  // from the office, NOT the doctor (legacy doctors fields are deprecated).
+  // Verify office belongs to that doctor and is active.
   const { data: office } = await supabase
     .from("doctor_offices")
     .select(
@@ -103,9 +97,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Consultorio no encontrado o inactivo" }, 404);
   }
 
-  // Availability soft-check — outside the office's configured weekly schedule
-  // we surface a warning to the caller so they can decide. The frontend asks
-  // the user "¿Crear de todas formas?" and re-issues with `force_outside_availability=true`.
+  // Availability soft-check.
   if (!force_outside_availability) {
     const av = await checkAvailability(supabase, office_id, start_at, end_at);
     if (!av.withinAvailability) {
@@ -133,10 +125,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "slot_conflict", conflicts: validation.conflicts }, 409);
   }
 
-  // Match-or-create patient. We canonicalize the input phone but look up by
-  // BOTH `+52XXXXXXXXXX` and `+521XXXXXXXXXX` since legacy rows may carry the
-  // Telcel `1`. If anything matches, we reuse the existing patient_id; only
-  // when no variant matches do we insert a new row.
+  // Match-or-create patient.
   const normalizedPhone = normalizeMxPhone(patient.phone);
   const lookupVariants = mxPhoneLookupVariants(normalizedPhone);
   const fullName = patient.full_name.trim();
@@ -162,13 +151,13 @@ Deno.serve(async (req) => {
       .select("id")
       .single();
     if (insertErr || !newPatient) {
-      console.error("[admin-create-appointment] patient insert failed:", insertErr);
+      console.error("[doctor-create-appointment] patient insert failed:", insertErr);
       return jsonResponse({ error: "No se pudo crear el paciente" }, 500);
     }
     patientId = newPatient.id;
   }
 
-  // Create appointment (status = confirmed, source = admin_manual).
+  // Create appointment (status = confirmed, source = doctor_manual).
   const { data: appointment, error: apptErr } = await supabase
     .from("appointments")
     .insert({
@@ -179,21 +168,21 @@ Deno.serve(async (req) => {
       end_at,
       status: "confirmed",
       symptoms: symptoms?.trim() || null,
-      booking_source: "admin_manual",
+      booking_source: "doctor_manual",
       created_by_user_id: auth.userId,
     })
     .select("id")
     .single();
 
   if (apptErr || !appointment) {
-    console.error("[admin-create-appointment] appointment insert failed:", apptErr);
+    console.error("[doctor-create-appointment] appointment insert failed:", apptErr);
     return jsonResponse({ error: "No se pudo crear la cita", details: apptErr?.message }, 500);
   }
 
   const appointmentId = appointment.id;
   const syncWarnings: string[] = [];
 
-  // External calendar sync: best-effort. Failures don't roll back the appointment.
+  // External calendar sync: best-effort.
   if (office.google_calendar_connected && office.google_calendar_id) {
     const accessToken = await getGoogleAccessToken(office);
     if (!accessToken) {
@@ -229,7 +218,7 @@ Deno.serve(async (req) => {
           syncWarnings.push("google");
         }
       } catch (err) {
-        console.error("[admin-create-appointment] Google create failed:", err);
+        console.error("[doctor-create-appointment] Google create failed:", err);
         syncWarnings.push("google");
       }
     }
@@ -270,26 +259,22 @@ Deno.serve(async (req) => {
           syncWarnings.push("outlook");
         }
       } catch (err) {
-        console.error("[admin-create-appointment] Outlook create failed:", err);
+        console.error("[doctor-create-appointment] Outlook create failed:", err);
         syncWarnings.push("outlook");
       }
     }
   }
 
-  // Notification for the doctor's inbox.
+  // Notification for the admin inbox.
   await supabase.from("notifications").insert({
     doctor_id,
     appointment_id: appointmentId,
-    recipient_role: "doctor",
+    recipient_role: "admin",
     type: "appointment_scheduled",
-    title: "Nueva cita (creada por admin)",
+    title: "Nueva cita (creada por doctor)",
     body: `${fullName} - ${start_at}`,
   });
 
-  // Generate the patient's manage token. Without this the n8n WhatsApp flow
-  // can't render the confirmation template, since it needs the /gestionar URL
-  // to let the patient cancel/reschedule later. Same convention as
-  // reserve-create: the token expires when the appointment ends.
   let manageToken: string | null = null;
   let manageUrl: string | null = null;
   try {
@@ -302,12 +287,9 @@ Deno.serve(async (req) => {
     manageToken = result.token;
     manageUrl = result.manageUrl;
   } catch (err) {
-    // Don't fail the whole request — the appointment exists and the n8n flow
-    // can still generate a token via generate-manage-link if needed.
-    console.error("[admin-create-appointment] manage_token insert failed:", err);
+    console.error("[doctor-create-appointment] manage_token insert failed:", err);
   }
 
-  // WhatsApp dispatch — always to the doctor, optionally to the patient.
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const dispatchHeaders = {
@@ -315,12 +297,6 @@ Deno.serve(async (req) => {
     Authorization: `Bearer ${serviceKey}`,
   };
 
-  // Two webhooks in parallel:
-  //   1. `appointment.created` — feature-specific event (kept for any consumer
-  //      already listening to it).
-  //   2. `appointment.status_changed` — the event the n8n WhatsApp flow is
-  //      actually subscribed to. Same shape as the one fired by
-  //      admin-cancel-appointment so the same n8n branch logic works.
   try {
     await Promise.all([
       fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
@@ -330,7 +306,7 @@ Deno.serve(async (req) => {
           event_type: "appointment.created",
           payload: {
             appointment_id: appointmentId,
-            source: "admin_manual",
+            source: "doctor_manual",
             notify_patient: !!notify_patient_whatsapp,
             patient_name: fullName,
             patient_phone: normalizedPhone,
@@ -354,7 +330,7 @@ Deno.serve(async (req) => {
           event_type: "appointment.status_changed",
           payload: {
             appointment_id: appointmentId,
-            source: "admin_manual",
+            source: "doctor_manual",
             previous_status: null,
             new_status: "confirmed",
             patient_phone: normalizedPhone,
@@ -367,7 +343,7 @@ Deno.serve(async (req) => {
             start_at,
             end_at,
             notify_patient: !!notify_patient_whatsapp,
-            notify_doctor: true,
+            notify_doctor: false,
             manage_token: manageToken,
             manage_url: manageUrl,
             timestamp: new Date().toISOString(),
@@ -376,7 +352,7 @@ Deno.serve(async (req) => {
       }),
     ]);
   } catch (err) {
-    console.error("[admin-create-appointment] dispatch-webhook failed:", err);
+    console.error("[doctor-create-appointment] dispatch-webhook failed:", err);
   }
 
   return jsonResponse({

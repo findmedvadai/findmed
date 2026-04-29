@@ -33,16 +33,14 @@ import {
 } from "@/components/ui/select";
 import { TimePicker } from "@/components/ui/time-picker";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
 import { weekdayLabel } from "@/lib/availability-check";
-import PatientAutocomplete, { type PatientLookupResult } from "./PatientAutocomplete";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Pre-selected doctor when the calendar is filtered by one. */
-  defaultDoctorId?: string | null;
-  /** Pre-selected office (when calendar filtered to a specific office). */
+  /** Pre-selected office (when calendar is filtered to one). */
   defaultOfficeId?: string | null;
   /** Pre-filled CDMX-local date (yyyy-MM-dd). */
   defaultDate?: string;
@@ -50,14 +48,10 @@ interface Props {
   defaultTime?: string;
 }
 
-interface DoctorOption {
-  id: string;
-  full_name: string;
-}
-
 interface OfficeOption {
   id: string;
   name: string;
+  display_color: string;
   appointment_duration_minutes: number;
 }
 
@@ -77,23 +71,20 @@ function diffMinutesHm(start: string, end: string): number {
   return eh * 60 + em - (sh * 60 + sm);
 }
 
-export default function CreateAppointmentDialog({
+export default function DoctorCreateAppointmentDialog({
   open,
   onClose,
-  defaultDoctorId,
   defaultOfficeId,
   defaultDate,
   defaultTime,
 }: Props) {
   const queryClient = useQueryClient();
+  const { doctorId } = useAuth();
 
-  const [doctorId, setDoctorId] = useState<string>("");
   const [officeId, setOfficeId] = useState<string>("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
   const [duration, setDuration] = useState(30);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [patientId, setPatientId] = useState<string | null>(null);
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [symptoms, setSymptoms] = useState("");
@@ -104,70 +95,47 @@ export default function CreateAppointmentDialog({
   // Reset form when reopening.
   useEffect(() => {
     if (!open) return;
-    setDoctorId(defaultDoctorId ?? "");
     setOfficeId(defaultOfficeId ?? "");
     setDate(defaultDate ?? formatMx(new Date(), "yyyy-MM-dd"));
     setStartTime(defaultTime ?? "09:00");
-    setSearchQuery("");
-    setPatientId(null);
     setFullName("");
     setPhone("");
     setSymptoms("");
     setNotifyPatient(false);
     setDurationManuallyEdited(false);
-  }, [open, defaultDoctorId, defaultOfficeId, defaultDate, defaultTime]);
+  }, [open, defaultOfficeId, defaultDate, defaultTime]);
 
-  const { data: doctors = [] } = useQuery<DoctorOption[]>({
-    queryKey: ["admin-create-appt-doctors"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("doctors")
-        .select("id, full_name")
-        .eq("is_active", true)
-        .eq("is_deleted", false)
-        .order("full_name");
-      return (data ?? []) as DoctorOption[];
-    },
-  });
-
-  // Active offices for the selected doctor.
   const { data: offices = [] } = useQuery<OfficeOption[]>({
-    queryKey: ["admin-create-appt-offices", doctorId],
+    queryKey: ["doctor-create-appt-offices", doctorId],
     queryFn: async () => {
       if (!doctorId) return [];
       const { data } = await supabase
         .from("doctor_offices")
-        .select("id, name, appointment_duration_minutes")
+        .select("id, name, display_color, appointment_duration_minutes")
         .eq("doctor_id", doctorId)
         .eq("is_active", true)
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
       return (data ?? []) as OfficeOption[];
     },
-    enabled: !!doctorId,
+    enabled: !!doctorId && open,
   });
 
-  // Auto-pick when the doctor has exactly one active office.
+  // Auto-pick when doctor has exactly one office.
   useEffect(() => {
     if (!officeId && offices.length === 1) setOfficeId(offices[0].id);
-    // If the current office is no longer in the list (e.g. doctor changed),
-    // clear the selection.
     if (officeId && !offices.find((o) => o.id === officeId)) setOfficeId("");
   }, [offices, officeId]);
 
-  // Sync duration with the SELECTED OFFICE (was doctor-level pre-mejora-2).
+  // Sync duration with selected office.
   useEffect(() => {
     if (durationManuallyEdited) return;
     const o = offices.find((x) => x.id === officeId);
     if (o) setDuration(o.appointment_duration_minutes ?? 30);
   }, [offices, officeId, durationManuallyEdited]);
 
-  // End time derived from start + duration; users edit duration, not end-time.
   const endTime = useMemo(() => addMinutesToHm(startTime, duration), [startTime, duration]);
 
-  // The outside-availability soft-warning dialog. We surface the office's
-  // configured blocks so the admin sees why the slot is "out of hours" and
-  // can confirm intentionally.
   const [availabilityWarning, setAvailabilityWarning] = useState<{
     weekday: number;
     blocks: { start_time: string; end_time: string }[];
@@ -184,7 +152,7 @@ export default function CreateAppointmentDialog({
     const startAt = buildMexicoIso(date, startTime);
     const endAt = buildMexicoIso(date, endTime);
 
-    const res = await fetch(`${supabaseUrl}/functions/v1/admin-create-appointment`, {
+    return await fetch(`${supabaseUrl}/functions/v1/doctor-create-appointment`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -205,7 +173,6 @@ export default function CreateAppointmentDialog({
         force_outside_availability: forceOutside || undefined,
       }),
     });
-    return res;
   };
 
   const createMutation = useMutation({
@@ -214,7 +181,6 @@ export default function CreateAppointmentDialog({
       const data = await res.json();
       if (!res.ok) {
         if (data.error === "outside_availability") {
-          // Hand off to confirmation dialog and bail out — no error toast.
           setAvailabilityWarning({
             weekday: data.weekday,
             blocks: data.blocks ?? [],
@@ -223,7 +189,7 @@ export default function CreateAppointmentDialog({
           throw new Error("__OUTSIDE_AVAILABILITY_HANDLED__");
         }
         if (data.error === "slot_conflict") {
-          throw new Error("Slot ocupado: ya hay otra cita o evento en ese horario.");
+          throw new Error("Slot ocupado: ya hay otra cita en ese horario.");
         }
         throw new Error(data.error || "Error al crear cita");
       }
@@ -236,34 +202,24 @@ export default function CreateAppointmentDialog({
       } else {
         const provider = warnings.includes("google") && warnings.includes("outlook")
           ? "Google y Outlook"
-          : warnings.includes("google")
-          ? "Google"
-          : "Outlook";
-        toast.warning(
-          `Cita creada, pero no se pudo sincronizar con ${provider}. Crea el evento manualmente o reintenta más tarde.`
-        );
+          : warnings.includes("google") ? "Google" : "Outlook";
+        toast.warning(`Cita creada, pero no se pudo sincronizar con ${provider}.`);
       }
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
       onClose();
     },
     onError: (err: Error) => {
-      // Silenced sentinel: outside-availability is handled by AlertDialog.
       if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
       toast.error(err.message);
     },
   });
 
-  // Mutation for "force-create after admin confirmed override".
   const forceCreateMutation = useMutation({
     mutationFn: async () => {
       const res = await callCreate(true);
       const data = await res.json();
       if (!res.ok) {
-        if (data.error === "slot_conflict") {
-          throw new Error("Slot ocupado: ya hay otra cita o evento en ese horario.");
-        }
+        if (data.error === "slot_conflict") throw new Error("Slot ocupado.");
         throw new Error(data.error || "Error al crear cita");
       }
       return data as { appointment_id: string; patient_id: string; sync_warnings: string[] };
@@ -274,29 +230,17 @@ export default function CreateAppointmentDialog({
       else {
         const provider = warnings.includes("google") && warnings.includes("outlook")
           ? "Google y Outlook"
-          : warnings.includes("google")
-          ? "Google"
-          : "Outlook";
+          : warnings.includes("google") ? "Google" : "Outlook";
         toast.warning(`Cita creada, pero no se pudo sincronizar con ${provider}.`);
       }
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
       setAvailabilityWarning(null);
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const onSelectPatient = (p: PatientLookupResult) => {
-    setPatientId(p.id);
-    setFullName(p.full_name);
-    setPhone(p.phone);
-    setSearchQuery(p.full_name);
-  };
-
   const canSubmit =
-    !!doctorId &&
     !!officeId &&
     !!date &&
     TIME_HM_REGEX.test(startTime) &&
@@ -310,9 +254,7 @@ export default function CreateAppointmentDialog({
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
-    createMutation.mutate(undefined, {
-      onSettled: () => setSubmitting(false),
-    });
+    createMutation.mutate(undefined, { onSettled: () => setSubmitting(false) });
   };
 
   return (
@@ -321,48 +263,32 @@ export default function CreateAppointmentDialog({
         <DialogHeader>
           <DialogTitle>Crear cita</DialogTitle>
           <DialogDescription>
-            La cita se crea como confirmada. Se notifica al doctor por WhatsApp;
-            al paciente solo si activas el toggle.
+            La cita se registra como confirmada y se sincroniza con tu calendario.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="doctor">Doctor *</Label>
-            <Select value={doctorId} onValueChange={(v) => { setDoctorId(v); setOfficeId(""); }}>
-              <SelectTrigger id="doctor">
-                <SelectValue placeholder="Selecciona un doctor" />
-              </SelectTrigger>
-              <SelectContent>
-                {doctors.map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.full_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {doctorId && (
+          {offices.length > 1 && (
             <div className="space-y-1.5">
               <Label htmlFor="office">Consultorio *</Label>
               <Select value={officeId} onValueChange={setOfficeId}>
                 <SelectTrigger id="office">
-                  <SelectValue placeholder={offices.length ? "Selecciona un consultorio" : "Sin consultorios activos"} />
+                  <SelectValue placeholder="Selecciona un consultorio" />
                 </SelectTrigger>
                 <SelectContent>
                   {offices.map((o) => (
                     <SelectItem key={o.id} value={o.id}>
-                      {o.name}
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="inline-block h-2 w-2 rounded-full"
+                          style={{ backgroundColor: o.display_color }}
+                        />
+                        {o.name}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {offices.length === 0 && (
-                <p className="text-xs text-destructive">
-                  Este doctor no tiene consultorios activos. Crea uno desde el panel de doctores.
-                </p>
-              )}
             </div>
           )}
 
@@ -406,18 +332,6 @@ export default function CreateAppointmentDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Buscar paciente</Label>
-            <PatientAutocomplete
-              query={searchQuery}
-              onQueryChange={(q) => {
-                setSearchQuery(q);
-                if (patientId && q !== fullName) setPatientId(null);
-              }}
-              onSelect={onSelectPatient}
-            />
-          </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="fullName">Nombre del paciente *</Label>
@@ -425,6 +339,7 @@ export default function CreateAppointmentDialog({
                 id="fullName"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
+                placeholder="Nombre completo"
                 required
               />
             </div>
@@ -476,9 +391,7 @@ export default function CreateAppointmentDialog({
 
       <AlertDialog
         open={!!availabilityWarning}
-        onOpenChange={(o) => {
-          if (!o) setAvailabilityWarning(null);
-        }}
+        onOpenChange={(o) => { if (!o) setAvailabilityWarning(null); }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -486,7 +399,7 @@ export default function CreateAppointmentDialog({
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm">
                 <p>
-                  El horario que elegiste está fuera de la disponibilidad configurada del consultorio
+                  El horario elegido está fuera de la disponibilidad configurada del consultorio
                   {availabilityWarning?.office_name ? ` "${availabilityWarning.office_name}"` : ""} en{" "}
                   <strong>{availabilityWarning ? weekdayLabel(availabilityWarning.weekday) : ""}</strong>.
                 </p>
@@ -495,9 +408,7 @@ export default function CreateAppointmentDialog({
                     <p className="text-muted-foreground">Disponibilidad ese día:</p>
                     <ul className="list-disc list-inside text-muted-foreground">
                       {availabilityWarning.blocks.map((b, i) => (
-                        <li key={i}>
-                          {b.start_time.slice(0, 5)} – {b.end_time.slice(0, 5)}
-                        </li>
+                        <li key={i}>{b.start_time.slice(0, 5)} – {b.end_time.slice(0, 5)}</li>
                       ))}
                     </ul>
                   </div>

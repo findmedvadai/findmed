@@ -1,12 +1,11 @@
-// Admin reschedule. Updates start_at/end_at on the existing appointment row
-// (no row replacement, unlike manage-reschedule). External calendar events
-// are PATCHed; if the event was deleted out-of-band (404), we recreate it
-// and update the *_event_id column. External failures don't roll back the
-// reschedule — the appointment row is the source of truth.
+// Doctor-side appointment reschedule. Same resilient pattern as admin-reschedule-appointment.
+//
+// Auth: the caller must be either an admin OR the specific doctor who owns the appointment.
+// The doctor_id is resolved from the appointment, not from the body.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { requireAdmin } from "../_shared/auth.ts";
+import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
@@ -15,6 +14,7 @@ interface Body {
   appointment_id: string;
   start_at: string;
   end_at: string;
+  force_outside_availability?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -26,9 +26,6 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  const auth = await requireAdmin(req, supabase);
-  if (!auth.ok) return jsonResponse({ error: auth.error }, auth.status);
-
   let body: Body;
   try {
     body = await req.json();
@@ -36,12 +33,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  const { appointment_id, start_at, end_at, force_outside_availability } = body as {
-    appointment_id?: string;
-    start_at?: string;
-    end_at?: string;
-    force_outside_availability?: boolean;
-  };
+  const { appointment_id, start_at, end_at, force_outside_availability } = body;
   if (!appointment_id || !start_at || !end_at) {
     return jsonResponse({ error: "appointment_id, start_at y end_at son requeridos" }, 400);
   }
@@ -51,6 +43,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "No se puede reagendar en el pasado" }, 400);
   }
 
+  // Load appointment to determine the owning doctor.
   const { data: appointment } = await supabase
     .from("appointments")
     .select("id, doctor_id, office_id, patient_id, status, start_at, end_at, symptoms, google_event_id, outlook_event_id")
@@ -61,6 +54,10 @@ Deno.serve(async (req) => {
   if (appointment.status === "cancelled") {
     return jsonResponse({ error: "No se puede reagendar una cita cancelada" }, 409);
   }
+
+  // Auth: admin or the doctor who owns this appointment.
+  const auth = await requireAdminOrDoctor(req, supabase, appointment.doctor_id);
+  if (!auth.ok) return jsonResponse({ error: auth.error }, auth.status);
 
   // Availability soft-check on the new slot.
   if (!force_outside_availability && appointment.office_id) {
@@ -83,7 +80,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Slot availability — scoped to the same office, excluding the moved appt.
+  // Slot conflict check (excluding the current appointment).
   const validation = await validateSlotAvailable({
     supabase,
     doctorId: appointment.doctor_id,
@@ -107,7 +104,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "No se pudo reagendar la cita", details: updateErr.message }, 500);
   }
 
-  // External calendar sync — read tokens off the appointment's office.
+  // Resolve doctor, office, patient for notifications + calendar sync.
   const { data: doctor } = await supabase
     .from("doctors")
     .select("full_name")
@@ -135,7 +132,7 @@ Deno.serve(async (req) => {
   const syncWarnings: string[] = [];
   const symptomsText = appointment.symptoms?.trim() ?? "";
 
-  // Google
+  // Google calendar sync.
   if (office?.google_calendar_connected && office.google_calendar_id) {
     const accessToken = await getGoogleAccessToken(office);
     if (!accessToken) {
@@ -163,7 +160,6 @@ Deno.serve(async (req) => {
           if (res.ok) {
             synced = true;
           } else if (res.status === 404 || res.status === 410) {
-            // Event gone — clear the stale id and fall through to creation.
             await supabase
               .from("appointments")
               .update({ google_event_id: null })
@@ -171,7 +167,7 @@ Deno.serve(async (req) => {
             appointment.google_event_id = null;
           }
         } catch (err) {
-          console.error("[admin-reschedule] Google PATCH failed:", err);
+          console.error("[doctor-reschedule] Google PATCH failed:", err);
         }
       }
       if (!synced && !appointment.google_event_id) {
@@ -195,14 +191,14 @@ Deno.serve(async (req) => {
             }
           }
         } catch (err) {
-          console.error("[admin-reschedule] Google CREATE failed:", err);
+          console.error("[doctor-reschedule] Google CREATE failed:", err);
         }
       }
       if (!synced) syncWarnings.push("google");
     }
   }
 
-  // Outlook
+  // Outlook calendar sync.
   if (office?.outlook_calendar_connected && office.outlook_calendar_id) {
     const accessToken = await getOutlookAccessToken(office);
     if (!accessToken) {
@@ -237,7 +233,7 @@ Deno.serve(async (req) => {
             appointment.outlook_event_id = null;
           }
         } catch (err) {
-          console.error("[admin-reschedule] Outlook PATCH failed:", err);
+          console.error("[doctor-reschedule] Outlook PATCH failed:", err);
         }
       }
       if (!synced && !appointment.outlook_event_id) {
@@ -261,21 +257,21 @@ Deno.serve(async (req) => {
             }
           }
         } catch (err) {
-          console.error("[admin-reschedule] Outlook CREATE failed:", err);
+          console.error("[doctor-reschedule] Outlook CREATE failed:", err);
         }
       }
       if (!synced) syncWarnings.push("outlook");
     }
   }
 
-  // Notification + WhatsApp dispatch.
+  // Notification to admin.
   await supabase.from("notifications").insert({
     doctor_id: appointment.doctor_id,
     appointment_id,
-    recipient_role: "doctor",
+    recipient_role: "admin",
     type: "appointment_rescheduled",
-    title: "Cita reagendada",
-    body: `${patient?.full_name ?? "Paciente"} fue reagendado a ${start_at}`,
+    title: "Cita reagendada por doctor",
+    body: `${patient?.full_name ?? "Paciente"} reagendado a ${start_at}`,
   });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -285,13 +281,6 @@ Deno.serve(async (req) => {
     Authorization: `Bearer ${serviceKey}`,
   };
 
-  // Two webhooks in parallel:
-  //   1. `appointment.rescheduled` — feature-specific event (kept for any
-  //      consumer already listening to it).
-  //   2. `appointment.status_changed` — what the n8n WhatsApp flow listens to.
-  //      The appointment status itself does not change on reschedule, so
-  //      previous_status === new_status; n8n branches on the presence of
-  //      previous_start_at to detect a time-change.
   const currentStatus = appointment.status;
   try {
     await Promise.all([
@@ -302,7 +291,7 @@ Deno.serve(async (req) => {
           event_type: "appointment.rescheduled",
           payload: {
             appointment_id,
-            source: "admin",
+            source: "doctor_manual",
             previous_start_at: previousStartAt,
             new_start_at: start_at,
             end_at,
@@ -314,7 +303,7 @@ Deno.serve(async (req) => {
             office_name: office?.name ?? null,
             office_address: office?.address ?? null,
             notify_patient: true,
-            notify_doctor: true,
+            notify_doctor: false,
           },
         }),
       }),
@@ -325,7 +314,7 @@ Deno.serve(async (req) => {
           event_type: "appointment.status_changed",
           payload: {
             appointment_id,
-            source: "admin",
+            source: "doctor_manual",
             previous_status: currentStatus,
             new_status: currentStatus,
             previous_start_at: previousStartAt,
@@ -337,14 +326,14 @@ Deno.serve(async (req) => {
             doctor_name: doctor?.full_name ?? null,
             doctor_id: appointment.doctor_id,
             notify_patient: true,
-            notify_doctor: true,
+            notify_doctor: false,
             timestamp: new Date().toISOString(),
           },
         }),
       }),
     ]);
   } catch (err) {
-    console.error("[admin-reschedule] dispatch-webhook failed:", err);
+    console.error("[doctor-reschedule] dispatch-webhook failed:", err);
   }
 
   return jsonResponse({ success: true, appointment_id, sync_warnings: syncWarnings });

@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { resolveOfficeForCaller } from "../_shared/office-resolver.ts";
+import { checkAvailability } from "../_shared/availability-check.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -32,7 +33,7 @@ serve(async (req) => {
     const userId = payload.sub as string;
 
     const body = await req.json();
-    const { event_id, summary, description, start_at, end_at, office_id } = body;
+    const { event_id, summary, description, start_at, end_at, office_id, force_outside_availability } = body;
     if (!office_id) return jsonResponse({ error: "office_id requerido" }, 400);
     if (!event_id || !start_at || !end_at) {
       return jsonResponse({ error: "event_id, start_at y end_at son requeridos" }, 400);
@@ -45,6 +46,21 @@ serve(async (req) => {
 
     if (!office.google_calendar_connected || !office.google_refresh_token_ref || !office.google_calendar_id) {
       return jsonResponse({ error: "Google Calendar no está conectado en este consultorio" }, 400);
+    }
+
+    if (!force_outside_availability) {
+      const av = await checkAvailability(supabase, office_id, start_at, end_at);
+      if (!av.withinAvailability) {
+        return jsonResponse(
+          {
+            error: "outside_availability",
+            weekday: av.weekday,
+            blocks: av.blocksForWeekday,
+            office_name: office.name,
+          },
+          409
+        );
+      }
     }
 
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {

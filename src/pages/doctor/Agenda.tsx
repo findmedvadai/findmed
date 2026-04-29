@@ -41,7 +41,7 @@ function getMexicoWeekBounds(instant: Date): { start: Date; end: Date } {
     end: fromZonedTime(endNaive, MEXICO_TZ),
   };
 }
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { CalendarPlus, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,8 @@ import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog, { type CalendarItem } from "@/components/doctor/AppointmentDetailDialog";
 import DayHeaderPopover from "@/components/doctor/DayHeaderPopover";
 import CreateEventDialog from "@/components/doctor/CreateEventDialog";
+import DoctorCreateAppointmentDialog from "@/components/doctor/DoctorCreateAppointmentDialog";
+import { formatMx } from "@/lib/timezone";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -110,6 +112,11 @@ export default function Agenda() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
+  // Cita (real appointment) dialog.
+  const [createApptOpen, setCreateApptOpen] = useState(false);
+  const [createApptDate, setCreateApptDate] = useState<string | undefined>();
+  const [createApptTime, setCreateApptTime] = useState<string | undefined>();
+  // Personal event dialog (external calendar).
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createEventDate, setCreateEventDate] = useState<Date | undefined>();
   const [createEventHour, setCreateEventHour] = useState<number | undefined>();
@@ -354,6 +361,19 @@ export default function Agenda() {
         <div className="flex items-center gap-1">
           <Button
             variant="default"
+            size="sm"
+            onClick={() => {
+              setCreateApptDate(undefined);
+              setCreateApptTime(undefined);
+              setCreateApptOpen(true);
+            }}
+            className="h-8 gap-1 text-xs"
+            title="Crear cita"
+          >
+            <Plus className="h-3.5 w-3.5" /> Crear cita
+          </Button>
+          <Button
+            variant="outline"
             size="icon"
             onClick={() => {
               setCreateEventDate(undefined);
@@ -361,9 +381,9 @@ export default function Agenda() {
               setCreateEventOpen(true);
             }}
             className="h-8 w-8"
-            title="Crear evento"
+            title="Crear evento personal"
           >
-            <Plus className="h-4 w-4" />
+            <CalendarPlus className="h-4 w-4" />
           </Button>
           <Button variant="outline" size="icon" onClick={goToPrev} className="h-8 w-8">
             <ChevronLeft className="h-4 w-4" />
@@ -412,6 +432,23 @@ export default function Agenda() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Office color legend (visible when the doctor has more than one office). */}
+      {offices.length > 1 && (
+        <div className="flex items-center gap-3 px-1 flex-wrap text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Consultorios:</span>
+          {offices.map((o) => (
+            <span key={o.id} className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm"
+                style={{ backgroundColor: o.display_color }}
+                aria-hidden
+              />
+              <span className="text-foreground">{o.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Day headers */}
       <div className="grid grid-cols-[3rem_repeat(7,1fr)] border-b border-border">
@@ -472,9 +509,12 @@ export default function Agenda() {
                   const y = e.clientY - rect.top;
                   const hour = START_HOUR + y / HOUR_HEIGHT;
                   const snappedHour = Math.floor(hour * 2) / 2;
-                  setCreateEventDate(day);
-                  setCreateEventHour(snappedHour);
-                  setCreateEventOpen(true);
+                  const h = Math.floor(snappedHour);
+                  const m = Math.round((snappedHour % 1) * 60);
+                  const timeStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+                  setCreateApptDate(formatMx(day, "yyyy-MM-dd"));
+                  setCreateApptTime(timeStr);
+                  setCreateApptOpen(true);
                 }}
               >
                 {/* Hour lines */}
@@ -537,9 +577,6 @@ export default function Agenda() {
                       <div className="truncate opacity-80">
                         {formatMexicoTime(item.start, "HH:mm")} - {formatMexicoTime(item.end, "HH:mm")}
                       </div>
-                      {officeFilter === "all" && item.officeName && (
-                        <div className="truncate opacity-70 text-[9px] mt-0.5">{item.officeName}</div>
-                      )}
                     </div>
                   );
                 })}
@@ -556,13 +593,19 @@ export default function Agenda() {
         doctorId={doctorId ?? ""}
       />
 
+      <DoctorCreateAppointmentDialog
+        open={createApptOpen}
+        onClose={() => setCreateApptOpen(false)}
+        defaultOfficeId={officeFilter !== "all" ? officeFilter : undefined}
+        defaultDate={createApptDate}
+        defaultTime={createApptTime}
+      />
+
       <CreateEventDialog
         open={createEventOpen}
         onClose={() => setCreateEventOpen(false)}
         defaultDate={createEventDate}
         defaultStartHour={createEventHour}
-        // Pass office only when filtered to a specific one. In "Todos" view
-        // the dialog renders an in-form office picker.
         officeId={officeFilter !== "all" ? officeFilter : undefined}
       />
     </div>
