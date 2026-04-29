@@ -264,16 +264,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Notification to admin.
-  await supabase.from("notifications").insert({
-    doctor_id: appointment.doctor_id,
-    appointment_id,
-    recipient_role: "admin",
-    type: "appointment_rescheduled",
-    title: "Cita reagendada por doctor",
-    body: `${patient?.full_name ?? "Paciente"} reagendado a ${start_at}`,
-  });
-
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const dispatchHeaders = {

@@ -178,16 +178,6 @@ Deno.serve(async (req) => {
     ? `${patientName} confirmó su cita con ${doctorName} vía WhatsApp.`
     : `${patientName} canceló su cita con ${doctorName} vía WhatsApp.`;
 
-  // Notification for admin
-  await supabase.from("notifications").insert({
-    title: notifTitle,
-    body: notifBody,
-    type: notifType,
-    recipient_role: "admin",
-    doctor_id: appointment.doctor_id,
-    appointment_id: appointment.id,
-  });
-
   // Notification for doctor
   await supabase.from("notifications").insert({
     title: notifTitle,

@@ -179,3 +179,17 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** Verificar que el código en el repositorio es correcto y hacer deploy explícito de la función.
 
 **Lección aprendida:** "Fix en código" no equivale a "fix en producción". Nunca marcar un bug como arreglado sin hacer deploy y verificar con SQL que el valor cambió en DB.
+
+---
+
+## 2026-04-29 — Fix de validación al editar consultorio introdujo regresión: botón Guardar siempre deshabilitado
+
+**Categoría:** frontend
+
+**Síntoma:** En `OfficeFormDialog.tsx` al abrir el diálogo de edición de un consultorio existente, el botón "Guardar cambios" permanecía deshabilitado aunque se modificara cualquier campo. Cualquier consultorio creado sin dirección/ciudad/zona quedaba permanentemente bloqueado.
+
+**Causa raíz:** Un fix previo (P4) para hacer el `name` requerido también en edición removió los guards `if (!isEdit)` de address, city_id y zone_id. Pero el EF `doctor-office-update` acepta esos campos como opcionales (pueden ser `null`). Los consultorios existentes con esos valores null inicializan el formulario con `""`, la validación falla inmediatamente, y `canSubmit` queda `false` desde el primer render. Adicionalmente, no había ningún tracking de `isDirty`, por lo que el botón no podía habilitarse al cambiar un campo en modo edición.
+
+**Solución aplicada:** Restaurar los guards `if (!isEdit)` para address/cityId/zoneId (solo requeridos en modo crear). Agregar comparación `isDirty` contra los valores originales del office prop. `canSubmit = errores vacíos && !submitting && isDirty`.
+
+**Lección aprendida:** Al cambiar validaciones de un formulario que tiene modo crear/editar, revisar explícitamente qué campos son requeridos en cada modo. El EF es la fuente de verdad: si el EF acepta `null`, el formulario no puede marcar ese campo como requerido en edición. Los formularios de edición siempre deben incluir un check `isDirty` para no habilitar el botón cuando nada cambió.
