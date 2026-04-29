@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 
 interface Body {
   appointment_id: string;
@@ -124,6 +125,13 @@ Deno.serve(async (req) => {
     Authorization: `Bearer ${serviceKey}`,
   };
 
+  const manageUrl = await getOrCreateManageUrl({
+    supabase,
+    appointmentId: appointment_id,
+    endAt: appointment.end_at,
+    patientPhone: patient?.phone ?? "",
+  }).catch(() => null);
+
   try {
     await Promise.all([
       fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
@@ -147,6 +155,7 @@ Deno.serve(async (req) => {
             end_at: appointment.end_at,
             notify_patient: true,
             notify_doctor: true,
+            manage_url: manageUrl,
           },
         }),
       }),
@@ -164,6 +173,7 @@ Deno.serve(async (req) => {
             patient_name: patient?.full_name ?? null,
             start_at: appointment.start_at,
             timestamp: new Date().toISOString(),
+            manage_url: manageUrl,
           },
         }),
       }),

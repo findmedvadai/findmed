@@ -193,3 +193,31 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** Restaurar los guards `if (!isEdit)` para address/cityId/zoneId (solo requeridos en modo crear). Agregar comparación `isDirty` contra los valores originales del office prop. `canSubmit = errores vacíos && !submitting && isDirty`.
 
 **Lección aprendida:** Al cambiar validaciones de un formulario que tiene modo crear/editar, revisar explícitamente qué campos son requeridos en cada modo. El EF es la fuente de verdad: si el EF acepta `null`, el formulario no puede marcar ese campo como requerido en edición. Los formularios de edición siempre deben incluir un check `isDirty` para no habilitar el botón cuando nada cambió.
+
+---
+
+## 2026-04-29 — Soft-delete de consultorio no limpia filas dependientes (disponibilidad y sesiones huérfanas)
+
+**Categoría:** backend
+
+**Síntoma:** Al borrar un consultorio, los bloques de `doctor_weekly_availability` con ese `office_id` quedaban en la tabla. En la UI del doctor aparecían bloques "sin consultorio" con selector vacío. Además, links de reserva activos (`reservation_sessions`) seguían apuntando al consultorio ya eliminado.
+
+**Causa raíz:** La FK `doctor_weekly_availability → doctor_offices` tiene `ON DELETE CASCADE` en el schema, pero el borrado en la app es siempre soft (UPDATE `is_deleted=true`, no DELETE real). El CASCADE nunca disparaba. El EF `doctor-office-delete` tampoco hacía limpieza explícita de las tablas dependientes.
+
+**Solución aplicada:** Agregar a `doctor-office-delete`, antes del soft-delete del office: `DELETE FROM doctor_weekly_availability WHERE office_id = <id>` y `DELETE FROM reservation_sessions WHERE office_id = <id>`.
+
+**Lección aprendida:** ON DELETE CASCADE en el schema es una red de seguridad para hard-deletes, pero no sirve cuando los deletes son soft (UPDATE). Cuando se diseña un flujo de soft-delete, listar todas las tablas dependientes (por FK directa o por `office_id` semántico) y decidir explícitamente qué se limpia en el EF.
+
+---
+
+## 2026-04-29 — Webhooks de cancelación con `event_type` incorrecto y sin `manage_url`
+
+**Categoría:** backend
+
+**Síntoma:** (A) `manage-cancel` disparaba `appointment.cancelled` en lugar de `appointment.cancelled_by_patient` — n8n usaba la plantilla equivocada. (B) `admin-cancel-appointment` y `doctor-office-delete` no incluían `manage_url` en el payload — n8n fallaba con 400 al intentar construir el botón URL de WhatsApp. (C) `cancel-by-doctor` y `auto-cancel-unconfirmed` incluían el URL como `reschedule_url` pero no como `manage_url`, rompiendo n8n que esperaba el campo estándar.
+
+**Causa raíz:** Los EFs de cancelación fueron escritos en momentos distintos sin un contrato unificado para el `event_type` ni para los campos del payload. No había un checklist que verificara que todos los EFs de cancelación producen el mismo shape.
+
+**Solución aplicada:** (A) Corregir `event_type` en `manage-cancel`. (B) Agregar helper `getOrCreateManageUrl` en `_shared/manage-token.ts` (lookup de token existente o crea uno nuevo) y llamarlo en `admin-cancel-appointment` y `doctor-office-delete`. (C) Agregar campo `manage_url` junto a `reschedule_url` en `cancel-by-doctor` y `auto-cancel-unconfirmed`.
+
+**Lección aprendida:** Todos los webhooks de cancelación deben seguir el mismo contrato: `event_type` específico por actor (patient/doctor/admin/auto) y campo `manage_url` presente siempre. Al agregar un nuevo flujo de cancelación, verificar contra este checklist antes de desplegar.

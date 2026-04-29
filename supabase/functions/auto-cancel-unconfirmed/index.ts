@@ -115,6 +115,7 @@ Deno.serve(async (req) => {
                 start_at: appt.start_at,
                 cancel_reason: "no_confirmation",
                 message: "Tu cita fue cancelada automáticamente porque no fue confirmada a tiempo",
+                manage_url: rescheduleUrl,
                 reschedule_url: rescheduleUrl,
               },
             }),
