@@ -9,6 +9,7 @@ import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { dispatchStaffRescheduleWebhook } from "../_shared/staff-reschedule-webhook.ts";
 
 interface Body {
   appointment_id: string;
@@ -94,6 +95,7 @@ Deno.serve(async (req) => {
   }
 
   const previousStartAt = appointment.start_at;
+  const previousEndAt = appointment.end_at;
 
   const { error: updateErr } = await supabase
     .from("appointments")
@@ -264,67 +266,23 @@ Deno.serve(async (req) => {
     }
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const dispatchHeaders = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${serviceKey}`,
-  };
-
-  const currentStatus = appointment.status;
-  try {
-    await Promise.all([
-      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
-        method: "POST",
-        headers: dispatchHeaders,
-        body: JSON.stringify({
-          event_type: "appointment.rescheduled",
-          payload: {
-            appointment_id,
-            source: "doctor_manual",
-            previous_start_at: previousStartAt,
-            new_start_at: start_at,
-            end_at,
-            patient_name: patient?.full_name ?? null,
-            patient_phone: patient?.phone ?? null,
-            doctor_name: doctor?.full_name ?? null,
-            doctor_id: appointment.doctor_id,
-            office_id: appointment.office_id,
-            office_name: office?.name ?? null,
-            office_address: office?.address ?? null,
-            notify_patient: true,
-            notify_doctor: false,
-          },
-        }),
-      }),
-      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
-        method: "POST",
-        headers: dispatchHeaders,
-        body: JSON.stringify({
-          event_type: "appointment.status_changed",
-          payload: {
-            appointment_id,
-            source: "doctor_manual",
-            previous_status: currentStatus,
-            new_status: currentStatus,
-            previous_start_at: previousStartAt,
-            new_start_at: start_at,
-            start_at,
-            end_at,
-            patient_phone: patient?.phone ?? null,
-            patient_name: patient?.full_name ?? null,
-            doctor_name: doctor?.full_name ?? null,
-            doctor_id: appointment.doctor_id,
-            notify_patient: true,
-            notify_doctor: false,
-            timestamp: new Date().toISOString(),
-          },
-        }),
-      }),
-    ]);
-  } catch (err) {
-    console.error("[doctor-reschedule] dispatch-webhook failed:", err);
-  }
+  // Single webhook: appointment.rescheduled_by_staff. Status doesn't change
+  // on staff reschedule, so we don't emit appointment.status_changed.
+  await dispatchStaffRescheduleWebhook({
+    supabase,
+    appointmentId: appointment_id,
+    doctorId: appointment.doctor_id,
+    doctorName: doctor?.full_name ?? null,
+    patientName: patient?.full_name ?? null,
+    patientPhone: patient?.phone ?? null,
+    officeId: appointment.office_id,
+    officeName: office?.name ?? null,
+    previousStartAt,
+    previousEndAt,
+    startAt: start_at,
+    endAt: end_at,
+    source: "doctor_manual",
+  });
 
   return jsonResponse({ success: true, appointment_id, sync_warnings: syncWarnings });
 });
