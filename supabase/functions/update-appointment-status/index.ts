@@ -216,8 +216,10 @@ Deno.serve(async (req) => {
     manage_url: manageUrl,
   };
 
-  // Dispatch specific event
-  const specificEvent = action === "confirm" ? "appointment.confirmed" : "appointment.cancelled";
+  // Dispatch specific event. Patient cancellation via WhatsApp uses the same
+  // event type as cancellation via the /gestionar UI, so n8n only needs one
+  // template path for "patient cancelled".
+  const specificEvent = action === "confirm" ? "appointment.confirmed" : "appointment.cancelled_by_patient";
   fetch(`${SUPABASE_URL}/functions/v1/dispatch-webhook`, {
     method: "POST",
     headers: {

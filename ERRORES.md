@@ -249,3 +249,45 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** Ampliar la query `doctorOfficeOptions` en `Calendario.tsx` para incluir `google_calendar_connected, outlook_calendar_connected`. Derivar las flags `googleEnabled` / `outlookEnabled` con `.some(o => o.google_calendar_connected)` sobre los consultorios del doctor filtrado.
 
 **Lección aprendida:** Cuando un campo migra de una tabla a otra (aquí: de `doctors` a `doctor_offices`), hacer grep de todos los sitios que leen el campo viejo y actualizarlos en la misma sesión. Un campo deprecated en el schema es invisible para el compilador — solo búsqueda explícita lo revela.
+
+---
+
+## 2026-04-30 — Cron jobs perdidos al migrar entre proyectos Supabase
+
+**Categoría:** deploy
+
+**Síntoma:** Tras migrar de proyecto Supabase viejo (`iepdgygvztocornqkkhk`, Lovable) al nuevo (`jyzvdowflblxmlahlupo`), los recordatorios 48h, día-de y la auto-cancelación dejaron de dispararse. La query `SELECT * FROM cron.job` en el nuevo proyecto devolvía `relation "cron.job" does not exist`.
+
+**Causa raíz:** Las extensiones `pg_cron` y `pg_net` no se habilitan automáticamente en proyectos Supabase nuevos, y los cron jobs registrados en el proyecto viejo no se replican al nuevo. El runbook de migración no incluía este paso.
+
+**Solución aplicada:** Habilitar `CREATE EXTENSION pg_cron` + `pg_net`. Guardar el `service_role_key` en `vault.secrets` con name `service_role_key`. Re-registrar los 3 jobs (`send-appointment-reminders`, `send-day-of-reminders`, `auto-cancel-unconfirmed`) leyendo el secret vía `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'service_role_key')`.
+
+**Lección aprendida:** Toda migración entre proyectos Supabase debe incluir un checklist explícito de: (1) extensiones habilitadas (`pg_cron`, `pg_net`, `vault`), (2) secrets en `vault.secrets`, (3) cron jobs registrados, (4) env vars de Edge Functions (`APP_URL`, OAuth keys, etc.), (5) tabla `webhooks` rellenada. La presencia de tablas y datos no garantiza que el comportamiento operacional esté restaurado.
+
+---
+
+## 2026-04-30 — Reschedule por staff no notificaba al paciente
+
+**Categoría:** backend
+
+**Síntoma:** Cuando admin o doctor reagendaban una cita desde el panel, el paciente no recibía WhatsApp con la nueva fecha. Solo cuando el reagendamiento lo iniciaba el paciente vía `/gestionar` (manage-reschedule) llegaba notificación.
+
+**Causa raíz:** Las EFs `admin-reschedule-appointment` y `doctor-reschedule-appointment` emitían `appointment.rescheduled` + `appointment.status_changed`, pero ningún webhook estaba suscrito a esos events para el flujo de staff. Adicionalmente el payload no incluía `manage_url` (bug previamente identificado).
+
+**Solución aplicada:** Crear nuevo `event_type` dedicado `appointment.rescheduled_by_staff`, encapsulado en helper `_shared/staff-reschedule-webhook.ts`. Eliminar la emisión doble (`rescheduled` + `status_changed`) de las dos EFs de staff — el status no cambia en un reschedule, así que `status_changed` no aplica conceptualmente. `manage-reschedule` (paciente) sigue intacto emitiendo `appointment.rescheduled`.
+
+**Lección aprendida:** Distinguir flujos por actor en el `event_type` desde el inicio (`_by_patient`, `_by_doctor`, `_by_staff`) facilita que n8n suscriba plantillas distintas. Y un evento que no implica cambio de estado (reschedule, sync, etc.) NO debe emitir `appointment.status_changed` — eso hace ruido y confunde a consumidores.
+
+---
+
+## 2026-04-30 — Citas confirmadas se quedaban "confirmed" indefinidamente tras la consulta
+
+**Categoría:** backend
+
+**Síntoma:** Citas con `status = 'confirmed'` y `end_at` ya pasado se mantenían en ese estado para siempre. El evento `appointment.completed` estaba listado en el dropdown de `Webhooks.tsx` pero ningún EF lo emitía.
+
+**Causa raíz:** No existía un cron que transicionara `confirmed → completed`. La transición solo ocurría implícitamente cuando el doctor llenaba el formulario post-consulta, pero muchas citas nunca lo recibían.
+
+**Solución aplicada:** Crear EF `auto-complete-appointments` que cada 15 min busca `status = 'confirmed' AND end_at < now()` y las marca como `completed`, emitiendo `appointment.completed` + `appointment.status_changed`. Registrar el cron en pg_cron con frecuencia `*/15 * * * *`.
+
+**Lección aprendida:** Cualquier estado terminal (cancelled, completed) debe alcanzarse por un camino determinístico — nunca depender de que un humano llene un formulario. Los cron jobs son la red de seguridad para datos que deben transicionar por tiempo, no por acción.
