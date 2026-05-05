@@ -114,6 +114,9 @@ export default function Login() {
               {submitting ? "Ingresando…" : "Iniciar Sesión"}
             </Button>
           </form>
+          <p className="text-center text-xs text-muted-foreground mt-4">
+            ¿Olvidaste tu contraseña? Contacta a tu administrador.
+          </p>
         </CardContent>
       </Card>
     </div>

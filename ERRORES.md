@@ -322,3 +322,17 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** En `Login.tsx`, gate el redirect post-login con un flag `readyToRedirect` que solo se enciende después del check inicial. Si en ese check hay sesión activa, llamar a `signOut()` antes de encender el flag. Mientras se procesa el signOut, mostrar el spinner. Toast informativo al terminar: "Sesión cerrada. Ingresa tus credenciales para continuar.".
 
 **Lección aprendida:** La sesión persistida es buena UX para volver a una app, pero la página `/login` debe interpretarse como una intención explícita del usuario de re-autenticar. La persistencia debe respetarse en rutas protegidas, no en la página de login.
+
+---
+
+## 2026-05-01 — Email del doctor desincronizado entre `auth.users` y `public.users`
+
+**Categoría:** backend / datos
+
+**Síntoma:** Tras editar el email de un doctor desde la UI del admin, el doctor no podía iniciar sesión con NINGÚN email. El email nuevo aparecía en la tarjeta del admin pero no funcionaba; el viejo no aparecía en ningún lado pero seguía siendo el válido en `auth.users`. Adicionalmente, algunos emails históricos quedaron con mayúsculas en `public.users` mientras Supabase Auth los normaliza a minúsculas — segunda fuente de desync.
+
+**Causa raíz:** No existía un endpoint que actualizara las dos tablas atómicamente. El admin (o algún flujo de UI) hacía `UPDATE public.users SET email = ...` directo, pero `auth.users` solo se modifica vía `supabase.auth.admin.updateUserById()` (requiere service role). Las dos tablas son fuentes de verdad distintas para el login (auth.users) y para la UI de admin (public.users).
+
+**Solución aplicada:** Nueva EF `update-doctor-credentials` que toma `{doctor_id, email?, password?}` y actualiza atómicamente: (1) pre-check de email duplicado en `public.users`, (2) UPDATE `public.users` con email lowercased + initial_password, (3) `auth.admin.updateUserById()` con email/password, (4) si el paso 3 falla, rollback del paso 2 a los valores anteriores. Email siempre lowercased en input. Nuevo dialog `EditCredentialsDialog` en `Doctores.tsx` que llama esta EF.
+
+**Lección aprendida:** Cuando una entidad tiene presencia en dos tablas (auth + extension), nunca actualizar una sola desde el frontend. Toda mutación debe pasar por una EF que sincronice ambas con rollback. Y los emails se normalizan a minúsculas en escritura — la única manera de garantizar que el lookup posterior siempre matchee, dado que Supabase Auth lo hace internamente.

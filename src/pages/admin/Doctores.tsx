@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getSpecialtyColor } from "@/lib/specialty-colors";
@@ -47,6 +47,7 @@ import {
   EyeOff,
   Trash2,
   Building2,
+  KeyRound,
 } from "lucide-react";
 import OfficeManager from "@/components/office/OfficeManager";
 
@@ -117,6 +118,7 @@ export default function Doctores() {
   const [manageOfficesFor, setManageOfficesFor] = useState<DoctorRow | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showEditCredentials, setShowEditCredentials] = useState(false);
 
   const catalogs = useCatalogs();
 
@@ -293,6 +295,9 @@ export default function Doctores() {
           onEdit={() => {
             setShowEdit(true);
           }}
+          onEditCredentials={() => {
+            setShowEditCredentials(true);
+          }}
           onManageOffices={() => {
             setManageOfficesFor(selectedDoctor);
             setSelectedDoctor(null);
@@ -300,6 +305,18 @@ export default function Doctores() {
           onDelete={() => {
             deleteDoctorMut.mutate(selectedDoctor.id);
             setSelectedDoctor(null);
+          }}
+        />
+      )}
+
+      {/* Edit credentials dialog */}
+      {showEditCredentials && selectedDoctor && (
+        <EditCredentialsDialog
+          doctor={selectedDoctor}
+          onClose={() => setShowEditCredentials(false)}
+          onSuccess={() => {
+            setShowEditCredentials(false);
+            queryClient.invalidateQueries({ queryKey: ["doctor-credentials", selectedDoctor.id] });
           }}
         />
       )}
@@ -357,6 +374,7 @@ function DoctorDetailDialog({
   onClose,
   onToggleActive,
   onEdit,
+  onEditCredentials,
   onManageOffices,
   onDelete,
 }: {
@@ -365,6 +383,7 @@ function DoctorDetailDialog({
   onClose: () => void;
   onToggleActive: () => void;
   onEdit: () => void;
+  onEditCredentials: () => void;
   onManageOffices: () => void;
   onDelete: () => void;
 }) {
@@ -428,7 +447,12 @@ function DoctorDetailDialog({
 
           {/* Login credentials section */}
           <div className="border-t pt-3 mt-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Acceso a la plataforma</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Acceso a la plataforma</p>
+              <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={onEditCredentials}>
+                <KeyRound className="h-3 w-3" /> Cambiar
+              </Button>
+            </div>
             <Row label="Email">
               {credentials?.email ? (
                 <span className="flex items-center gap-1">
@@ -782,5 +806,186 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <Label className="text-sm">{label}</Label>
       {children}
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════
+   Edit Credentials Dialog
+   ═══════════════════════════════════════════ */
+
+function EditCredentialsDialog({
+  doctor,
+  onClose,
+  onSuccess,
+}: {
+  doctor: DoctorRow;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const { data: credentials, isLoading: credLoading } = useQuery({
+    queryKey: ["doctor-credentials", doctor.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("users")
+        .select("email, initial_password")
+        .eq("doctor_id", doctor.id)
+        .single();
+      if (error) return null;
+      return data;
+    },
+  });
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Pre-fill email once loaded so the admin sees the current value and can edit.
+  // Password stays empty: empty = "no change". This matches the placeholder hint.
+  useEffect(() => {
+    if (credentials?.email) setEmail(credentials.email);
+  }, [credentials?.email]);
+
+  const handleSave = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPassword = password.trim();
+    const currentEmail = credentials?.email?.toLowerCase() ?? "";
+
+    const hasEmailChange = !!trimmedEmail && trimmedEmail !== currentEmail;
+    const hasPasswordChange = !!trimmedPassword;
+
+    if (!hasEmailChange && !hasPasswordChange) {
+      toast({ title: "No hay cambios para guardar" });
+      return;
+    }
+
+    if (hasEmailChange) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(trimmedEmail)) {
+        toast({ title: "Email inválido", description: "Verifica el formato (ej. doctor@findmed.com).", variant: "destructive" });
+        return;
+      }
+    }
+    if (hasPasswordChange && trimmedPassword.length < 6) {
+      toast({ title: "Contraseña muy corta", description: "Debe tener al menos 6 caracteres.", variant: "destructive" });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+
+      const requestBody: Record<string, string> = { doctor_id: doctor.id };
+      if (hasEmailChange) requestBody.email = trimmedEmail;
+      if (hasPasswordChange) requestBody.password = trimmedPassword;
+
+      const res = await supabase.functions.invoke("update-doctor-credentials", {
+        body: requestBody,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+
+      if (res.error) {
+        // Try to extract structured error from FunctionsHttpError context.
+        let errorCode: string | null = null;
+        let errorMessage: string | null = null;
+        const ctx = (res.error as { context?: Response }).context;
+        if (ctx && typeof ctx.json === "function") {
+          try {
+            const json = await ctx.clone().json();
+            errorCode = json?.error ?? null;
+            errorMessage = json?.message ?? null;
+          } catch {
+            // fall through
+          }
+        }
+
+        if (errorCode === "email_taken") {
+          toast({ title: "Email en uso", description: errorMessage ?? "Ese email ya pertenece a otro usuario.", variant: "destructive" });
+        } else if (errorCode === "invalid_email") {
+          toast({ title: "Email inválido", description: errorMessage ?? undefined, variant: "destructive" });
+        } else if (errorCode === "weak_password") {
+          toast({ title: "Contraseña muy corta", description: errorMessage ?? undefined, variant: "destructive" });
+        } else {
+          toast({ title: "Error al actualizar", description: errorMessage ?? res.error.message, variant: "destructive" });
+        }
+        return;
+      }
+
+      const parts = [hasEmailChange && "email", hasPasswordChange && "contraseña"].filter(Boolean) as string[];
+      toast({
+        title: "Credenciales actualizadas",
+        description: `Se actualizó ${parts.join(" y ")}. El doctor puede iniciar sesión con los nuevos datos.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["doctor-credentials", doctor.id] });
+      onSuccess();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ title: "Error al actualizar", description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Cambiar credenciales</DialogTitle>
+          <DialogDescription>
+            Sincroniza email y contraseña en el sistema de autenticación. Los cambios aplican de inmediato.
+          </DialogDescription>
+        </DialogHeader>
+
+        {credLoading ? (
+          <div className="py-6 flex justify-center">
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <Field label="Email">
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="doctor@findmed.com"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">Se guarda en minúsculas.</p>
+            </Field>
+            <Field label="Nueva contraseña">
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Deja vacío para no cambiarla"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Mínimo 6 caracteres. Tras guardar quedará visible en la tarjeta para que se la mandes al doctor.
+              </p>
+            </Field>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={handleSave} disabled={saving || credLoading}>
+            {saving ? "Guardando…" : "Guardar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
