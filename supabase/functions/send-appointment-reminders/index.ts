@@ -112,9 +112,6 @@ Deno.serve(async (req) => {
             patient_phone: patient?.phone ?? null,
             patient_name: patient?.full_name ?? null,
             doctor_name: doctor?.full_name ?? null,
-            // doctor_address is preserved for backward compat but is now
-            // sourced from the office, since the doctor's column is deprecated.
-            doctor_address: office?.address ?? null,
             office_id: appt.office_id,
             office_name: office?.name ?? null,
             office_address: office?.address ?? null,

@@ -352,3 +352,17 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`, `JSON.parse` etc. en el `message` y los reemplaza por un mensaje genérico amigable. Defensa en profundidad: aunque una EF nueva olvide devolver `{error, message}` estructurado, el usuario nunca verá un string técnico.
 
 **Lección aprendida:** Las Edge Functions de FindMed devuelven SIEMPRE shape `{error: <machine_code>, message: <es>}` en respuestas no-2xx. El frontend SIEMPRE pasa los errores por `extractEdgeFunctionError` antes de mostrarlos. Cuando se agregue una nueva EF que devuelve errores al usuario, seguir este patrón.
+
+---
+
+## 2026-05-01 — `doctor_address` legacy en payloads de webhook tras Mejora 2 (multi-consultorio)
+
+**Categoría:** backend
+
+**Síntoma:** Tras Mejora 2, cada cita pertenece a un consultorio específico (`office_id`) con su propia dirección, y `doctors.address` quedó deprecated. Pero los webhooks `appointment.reminder_48h`, `appointment.reminder_day_of` y `appointment.rescheduled_by_staff` (este último recién creado) seguían enviando un campo `doctor_address` en el payload — fuente del campo confusa, podía ser la dirección legacy del doctor o la del office, dependiendo del EF.
+
+**Causa raíz:** Cuando se agregó el campo en cada EF (en momentos distintos) no se unificó el contrato del payload. Algunas EFs ya escribían `office_address` correctamente pero seguían escribiendo también `doctor_address` "por backward compat", duplicando la fuente. El nuevo `staff-reschedule-webhook.ts` ni siquiera incluía la dirección.
+
+**Solución aplicada:** Eliminar `doctor_address` del payload en `send-appointment-reminders` y `send-day-of-reminders` (ya tenían `office_address`). Agregar `officeAddress` al input interface de `staff-reschedule-webhook.ts` y al payload, y pasarlo desde `admin-reschedule-appointment` y `doctor-reschedule-appointment` (ambos ya cargaban `office.address` para el calendar sync). Las 2 ocurrencias restantes en `manage-validate` y `reserve-validate` se preservan (tienen comentario explícito "backward compat for /gestionar markup", son responses HTTP a páginas del paciente, no webhooks).
+
+**Lección aprendida:** Cuando un campo migra de una tabla deprecated a otra (aquí: `doctors.address` → `doctor_offices.address`), buscar TODOS los payloads de webhook con grep antes de cerrar la migración. El frontend puede mantener compatibilidad ambigua, pero los webhooks son contratos hacia sistemas externos (n8n) y deben tener un solo nombre de campo por concepto.

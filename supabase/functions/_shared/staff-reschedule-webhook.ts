@@ -24,6 +24,7 @@ export interface StaffRescheduleInput {
   patientPhone: string | null;
   officeId: string | null;
   officeName: string | null;
+  officeAddress: string | null;
   previousStartAt: string;
   previousEndAt: string;
   startAt: string;
@@ -72,6 +73,7 @@ export async function dispatchStaffRescheduleWebhook(
           patient_phone: normalizedPhone,
           office_id: input.officeId,
           office_name: input.officeName,
+          office_address: input.officeAddress,
           previous_start_at: input.previousStartAt,
           previous_end_at: input.previousEndAt,
           start_at: input.startAt,

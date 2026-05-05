@@ -277,6 +277,7 @@ Deno.serve(async (req) => {
     patientPhone: patient?.phone ?? null,
     officeId: appointment.office_id,
     officeName: office?.name ?? null,
+    officeAddress: office?.address ?? null,
     previousStartAt,
     previousEndAt,
     startAt: start_at,
