@@ -1,27 +1,53 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuth";
-import { useEffect } from "react";
 
 export default function Login() {
-  const { session, role, loading } = useAuth();
+  const { session, role, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Gates the post-login redirect: only flips true after the on-mount session
+  // check completes (and a forced signOut runs if there was a stale session).
+  // Prevents the redirect effect from firing immediately on mount with the
+  // persisted session, which would defeat the forced re-auth.
+  const [readyToRedirect, setReadyToRedirect] = useState(false);
 
-  // Redirect if already logged in
+  // Force re-authentication on mount. Anyone landing on /login must enter
+  // credentials, even if a session is persisted in localStorage. Security
+  // guarantee for shared computers.
   useEffect(() => {
-    if (!loading && session && role) {
+    if (loading) return;
+
+    if (session) {
+      signOut()
+        .catch((err) => console.error("Forced signOut on /login failed:", err))
+        .finally(() => {
+          toast.info("Sesión cerrada. Ingresa tus credenciales para continuar.");
+          setReadyToRedirect(true);
+        });
+    } else {
+      setReadyToRedirect(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Redirect after a successful login. Gated on readyToRedirect so the
+  // on-mount session never triggers it.
+  useEffect(() => {
+    if (!readyToRedirect) return;
+    if (session && role) {
       navigate(role === "doctor" ? "/doctor/agenda" : "/admin/calendario", { replace: true });
     }
-  }, [loading, session, role, navigate]);
+  }, [readyToRedirect, session, role, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +63,8 @@ export default function Login() {
     // redirect handled by useEffect above once role loads
   };
 
-  if (loading) {
+  // Show spinner during initial auth check or while the forced signOut runs.
+  if (loading || (session && !readyToRedirect)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
