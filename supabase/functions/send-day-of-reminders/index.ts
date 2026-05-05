@@ -111,7 +111,6 @@ Deno.serve(async (req) => {
             patient_name: patient?.full_name ?? null,
             patient_phone: patient?.phone ?? null,
             doctor_name: doctor?.full_name ?? null,
-            doctor_address: office?.address ?? null,
             office_id: appt.office_id,
             office_name: office?.name ?? null,
             office_address: office?.address ?? null,
