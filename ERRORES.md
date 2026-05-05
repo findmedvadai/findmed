@@ -291,3 +291,34 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** Crear EF `auto-complete-appointments` que cada 15 min busca `status = 'confirmed' AND end_at < now()` y las marca como `completed`, emitiendo `appointment.completed` + `appointment.status_changed`. Registrar el cron en pg_cron con frecuencia `*/15 * * * *`.
 
 **Lección aprendida:** Cualquier estado terminal (cancelled, completed) debe alcanzarse por un camino determinístico — nunca depender de que un humano llene un formulario. Los cron jobs son la red de seguridad para datos que deben transicionar por tiempo, no por acción.
+
+---
+
+## 2026-05-01 — 404 NOT_FOUND al refrescar rutas internas en Vercel (SPA sin rewrite)
+
+**Categoría:** deploy
+
+**Síntoma:** Tras el deploy a Vercel, entrar directamente o refrescar (F5) cualquier ruta interna como `/admin/doctores`, `/doctor/agenda`, `/reserva?token=…`, `/gestionar?token=…` devolvía la página de error default de Vercel con `Code: NOT_FOUND`. La home (`/`) sí cargaba bien.
+
+**Causa raíz:** La app es un SPA con React Router — solo existe `index.html` físicamente. Vercel intentaba servir un archivo en la ruta del request, no lo encontraba y devolvía 404 antes de que React tomara el control. No había `vercel.json` con regla de rewrite.
+
+**Solución aplicada:** Crear `vercel.json` en la raíz del repo con:
+```json
+{ "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
+```
+
+**Lección aprendida:** Toda SPA desplegada en Vercel necesita un rewrite global a `/index.html`. Es parte del setup base, no algo a descubrir tras un bug en producción. Verificar antes del primer deploy a Vercel.
+
+---
+
+## 2026-05-01 — `/login` no forzaba re-autenticación con sesión activa
+
+**Categoría:** frontend / seguridad
+
+**Síntoma:** Si un usuario tenía sesión activa (persistida en localStorage) y otro usuario navegaba a `/login`, la app respetaba la sesión existente y redirigía al home del rol del primer usuario, sin pedir credenciales. Agujero de seguridad en computadoras compartidas.
+
+**Causa raíz:** `Login.tsx` tenía un `useEffect` que detectaba `session && role` y redirigía inmediatamente. Faltaba la semántica de "navegar a /login = quiero ingresar de nuevo".
+
+**Solución aplicada:** En `Login.tsx`, gate el redirect post-login con un flag `readyToRedirect` que solo se enciende después del check inicial. Si en ese check hay sesión activa, llamar a `signOut()` antes de encender el flag. Mientras se procesa el signOut, mostrar el spinner. Toast informativo al terminar: "Sesión cerrada. Ingresa tus credenciales para continuar.".
+
+**Lección aprendida:** La sesión persistida es buena UX para volver a una app, pero la página `/login` debe interpretarse como una intención explícita del usuario de re-autenticar. La persistencia debe respetarse en rutas protegidas, no en la página de login.
