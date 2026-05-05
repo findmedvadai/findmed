@@ -25,7 +25,13 @@ Deno.serve(async (req) => {
   );
 
   const auth = await requireAdmin(req, supabase);
-  if (!auth.ok) return jsonResponse({ error: auth.error }, auth.status);
+  if (!auth.ok) {
+    const code = auth.status === 403 ? "forbidden" : "unauthorized";
+    const message = auth.status === 403
+      ? "Solo un administrador puede cambiar credenciales"
+      : "Sesión inválida o expirada";
+    return jsonResponse({ error: code, message }, auth.status);
+  }
 
   let body: Body;
   try {

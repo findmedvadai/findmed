@@ -336,3 +336,19 @@ Cualquier error nuevo descubierto a partir de las sesiones documentadas aquí se
 **Solución aplicada:** Nueva EF `update-doctor-credentials` que toma `{doctor_id, email?, password?}` y actualiza atómicamente: (1) pre-check de email duplicado en `public.users`, (2) UPDATE `public.users` con email lowercased + initial_password, (3) `auth.admin.updateUserById()` con email/password, (4) si el paso 3 falla, rollback del paso 2 a los valores anteriores. Email siempre lowercased en input. Nuevo dialog `EditCredentialsDialog` en `Doctores.tsx` que llama esta EF.
 
 **Lección aprendida:** Cuando una entidad tiene presencia en dos tablas (auth + extension), nunca actualizar una sola desde el frontend. Toda mutación debe pasar por una EF que sincronice ambas con rollback. Y los emails se normalizan a minúsculas en escritura — la única manera de garantizar que el lookup posterior siempre matchee, dado que Supabase Auth lo hace internamente.
+
+---
+
+## 2026-05-01 — "Edge Function returned a non-2xx status code" expuesto al admin como toast
+
+**Categoría:** frontend / UX
+
+**Síntoma:** Al crear un doctor con email duplicado, el toast mostraba literalmente "Edge Function returned a non-2xx status code". El admin no entendía qué pasó ni qué hacer. Mismo patrón en cualquier otro error remoto del flujo de creación.
+
+**Causa raíz:** El `FunctionsHttpError` del SDK de Supabase tiene `message` igual a esa string técnica por default. La respuesta real (con `{error, message}` estructurado) vive en `error.context` como `Response` sin parsear. El frontend solo leía `err.message` y lo mostraba directamente.
+
+**Solución aplicada:** Crear helper `src/lib/edge-function-error.ts` con `extractEdgeFunctionError(err)` (clona el `context: Response` y parsea el JSON) y `toastFromEdgeFunctionError(parsed, fallbackTitle)` (mapea códigos a `{title, description}` en español). Refactor de `create-doctor` para devolver siempre `{error: <code>, message: <es>}` con códigos consistentes (`unauthorized`, `forbidden`, `email_taken`, `invalid_email`, `weak_password`, `missing_fields`, `internal_error`). `CreateDoctorDialog` y `EditCredentialsDialog` usan el helper.
+
+Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`, `JSON.parse` etc. en el `message` y los reemplaza por un mensaje genérico amigable. Defensa en profundidad: aunque una EF nueva olvide devolver `{error, message}` estructurado, el usuario nunca verá un string técnico.
+
+**Lección aprendida:** Las Edge Functions de FindMed devuelven SIEMPRE shape `{error: <machine_code>, message: <es>}` en respuestas no-2xx. El frontend SIEMPRE pasa los errores por `extractEdgeFunctionError` antes de mostrarlos. Cuando se agregue una nueva EF que devuelve errores al usuario, seguir este patrón.

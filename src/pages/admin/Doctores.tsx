@@ -50,6 +50,10 @@ import {
   KeyRound,
 } from "lucide-react";
 import OfficeManager from "@/components/office/OfficeManager";
+import {
+  extractEdgeFunctionError,
+  toastFromEdgeFunctionError,
+} from "@/lib/edge-function-error";
 
 /* ───────── types ───────── */
 
@@ -560,15 +564,39 @@ function CreateDoctorDialog({
     }));
 
   const handleCreate = async () => {
-    if (!form.email || !form.password || !form.full_name) {
-      toast({ title: "Completa los campos obligatorios", variant: "destructive" });
+    // Client-side validation: bloqueamos el caso obvio sin pegar al backend.
+    // Errores que requieren validación remota (email duplicado, etc.) los
+    // manejamos en el catch.
+    if (!form.full_name.trim()) {
+      toast({ title: "Falta el nombre completo", variant: "destructive" });
+      return;
+    }
+    if (!form.email.trim()) {
+      toast({ title: "Falta el email", variant: "destructive" });
+      return;
+    }
+    if (!form.password) {
+      toast({ title: "Falta la contraseña inicial", variant: "destructive" });
       return;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(form.email.trim())) {
-      toast({ title: "El correo electrónico no tiene un formato válido (ej. doctor@findmed.com)", variant: "destructive" });
+      toast({
+        title: "Email inválido",
+        description: "Verifica el formato (ej. doctor@findmed.com).",
+        variant: "destructive",
+      });
       return;
     }
+    if (form.password.length < 6) {
+      toast({
+        title: "Contraseña insegura",
+        description: "Debe tener al menos 6 caracteres.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -586,11 +614,18 @@ function CreateDoctorDialog({
         },
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
-      if (res.error) throw res.error;
-      toast({ title: "Doctor creado exitosamente" });
+      if (res.error) {
+        const parsed = await extractEdgeFunctionError(res.error);
+        const { title, description } = toastFromEdgeFunctionError(parsed, "Error al crear doctor");
+        toast({ title, description, variant: "destructive" });
+        return;
+      }
+      toast({ title: "Doctor creado", description: "La cuenta del doctor ya puede iniciar sesión." });
       onSuccess();
-    } catch (err: any) {
-      toast({ title: "Error al crear doctor", description: err?.message ?? String(err), variant: "destructive" });
+    } catch (err: unknown) {
+      const parsed = await extractEdgeFunctionError(err);
+      const { title, description } = toastFromEdgeFunctionError(parsed, "Error al crear doctor");
+      toast({ title, description, variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -888,29 +923,9 @@ function EditCredentialsDialog({
       });
 
       if (res.error) {
-        // Try to extract structured error from FunctionsHttpError context.
-        let errorCode: string | null = null;
-        let errorMessage: string | null = null;
-        const ctx = (res.error as { context?: Response }).context;
-        if (ctx && typeof ctx.json === "function") {
-          try {
-            const json = await ctx.clone().json();
-            errorCode = json?.error ?? null;
-            errorMessage = json?.message ?? null;
-          } catch {
-            // fall through
-          }
-        }
-
-        if (errorCode === "email_taken") {
-          toast({ title: "Email en uso", description: errorMessage ?? "Ese email ya pertenece a otro usuario.", variant: "destructive" });
-        } else if (errorCode === "invalid_email") {
-          toast({ title: "Email inválido", description: errorMessage ?? undefined, variant: "destructive" });
-        } else if (errorCode === "weak_password") {
-          toast({ title: "Contraseña muy corta", description: errorMessage ?? undefined, variant: "destructive" });
-        } else {
-          toast({ title: "Error al actualizar", description: errorMessage ?? res.error.message, variant: "destructive" });
-        }
+        const parsed = await extractEdgeFunctionError(res.error);
+        const { title, description } = toastFromEdgeFunctionError(parsed, "Error al actualizar");
+        toast({ title, description, variant: "destructive" });
         return;
       }
 
@@ -922,8 +937,9 @@ function EditCredentialsDialog({
       queryClient.invalidateQueries({ queryKey: ["doctor-credentials", doctor.id] });
       onSuccess();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast({ title: "Error al actualizar", description: msg, variant: "destructive" });
+      const parsed = await extractEdgeFunctionError(err);
+      const { title, description } = toastFromEdgeFunctionError(parsed, "Error al actualizar");
+      toast({ title, description, variant: "destructive" });
     } finally {
       setSaving(false);
     }
