@@ -366,3 +366,17 @@ Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`,
 **Solución aplicada:** Eliminar `doctor_address` del payload en `send-appointment-reminders` y `send-day-of-reminders` (ya tenían `office_address`). Agregar `officeAddress` al input interface de `staff-reschedule-webhook.ts` y al payload, y pasarlo desde `admin-reschedule-appointment` y `doctor-reschedule-appointment` (ambos ya cargaban `office.address` para el calendar sync). Las 2 ocurrencias restantes en `manage-validate` y `reserve-validate` se preservan (tienen comentario explícito "backward compat for /gestionar markup", son responses HTTP a páginas del paciente, no webhooks).
 
 **Lección aprendida:** Cuando un campo migra de una tabla deprecated a otra (aquí: `doctors.address` → `doctor_offices.address`), buscar TODOS los payloads de webhook con grep antes de cerrar la migración. El frontend puede mantener compatibilidad ambigua, pero los webhooks son contratos hacia sistemas externos (n8n) y deben tener un solo nombre de campo por concepto.
+
+---
+
+## 2026-05-01 — `PAYLOAD_EXAMPLES` en `Webhooks.tsx` desincronizado del payload real
+
+**Categoría:** frontend / docs
+
+**Síntoma:** El UI de Webhooks (`/admin/webhooks`) muestra ejemplos JSON del payload de cada evento, usados como documentación cuando el admin configura un webhook nuevo. Varios ejemplos no reflejaban el payload real que las EFs estaban emitiendo: faltaban campos (office_id, office_name, office_address, manage_url en eventos como reminder_*, status_changed), tenían campos que ya no se emiten (doctor_address legacy en created/cancelled), y `appointment.rescheduled` mostraba un `appointment_id` único cuando el real usa `old_appointment_id` + `new_appointment_id`.
+
+**Causa raíz:** Cuando una EF cambia su payload (agregar campo, renombrar, cambiar shape) no hay un step "actualizar el ejemplo del UI" en el flujo. Los ejemplos se quedaron en una versión de hace varias migraciones.
+
+**Solución aplicada:** Auditar cada evento contra su EF emisora y reescribir `PAYLOAD_EXAMPLES`. Cambios principales: (1) `appointment.created` agregó office_id/name/address, doctor_id, manage_token; (2) `appointment.confirmed` quitó doctor_name (no se emite) y agregó manage_url; (3) `appointment.cancelled_by_admin` extendió con source, previous_status, office_*, end_at, notify_patient/doctor; (4) `appointment.rescheduled` cambió a old_/new_appointment_id; (5) `appointment.rescheduled_by_staff` agregó office_address; (6) reminders 48h/day_of agregaron office_id/name/address y min_confirm_hours_before; (7) `appointment.status_changed` agregó manage_url; (8) `postconsultation.submitted` agregó end_at y symptoms. `appointment.cancelled` legacy y `patient.created` se anotaron con comentarios explicando su estado.
+
+**Lección aprendida:** Cuando se modifica el payload de un webhook, es obligatorio actualizar `PAYLOAD_EXAMPLES` en `Webhooks.tsx` en el mismo PR. Los ejemplos son la fuente de verdad documentada para el admin que configura n8n; si divergen, el admin construye plantillas Whaapy contra campos que no llegan.
