@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
+import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -143,68 +144,41 @@ Deno.serve(async (req) => {
         .maybeSingle()
     : { data: null };
 
-  // Delete Google Calendar event if connected on the office.
+  // Delete external calendar events via the shared token helper, which
+  // handles Microsoft refresh-token rotation and auto-disconnects on
+  // invalid_grant so the UI never shows a stale "connected" state.
   if (
     appointment.google_event_id &&
     office?.google_calendar_connected &&
-    office.google_refresh_token_ref &&
     office.google_calendar_id
   ) {
-    const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-    const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-    try {
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: office.google_refresh_token_ref,
-          grant_type: "refresh_token",
-        }),
-      });
-      const tokenData = await tokenRes.json();
-      if (tokenRes.ok && tokenData.access_token) {
+    const accessToken = await getGoogleAccessToken({ supabase, office });
+    if (accessToken) {
+      try {
         const calendarId = encodeURIComponent(office.google_calendar_id);
         await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${appointment.google_event_id}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${tokenData.access_token}` } }
+          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
         );
+      } catch (err) {
+        console.error("Error deleting Google Calendar event:", err);
       }
-    } catch (err) {
-      console.error("Error deleting Google Calendar event:", err);
     }
   }
 
   if (
     appointment.outlook_event_id &&
     office?.outlook_calendar_connected &&
-    office.outlook_refresh_token_ref &&
     office.outlook_calendar_id
   ) {
-    const OC_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
-    const OC_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
-    if (OC_ID) {
+    const accessToken = await getOutlookAccessToken({ supabase, office });
+    if (accessToken) {
       try {
-        const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: OC_ID,
-            client_secret: OC_SECRET,
-            refresh_token: office.outlook_refresh_token_ref,
-            grant_type: "refresh_token",
-            scope: "offline_access Calendars.ReadWrite",
-          }),
-        });
-        const tokenData = await tokenRes.json();
-        if (tokenRes.ok && tokenData.access_token) {
-          const calendarId = encodeURIComponent(office.outlook_calendar_id);
-          await fetch(
-            `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
-            { method: "DELETE", headers: { Authorization: `Bearer ${tokenData.access_token}` } }
-          );
-        }
+        const calendarId = encodeURIComponent(office.outlook_calendar_id);
+        await fetch(
+          `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+        );
       } catch (err) {
         console.error("Error deleting Outlook Calendar event:", err);
       }

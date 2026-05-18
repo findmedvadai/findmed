@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { resolveOfficeForCaller, parseTargetParams } from "../_shared/office-resolver.ts";
+import { getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -21,8 +22,6 @@ serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID")!;
-    const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET")!;
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -49,25 +48,15 @@ serve(async (req) => {
       return jsonResponse({ error: "No hay token de Outlook para este consultorio. Conecta primero." }, 400);
     }
 
-    const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: OUTLOOK_CLIENT_ID,
-        client_secret: OUTLOOK_CLIENT_SECRET,
-        refresh_token: office.outlook_refresh_token_ref,
-        grant_type: "refresh_token",
-        scope: "offline_access Calendars.ReadWrite",
-      }),
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenRes.ok) {
-      console.error("Token refresh failed:", tokenData);
+    // Shared helper handles refresh-token rotation (Microsoft rotates on every
+    // refresh) and auto-disconnects on invalid_grant.
+    const accessToken = await getOutlookAccessToken({ supabase, office });
+    if (!accessToken) {
       return jsonResponse({ error: "Error al obtener acceso a Microsoft" }, 400);
     }
 
     const calRes = await fetch("https://graph.microsoft.com/v1.0/me/calendars", {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
     const calData = await calRes.json();
 

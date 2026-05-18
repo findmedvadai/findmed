@@ -6,7 +6,7 @@
 // sent); we append `Z` to make the ISO string unambiguous on the client.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import {
   parseTargetParams,
@@ -16,6 +16,7 @@ import {
   getCallerDoctorId,
   type OfficeRow,
 } from "../_shared/office-resolver.ts";
+import { getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -44,11 +45,10 @@ interface ExternalEvent {
 }
 
 async function fetchOfficeEvents(
+  supabase: SupabaseClient,
   office: OfficeRow,
   timeMin: string,
-  timeMax: string,
-  clientId: string,
-  clientSecret: string
+  timeMax: string
 ): Promise<{ events: ExternalEvent[]; calendar_not_synced?: boolean }> {
   if (
     !office.outlook_calendar_connected ||
@@ -58,20 +58,10 @@ async function fetchOfficeEvents(
     return { events: [] };
   }
 
-  const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: office.outlook_refresh_token_ref,
-      grant_type: "refresh_token",
-      scope: "offline_access Calendars.ReadWrite",
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (!tokenRes.ok) {
-    console.error("Outlook token refresh failed for office", office.id, tokenData);
+  // Shared helper handles Microsoft's per-refresh token rotation and
+  // auto-disconnects on invalid_grant so the UI doesn't lie.
+  const accessToken = await getOutlookAccessToken({ supabase, office });
+  if (!accessToken) {
     return { events: [], calendar_not_synced: true };
   }
 
@@ -87,7 +77,7 @@ async function fetchOfficeEvents(
     });
 
   const eventsRes = await fetch(url, {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!eventsRes.ok) return { events: [] };
   const data = await eventsRes.json();
@@ -116,8 +106,6 @@ serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID")!;
-    const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET")!;
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return jsonResponse({ error: "No autorizado" }, 401);
@@ -159,7 +147,7 @@ serve(async (req) => {
     let anyNotSynced = false;
     const results: ExternalEvent[] = [];
     for (const o of offices) {
-      const r = await fetchOfficeEvents(o, timeMin, timeMax, OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET);
+      const r = await fetchOfficeEvents(supabase, o, timeMin, timeMax);
       if (r.calendar_not_synced) anyNotSynced = true;
       results.push(...r.events);
     }

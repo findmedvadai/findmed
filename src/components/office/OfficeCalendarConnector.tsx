@@ -119,13 +119,27 @@ export default function OfficeCalendarConnector({ office }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasOutlookToken]);
 
-  // Try to resolve friendly names for the connected calendars (so we don't
-  // show the raw calendar_id in the UI).
+  // When the office is connected, eagerly load both the friendly name AND
+  // the full calendars list. Without this the Select trigger renders empty
+  // because Radix can't match `value=calendar_id` against an empty list of
+  // SelectItem children — the doctor sees an empty field even though a
+  // calendar IS saved in DB. We resolve both on mount and after `connected`
+  // flips, so the dropdown is populated before the user clicks.
   useEffect(() => {
-    if (office.google_calendar_connected && office.google_calendar_id && !googleCalendarName) {
+    if (
+      office.google_calendar_connected &&
+      office.google_calendar_id &&
+      googleCalendars.length === 0 &&
+      !loadingGoogle
+    ) {
       void resolveCalendarName("google");
     }
-    if (office.outlook_calendar_connected && office.outlook_calendar_id && !outlookCalendarName) {
+    if (
+      office.outlook_calendar_connected &&
+      office.outlook_calendar_id &&
+      outlookCalendars.length === 0 &&
+      !loadingOutlook
+    ) {
       void resolveCalendarName("outlook");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -151,16 +165,30 @@ export default function OfficeCalendarConnector({ office }: Props) {
     return (data.calendars || []) as CalendarEntry[];
   };
 
+  // Loads the calendars list AND resolves the friendly name in one shot. We
+  // populate `googleCalendars` / `outlookCalendars` so the Radix Select can
+  // match `value=calendar_id` against a SelectItem and render its label —
+  // without the list the trigger renders empty. The friendly name is a
+  // fallback used in the SelectValue placeholder.
   const resolveCalendarName = async (provider: Provider) => {
+    if (provider === "google") setLoadingGoogle(true);
+    else setLoadingOutlook(true);
     try {
       const cals = await callList(provider);
+      if (provider === "google") setGoogleCalendars(cals);
+      else setOutlookCalendars(cals);
       const targetId =
         provider === "google" ? office.google_calendar_id : office.outlook_calendar_id;
       const found = cals.find((c) => c.id === targetId);
       if (provider === "google") setGoogleCalendarName(found?.summary ?? null);
       else setOutlookCalendarName(found?.summary ?? null);
     } catch {
-      // Silent — friendly name is best-effort.
+      // Silent — friendly name is best-effort. If the refresh token is broken
+      // the shared backend helper has already auto-disconnected the office,
+      // so the next render will show the "Conectar" button instead.
+    } finally {
+      if (provider === "google") setLoadingGoogle(false);
+      else setLoadingOutlook(false);
     }
   };
 
@@ -412,7 +440,14 @@ export default function OfficeCalendarConnector({ office }: Props) {
                 }}
               >
                 <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder={friendlyName ?? "Calendario conectado"} />
+                  {/* Radix Select renders empty when `value` exists but no
+                      matching <SelectItem> is mounted (e.g. before the list
+                      loads or if the list endpoint failed). Passing children
+                      to SelectValue guarantees the trigger always shows
+                      either the friendly name or a fallback label. */}
+                  <SelectValue placeholder={friendlyName ?? "Calendario conectado"}>
+                    {friendlyName ?? "Calendario conectado"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {(provider === "google" ? googleCalendars : outlookCalendars).map((c) => (

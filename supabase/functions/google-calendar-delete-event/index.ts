@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { resolveOfficeForCaller } from "../_shared/office-resolver.ts";
+import { getGoogleAccessToken } from "../_shared/calendar-tokens.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -19,8 +20,6 @@ serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-    const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return jsonResponse({ error: "No autorizado" }, 401);
@@ -45,23 +44,13 @@ serve(async (req) => {
       return jsonResponse({ error: "Google Calendar no está conectado en este consultorio" }, 400);
     }
 
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        refresh_token: office.google_refresh_token_ref,
-        grant_type: "refresh_token",
-      }),
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenRes.ok) return jsonResponse({ error: "Error al refrescar token de Google" }, 500);
+    const accessToken = await getGoogleAccessToken({ supabase, office });
+    if (!accessToken) return jsonResponse({ error: "Error al refrescar token de Google" }, 500);
 
     const calendarId = encodeURIComponent(office.google_calendar_id);
     const deleteRes = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(event_id)}`,
-      { method: "DELETE", headers: { Authorization: `Bearer ${tokenData.access_token}` } }
+      { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
     if (!deleteRes.ok && deleteRes.status !== 410 && deleteRes.status !== 404) {

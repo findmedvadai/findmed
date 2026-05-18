@@ -139,7 +139,7 @@ Deno.serve(async (req) => {
 
   // Google
   if (office?.google_calendar_connected && office.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken(office);
+    const accessToken = await getGoogleAccessToken({ supabase, office });
     if (!accessToken) {
       syncWarnings.push("google");
     } else {
@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
 
   // Outlook
   if (office?.outlook_calendar_connected && office.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken(office);
+    const accessToken = await getOutlookAccessToken({ supabase, office });
     if (!accessToken) {
       syncWarnings.push("outlook");
     } else {
