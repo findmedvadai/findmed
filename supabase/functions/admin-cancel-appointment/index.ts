@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
 
   // Delete external events (best-effort).
   if (appointment.google_event_id && office?.google_calendar_connected && office.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken(office);
+    const accessToken = await getGoogleAccessToken({ supabase, office });
     if (accessToken) {
       try {
         await fetch(
@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
   }
 
   if (appointment.outlook_event_id && office?.outlook_calendar_connected && office.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken(office);
+    const accessToken = await getOutlookAccessToken({ supabase, office });
     if (accessToken) {
       try {
         await fetch(

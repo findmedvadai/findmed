@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { resolveOfficeForCaller, parseTargetParams } from "../_shared/office-resolver.ts";
+import { getGoogleAccessToken } from "../_shared/calendar-tokens.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -21,8 +22,6 @@ serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-    const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -49,25 +48,16 @@ serve(async (req) => {
       return jsonResponse({ error: "No hay token de Google para este consultorio. Conecta primero." }, 400);
     }
 
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        refresh_token: office.google_refresh_token_ref,
-        grant_type: "refresh_token",
-      }),
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenRes.ok) {
-      console.error("Token refresh failed:", tokenData);
+    // Shared helper handles refresh-token rotation and marks the office as
+    // disconnected if Google returns invalid_grant (permanent failure).
+    const accessToken = await getGoogleAccessToken({ supabase, office });
+    if (!accessToken) {
       return jsonResponse({ error: "Error al obtener acceso a Google" }, 400);
     }
 
     const calRes = await fetch(
       "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=owner",
-      { headers: { Authorization: `Bearer ${tokenData.access_token}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const calData = await calRes.json();
 

@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkAvailability } from "../_shared/availability-check.ts";
+import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,9 +24,6 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
-
-  const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-  const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
   let body: { token: string; slot_start: string; date: string };
   try {
@@ -128,54 +126,12 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Helper to get Google access token
-  const getGoogleAccessToken = async (): Promise<string | null> => {
-    if (!office?.google_calendar_connected || !office.google_refresh_token_ref) return null;
-    try {
-      const res = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: office.google_refresh_token_ref,
-          grant_type: "refresh_token",
-        }),
-      });
-      const data = await res.json();
-      return res.ok ? data.access_token : null;
-    } catch {
-      return null;
-    }
-  };
-
-  // Helper to get Outlook access token
-  const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
-  const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
-  const getOutlookAccessToken = async (): Promise<string | null> => {
-    if (!office?.outlook_calendar_connected || !office.outlook_refresh_token_ref || !OUTLOOK_CLIENT_ID) return null;
-    try {
-      const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: OUTLOOK_CLIENT_ID,
-          client_secret: OUTLOOK_CLIENT_SECRET,
-          refresh_token: office.outlook_refresh_token_ref,
-          grant_type: "refresh_token",
-          scope: "offline_access Calendars.ReadWrite",
-        }),
-      });
-      const data = await res.json();
-      return res.ok ? data.access_token : null;
-    } catch {
-      return null;
-    }
-  };
-
-  // 1. Cancel old appointment + delete calendar events if not already cancelled
-  const googleAccessToken = await getGoogleAccessToken();
-  const outlookAccessToken = await getOutlookAccessToken();
+  // 1. Cancel old appointment + delete calendar events if not already cancelled.
+  // Shared helper handles refresh token rotation (Microsoft) and auto-disconnects
+  // the office when the refresh token is permanently invalid (invalid_grant).
+  const tokenArgs = office ? { supabase, office } : null;
+  const googleAccessToken = tokenArgs ? await getGoogleAccessToken(tokenArgs) : null;
+  const outlookAccessToken = tokenArgs ? await getOutlookAccessToken(tokenArgs) : null;
 
   if (oldAppt.status !== "cancelled") {
     // Delete old Google event
@@ -242,7 +198,10 @@ Deno.serve(async (req) => {
   let newGoogleEventId: string | null = null;
   let newOutlookEventId: string | null = null;
 
-  const gcToken = googleAccessToken ?? await getGoogleAccessToken();
+  // Re-attempt token refresh for create step; the office row may have been
+  // updated by the rotation persistence above.
+  const gcToken =
+    googleAccessToken ?? (tokenArgs ? await getGoogleAccessToken(tokenArgs) : null);
   if (gcToken && office?.google_calendar_id) {
     const calendarId = encodeURIComponent(office.google_calendar_id);
     try {
@@ -278,7 +237,8 @@ Deno.serve(async (req) => {
     }
   }
 
-  const olToken = outlookAccessToken ?? await getOutlookAccessToken();
+  const olToken =
+    outlookAccessToken ?? (tokenArgs ? await getOutlookAccessToken(tokenArgs) : null);
   if (olToken && office?.outlook_calendar_id) {
     const calendarId = encodeURIComponent(office.outlook_calendar_id);
     try {

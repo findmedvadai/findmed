@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
+import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,11 +24,6 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
-
-  const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-  const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-  const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
-  const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
 
   let body: { session_id: string; slot_start: string; date: string };
   try {
@@ -156,21 +152,10 @@ Deno.serve(async (req) => {
   let googleEventId: string | null = null;
   let outlookEventId: string | null = null;
 
-  if (office.google_calendar_connected && office.google_refresh_token_ref && office.google_calendar_id) {
+  if (office.google_calendar_connected && office.google_calendar_id) {
     try {
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: office.google_refresh_token_ref,
-          grant_type: "refresh_token",
-        }),
-      });
-
-      const tokenData = await tokenRes.json();
-      if (tokenRes.ok && tokenData.access_token) {
+      const accessToken = await getGoogleAccessToken({ supabase, office });
+      if (accessToken) {
         const calendarId = encodeURIComponent(office.google_calendar_id);
         const eventBody = {
           summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
@@ -184,7 +169,7 @@ Deno.serve(async (req) => {
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${tokenData.access_token}`,
+              Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(eventBody),
@@ -203,22 +188,10 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error("Error creating Google Calendar event:", err);
     }
-  } else if (office.outlook_calendar_connected && office.outlook_refresh_token_ref && office.outlook_calendar_id && OUTLOOK_CLIENT_ID) {
+  } else if (office.outlook_calendar_connected && office.outlook_calendar_id) {
     try {
-      const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: OUTLOOK_CLIENT_ID,
-          client_secret: OUTLOOK_CLIENT_SECRET,
-          refresh_token: office.outlook_refresh_token_ref,
-          grant_type: "refresh_token",
-          scope: "offline_access Calendars.ReadWrite",
-        }),
-      });
-
-      const tokenData = await tokenRes.json();
-      if (tokenRes.ok && tokenData.access_token) {
+      const accessToken = await getOutlookAccessToken({ supabase, office });
+      if (accessToken) {
         const calendarId = encodeURIComponent(office.outlook_calendar_id);
         const eventBody = {
           subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
@@ -232,7 +205,7 @@ Deno.serve(async (req) => {
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${tokenData.access_token}`,
+              Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(eventBody),

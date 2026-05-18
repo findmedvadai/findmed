@@ -184,7 +184,7 @@ Deno.serve(async (req) => {
 
   // External calendar sync: best-effort.
   if (office.google_calendar_connected && office.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken(office);
+    const accessToken = await getGoogleAccessToken({ supabase, office });
     if (!accessToken) {
       syncWarnings.push("google");
     } else {
@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
   }
 
   if (office.outlook_calendar_connected && office.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken(office);
+    const accessToken = await getOutlookAccessToken({ supabase, office });
     if (!accessToken) {
       syncWarnings.push("outlook");
     } else {

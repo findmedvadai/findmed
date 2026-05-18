@@ -8,6 +8,7 @@
 // or has a date override blocking the day.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,11 +29,6 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
-
-  const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-  const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-  const OUTLOOK_CLIENT_ID = Deno.env.get("OUTLOOK_CLIENT_ID") || "";
-  const OUTLOOK_CLIENT_SECRET = Deno.env.get("OUTLOOK_CLIENT_SECRET") || "";
 
   let body: { office_id?: string; doctor_id?: string; date: string };
   try {
@@ -168,27 +164,17 @@ Deno.serve(async (req) => {
   // External calendar conflicts. Only the office's connected provider counts.
   let externalEvents: { startMin: number; endMin: number }[] = [];
 
-  if (office.google_calendar_connected && office.google_refresh_token_ref && office.google_calendar_id) {
+  if (office.google_calendar_connected && office.google_calendar_id) {
     try {
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: office.google_refresh_token_ref,
-          grant_type: "refresh_token",
-        }),
-      });
-      const tokenData = await tokenRes.json();
-      if (tokenRes.ok && tokenData.access_token) {
+      const accessToken = await getGoogleAccessToken({ supabase, office });
+      if (accessToken) {
         const calendarId = encodeURIComponent(office.google_calendar_id);
         const timeMin = `${date}T00:00:00Z`;
         const timeMax = `${date}T23:59:59Z`;
         const eventsUrl =
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events?` +
           new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "50" });
-        const eventsRes = await fetch(eventsUrl, { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+        const eventsRes = await fetch(eventsUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         const eventsData = await eventsRes.json();
         const parseLocalMinutes = (dt: string): number => {
           const timePart = dt.split("T")[1];
@@ -206,21 +192,10 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error("Error fetching Google Calendar events:", err);
     }
-  } else if (office.outlook_calendar_connected && office.outlook_refresh_token_ref && office.outlook_calendar_id && OUTLOOK_CLIENT_ID) {
+  } else if (office.outlook_calendar_connected && office.outlook_calendar_id) {
     try {
-      const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: OUTLOOK_CLIENT_ID,
-          client_secret: OUTLOOK_CLIENT_SECRET,
-          refresh_token: office.outlook_refresh_token_ref,
-          grant_type: "refresh_token",
-          scope: "offline_access Calendars.ReadWrite",
-        }),
-      });
-      const tokenData = await tokenRes.json();
-      if (tokenRes.ok && tokenData.access_token) {
+      const accessToken = await getOutlookAccessToken({ supabase, office });
+      if (accessToken) {
         const calendarId = encodeURIComponent(office.outlook_calendar_id);
         const eventsUrl =
           `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/calendarView?` +

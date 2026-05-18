@@ -369,6 +369,37 @@ Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`,
 
 ---
 
+## 2026-05-17 — OAuth de calendarios "se desconecta solo" tras un periodo corto
+
+**Categoría:** backend / integración
+
+**Síntoma:** Los calendarios (Google y Outlook) de los doctores quedaban en estado fantasma: la UI mostraba "Conectado" pero las operaciones a la API externa fallaban silenciosamente — eventos no se creaban en el calendario, no se borraban al cancelar, la agenda no mostraba eventos externos. Único workaround: desconectar y rehacer OAuth manualmente. Pasaba con ambos proveedores (descartaba la limitación de 7 días de Google Testing — Microsoft no la tiene). Adicionalmente, el dropdown del calendario seleccionado en `/doctor/configuracion` aparecía vacío al cargar.
+
+**Causa raíz:** Dos bugs separados que componían el síntoma:
+
+1. **Rotación de refresh tokens no persistida (Outlook).** Microsoft Identity Platform rota el `refresh_token` en cada respuesta de `/token` (refresh). El código sólo leía `access_token` y descartaba el `refresh_token` nuevo. Tras X refreshes el token guardado dejaba de ser válido y todas las operaciones devolvían `invalid_grant`. Aplicaba a Outlook por la rotación; aplicaba a Google esporádicamente cuando hay re-consent o rotación condicional.
+2. **Sin auto-disconnect en `invalid_grant`.** Cuando el refresh token era permanentemente inválido (revocado, expirado, rotado fuera de sincronía), `getGoogleAccessToken` / `getOutlookAccessToken` devolvían `null` silenciosamente sin tocar la DB. La columna `xxx_calendar_connected` seguía `true` para siempre — la UI mentía y el doctor no sabía que tenía que reconectar.
+3. **Implementaciones inline divergentes.** Múltiples Edge Functions (events, list, create-event, update-event, delete-event, manage-cancel, manage-reschedule, reserve-slots, reserve-create, cancel-by-doctor) tenían su propio `fetch` a `oauth2.googleapis.com/token` o `login.microsoftonline.com/.../token` con manejo independiente del error. Arreglar el bug en un solo lugar dejaría las demás vulnerables.
+4. **Dropdown vacío.** En `OfficeCalendarConnector.tsx`, el `<Select>` recibía `value=office.google_calendar_id` pero la lista de `<SelectItem>` (`googleCalendars`) se cargaba lazy al abrir el dropdown. Cuando Radix Select recibe un value sin SelectItem correspondiente, el trigger renderiza vacío. La función `resolveCalendarName` que computaba el placeholder dependía del mismo endpoint roto, así que también fallaba silenciosamente.
+
+**Solución aplicada:**
+
+- **Helper `_shared/calendar-tokens.ts` rehecho** para aceptar `{ supabase, office }` (en vez de solo `office`). En cada refresh:
+  - Si la respuesta trae `refresh_token` y es distinto del guardado → UPDATE `doctor_offices.{provider}_refresh_token_ref` y actualiza el objeto in-memory para que la siguiente llamada en la misma request use el nuevo token (clave para Microsoft, que invalida el anterior tras grace period).
+  - Si la respuesta es 4xx con `error: "invalid_grant"` → marca el office como desconectado (`{provider}_calendar_connected=false, {provider}_calendar_id=null, {provider}_refresh_token_ref=null`). La UI ya no miente.
+  - Si la respuesta es 5xx, network error u otro `invalid_client` → log y degrade graceful, NO desconectar (es transitorio).
+- **Migración exhaustiva de 13 Edge Functions** al helper compartido: admin-cancel-appointment, admin-create-appointment, admin-reschedule-appointment, cancel-by-doctor, doctor-create-appointment, doctor-office-delete, doctor-reschedule-appointment, google-calendar-{create,delete,events,list,update}-event, manage-cancel, manage-reschedule, outlook-calendar-{create,delete,events,list,update}-event, reserve-create, reserve-slots, _shared/slot-validation.ts. Cero `fetch` directo a `oauth2.googleapis.com/token` o `login.microsoftonline.com/.../token` fuera del helper y de los callbacks OAuth.
+- **`OfficeCalendarConnector.tsx`**: `resolveCalendarName` ahora también popula `googleCalendars`/`outlookCalendars` para que el Radix Select encuentre el SelectItem que matchea `value`. El `useEffect` que disparaba la resolución se cambió a depender de `cals.length === 0` (en lugar de `friendlyName === null`) y `<SelectValue>` ahora siempre tiene children (`friendlyName ?? "Calendario conectado"`) como defensa adicional.
+
+**Lección aprendida:**
+
+- Cualquier flujo OAuth que use refresh tokens **debe persistir el `refresh_token` de la respuesta** cada vez, no sólo en el callback inicial. Microsoft rota siempre; Google rota a veces; asumir que el token guardado vive para siempre es un bug latente.
+- Cuando un proveedor responde `invalid_grant`, el sistema **debe reflejarlo en la DB** y dejar de mentir en la UI. Mantener el flag `connected=true` mientras todas las operaciones fallan es peor que mostrar "Desconectado": el doctor no sabe que tiene que actuar.
+- Lógica de OAuth refresh es exactamente el tipo de código que debe vivir en `_shared/` y no copiarse inline. Cuando una Edge Function nueva necesita refrescar tokens, debe importar el helper — nunca duplicar el `fetch` al endpoint del proveedor.
+- Radix Select con `value` sin SelectItem correspondiente renderiza vacío (no muestra el placeholder). Si la lista se carga lazy, hay que pre-poblarla cuando se conoce el value, o pasar children explícitos a `<SelectValue>`.
+
+---
+
 ## 2026-05-01 — `PAYLOAD_EXAMPLES` en `Webhooks.tsx` desincronizado del payload real
 
 **Categoría:** frontend / docs

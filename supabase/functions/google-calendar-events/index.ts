@@ -11,7 +11,7 @@
 // frontend can label them when showing "all offices" combined.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import {
   parseTargetParams,
@@ -21,6 +21,7 @@ import {
   getCallerDoctorId,
   type OfficeRow,
 } from "../_shared/office-resolver.ts";
+import { getGoogleAccessToken } from "../_shared/calendar-tokens.ts";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -44,29 +45,18 @@ interface ExternalEvent {
 }
 
 async function fetchOfficeEvents(
+  supabase: SupabaseClient,
   office: OfficeRow,
   timeMin: string,
-  timeMax: string,
-  clientId: string,
-  clientSecret: string
+  timeMax: string
 ): Promise<{ events: ExternalEvent[]; calendar_not_synced?: boolean }> {
   if (!office.google_calendar_connected || !office.google_refresh_token_ref || !office.google_calendar_id) {
     return { events: [] };
   }
 
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: office.google_refresh_token_ref,
-      grant_type: "refresh_token",
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (!tokenRes.ok) {
-    console.error("Google token refresh failed for office", office.id, tokenData);
+  // Shared helper handles rotation + auto-disconnect on invalid_grant.
+  const accessToken = await getGoogleAccessToken({ supabase, office });
+  if (!accessToken) {
     return { events: [], calendar_not_synced: true };
   }
 
@@ -82,7 +72,7 @@ async function fetchOfficeEvents(
     });
 
   const eventsRes = await fetch(url, {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!eventsRes.ok) return { events: [] };
   const data = await eventsRes.json();
@@ -111,8 +101,6 @@ serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
-    const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return jsonResponse({ error: "No autorizado" }, 401);
@@ -160,7 +148,7 @@ serve(async (req) => {
     let anyNotSynced = false;
     const results: ExternalEvent[] = [];
     for (const o of offices) {
-      const r = await fetchOfficeEvents(o, timeMin, timeMax, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+      const r = await fetchOfficeEvents(supabase, o, timeMin, timeMax);
       if (r.calendar_not_synced) anyNotSynced = true;
       results.push(...r.events);
     }

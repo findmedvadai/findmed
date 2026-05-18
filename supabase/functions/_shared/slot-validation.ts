@@ -88,27 +88,35 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
   }
 
   // 2./3. External calendars: read from the office row when provided, else
-  // from the legacy doctors row.
-  let doctor: {
-    google_calendar_connected?: boolean | null;
-    google_refresh_token_ref?: string | null;
-    google_calendar_id?: string | null;
-    outlook_calendar_connected?: boolean | null;
-    outlook_refresh_token_ref?: string | null;
-    outlook_calendar_id?: string | null;
-  } | null = null;
+  // from the legacy doctors row. The office id is needed so the token helper
+  // can persist Microsoft's rotated refresh_token and auto-disconnect on
+  // permanent failures.
+  let doctor:
+    | ({
+        id: string | null;
+        google_calendar_connected?: boolean | null;
+        google_refresh_token_ref?: string | null;
+        google_calendar_id?: string | null;
+        outlook_calendar_connected?: boolean | null;
+        outlook_refresh_token_ref?: string | null;
+        outlook_calendar_id?: string | null;
+      })
+    | null = null;
 
   if (officeId) {
     const { data } = await supabase
       .from("doctor_offices")
       .select(
-        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
+        "id, google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
           "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
       )
       .eq("id", officeId)
       .maybeSingle();
     doctor = data;
   } else {
+    // Legacy path (no officeId). The token helper can't persist rotation or
+    // auto-disconnect here because there is no office row to update. Acceptable
+    // because all production callers pass officeId post-Mejora 2.
     const { data } = await supabase
       .from("doctors")
       .select(
@@ -117,7 +125,7 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
       )
       .eq("id", doctorId)
       .maybeSingle();
-    doctor = data;
+    doctor = data ? { id: null, ...data } : null;
   }
 
   if (!doctor) return { available: true, conflicts: [] };
@@ -129,7 +137,7 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
 
   if (doctor.google_calendar_connected && doctor.google_calendar_id) {
     try {
-      const accessToken = await getGoogleAccessToken(doctor);
+      const accessToken = await getGoogleAccessToken({ supabase, office: doctor });
       if (accessToken) {
         const calendarId = encodeURIComponent(doctor.google_calendar_id);
         const url =
@@ -166,7 +174,7 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
 
   if (doctor.outlook_calendar_connected && doctor.outlook_calendar_id) {
     try {
-      const accessToken = await getOutlookAccessToken(doctor);
+      const accessToken = await getOutlookAccessToken({ supabase, office: doctor });
       if (accessToken) {
         const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
         const url =
