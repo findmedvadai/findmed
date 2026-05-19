@@ -65,7 +65,6 @@ interface DoctorRow {
   is_active: boolean;
   city_id: string | null;
   zone_id: string | null;
-  google_calendar_connected: boolean;
   doctor_specialties: {
     specialty_id: string;
     specialties: { id: string; name: string; color: string | null } | null;
@@ -130,11 +129,14 @@ export default function Doctores() {
   const { data: doctors, isLoading } = useQuery({
     queryKey: ["admin-doctors"],
     queryFn: async () => {
+      // doctors.google_calendar_connected is DEPRECATED since Mejora 2 — the
+      // real connection state lives per-office in doctor_offices. We do NOT
+      // read the legacy column here; the detail card fetches per-office state
+      // and renders it instead.
       const { data, error } = await supabase
         .from("doctors")
         .select(`
           id, full_name, phone, address, is_active, city_id, zone_id,
-          google_calendar_connected,
           doctor_specialties(specialty_id, specialties(id, name, color)),
           cities(name), zones(name)
         `)
@@ -407,6 +409,35 @@ function DoctorDetailDialog({
     },
   });
 
+  // Per-office calendar status. We READ from doctor_offices (not the deprecated
+  // doctors.google_calendar_connected which was lying — it never got updated
+  // after Mejora 2 moved calendar state into doctor_offices). Each active,
+  // non-deleted office has its own Google/Outlook connection state. We show
+  // only the names + a small connection indicator per office: anything richer
+  // (like the calendar email or the picker) lives in the per-doctor offices
+  // dialog which the admin can open from this card.
+  const { data: offices } = useQuery({
+    queryKey: ["doctor-offices-summary", doctor.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("doctor_offices")
+        .select(
+          "id, name, google_calendar_connected, outlook_calendar_connected, is_active"
+        )
+        .eq("doctor_id", doctor.id)
+        .eq("is_deleted", false)
+        .eq("is_active", true)
+        .order("created_at", { ascending: true });
+      return (data ?? []) as Array<{
+        id: string;
+        name: string;
+        google_calendar_connected: boolean;
+        outlook_calendar_connected: boolean;
+        is_active: boolean;
+      }>;
+    },
+  });
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md">
@@ -439,11 +470,37 @@ function DoctorDetailDialog({
           </Row>
           <Row label="Ciudad">{doctor.cities?.name ?? "—"}</Row>
           <Row label="Zona">{doctor.zones?.name ?? "—"}</Row>
-          <Row label="Google Calendar">
-            <div className="flex items-center gap-1.5">
-              <Calendar className={`h-4 w-4 ${doctor.google_calendar_connected ? "text-confirmed" : "text-muted-foreground"}`} />
-              <span>{doctor.google_calendar_connected ? "Conectado" : "No conectado"}</span>
-            </div>
+          {/* Per-office calendar status. Replaces the legacy per-doctor row
+              that read from doctors.google_calendar_connected and was lying
+              because that column hasn't been updated since Mejora 2 moved
+              calendar state into doctor_offices. */}
+          <Row label="Calendarios">
+            {!offices ? (
+              <span className="text-muted-foreground">—</span>
+            ) : offices.length === 0 ? (
+              <span className="text-muted-foreground">Sin consultorios</span>
+            ) : (
+              <div className="space-y-1.5">
+                {offices.map((o) => {
+                  const provider = o.google_calendar_connected
+                    ? "Google"
+                    : o.outlook_calendar_connected
+                      ? "Outlook"
+                      : null;
+                  return (
+                    <div key={o.id} className="flex items-center gap-1.5 text-xs">
+                      <Calendar
+                        className={`h-3.5 w-3.5 ${provider ? "text-confirmed" : "text-muted-foreground"}`}
+                      />
+                      <span className="font-medium">{o.name}:</span>
+                      <span className={provider ? "" : "text-muted-foreground"}>
+                        {provider ? `${provider} conectado` : "Sin calendario"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Row>
           <Row label="Estado">
             <Badge variant={doctor.is_active ? "default" : "secondary"}>{doctor.is_active ? "Activo" : "Inactivo"}</Badge>

@@ -400,6 +400,43 @@ Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`,
 
 ---
 
+## 2026-05-18 — UI miente sobre estado de calendarios externos por inercia tras Mejora 2
+
+**Categoría:** frontend / datos
+
+**Síntoma:** Cuatro síntomas combinados:
+1. La tarjeta del doctor en `/admin/doctores` mostraba una sola fila "Google Calendar: Conectado/No conectado" a nivel doctor, ignorando que post-Mejora 2 cada consultorio tiene su propio estado.
+2. Esa fila mentía: decía "No conectado" cuando los calendarios sí estaban conectados y sincronizando correctamente.
+3. Al conectar un calendario en un consultorio, los calendarios previamente conectados en OTROS consultorios del mismo doctor aparecían momentáneamente como desconectados antes de volver al estado correcto.
+4. El dropdown del calendario seleccionado en `/doctor/configuracion` mostraba a veces el texto genérico "Calendario conectado" en vez del nombre real (ej. "Prueba FindMed"). Solo al abrir el dropdown se veían los nombres reales.
+
+**Causa raíz:**
+
+1. **`doctors.google_calendar_connected` quedó deprecated tras Mejora 2** (estado vive en `doctor_offices`) pero seguía siendo leído por `Doctores.tsx` línea 442. El campo nunca se actualizaba cuando se conectaba un calendario por consultorio, así que se quedó en `false` indefinidamente — lying field. Mismo patrón que ya se había arreglado en `Calendario.tsx` (entrada 2026-04-29) pero olvidado aquí.
+2. **`invalidateOffices()` tras OAuth/conexión** invalidaba la query completa `["doctor-offices", doctorId]`. Aunque la query tenía `placeholderData: keepPreviousData`, el refetch causaba a los sibling `OfficeCalendarConnector` re-renderizar sus efectos (incluyendo el `useEffect` que iba a Postgres a leer `refresh_token_ref`), y durante esa ventana corta los otros consultorios se veían "Desconectado" hasta que el refetch resolvía. "Unos minutos" en la práctica era ~segundos, percibidos como largos por el usuario.
+3. **El nombre del calendario seleccionado se computaba vía live-lookup al endpoint `{provider}-calendar-list`** cada vez que cargaba la página. Si el endpoint era lento, fallaba o el calendario seleccionado no estaba en `minAccessRole=owner`, el `friendlyName` quedaba `null` y el componente caía al texto genérico "Calendario conectado". Plus el fix anterior pasaba ese texto como children de `<SelectValue>` lo que sobrescribía la auto-derivación de Radix incluso cuando el SelectItem matcheaba el value.
+
+**Solución aplicada:**
+
+1. **Migración `20260518100000_office_calendar_display_name.sql`**: agregar columnas `google_calendar_name TEXT`, `outlook_calendar_name TEXT` a `doctor_offices`. Nullable, sin backfill — offices legacy se backfilean al primer load via lookup vivo que persiste el nombre en DB. Próximos loads leen directo del row.
+2. **`doctor-office-update` EF**: aceptar los nuevos campos como parámetros opcionales; al hacer `disconnect_google`/`disconnect_outlook` también limpiar el name (NULL). El auto-disconnect de `_shared/calendar-tokens.ts` también limpia el name.
+3. **`OfficeCalendarConnector.tsx`**:
+   - El `friendlyName` ahora se deriva directamente de `office.google_calendar_name` / `office.outlook_calendar_name` (props), no de state local que dependía de fetch lazy.
+   - `resolveCalendarName` se ejecuta SOLO cuando el name está null (legacy office) y al resolverlo lo persiste a DB via `doctor-office-update` con `setQueryData` optimista.
+   - `saveCalendar`, `switchCalendar`, `performDisconnect`, y el post-OAuth `finish()` ya NO llaman `invalidateOffices()`. Usan `patchOfficeCache` (setQueryData) para actualizar SOLO la fila del office tocado. Siblings nunca ven refetch.
+4. **`Doctores.tsx` admin card**:
+   - Removido `google_calendar_connected` del select de `doctors` (deprecated, lying).
+   - Nueva query `["doctor-offices-summary", doctorId]` que lee de `doctor_offices` los consultorios activos con sus flags de Google/Outlook.
+   - La fila "Google Calendar" se reemplazó por "Calendarios" con una lista compacta: `<nombre del consultorio>: <Google conectado | Outlook conectado | Sin calendario>` por cada office activo. No expone calendar_id ni email — la gestión rica vive en el diálogo "Consultorios" del admin.
+
+**Lección aprendida:**
+
+- Cuando un campo migra de tabla (aquí `doctors.X` → `doctor_offices.X`), un grep global del nombre del campo no encuentra todos los call sites — hay que enumerar los lugares de la UI que muestran ese concepto y verificarlos uno por uno. El grep que se hizo en la entrada 2026-04-29 cubrió `Calendario.tsx` pero no `Doctores.tsx` porque éste lo leía como parte de un select-with-asterisk semántico (no usaba el nombre como string literal en código adicional).
+- Para queries que renderizan listas con sub-componentes con sus propios side effects, **`invalidateQueries` puede causar flashes incluso con `keepPreviousData`** — el refetch dispara la re-evaluación de efectos en hijos. Cuando sabes exactamente qué cambió, usar `setQueryData` (optimistic patch) en lugar de invalidate.
+- Si necesitas un valor friendly para mostrar en UI y ese valor viene de una API externa lenta/que puede fallar, **persiste el snapshot en tu propia DB** al momento que el usuario lo elige. No depender del live-lookup en cada page load — es lento, falla y obliga a manejar estados de loading/error que confunden al usuario.
+
+---
+
 ## 2026-05-01 — `PAYLOAD_EXAMPLES` en `Webhooks.tsx` desincronizado del payload real
 
 **Categoría:** frontend / docs
