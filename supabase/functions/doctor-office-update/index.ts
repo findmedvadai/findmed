@@ -22,6 +22,10 @@ interface Body {
   outlook_calendar_id?: string | null;
   google_calendar_connected?: boolean;
   outlook_calendar_connected?: boolean;
+  // Persisted friendly name so the trigger of the calendar Select can render
+  // the real name immediately instead of fetching the list on every page load.
+  google_calendar_name?: string | null;
+  outlook_calendar_name?: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -70,16 +74,22 @@ Deno.serve(async (req) => {
     updates.google_calendar_connected = body.google_calendar_connected;
   if (body.outlook_calendar_connected !== undefined)
     updates.outlook_calendar_connected = body.outlook_calendar_connected;
+  if (body.google_calendar_name !== undefined)
+    updates.google_calendar_name = body.google_calendar_name;
+  if (body.outlook_calendar_name !== undefined)
+    updates.outlook_calendar_name = body.outlook_calendar_name;
 
-  // Hard disconnect: clears refresh token + connected flag + calendar id.
+  // Hard disconnect: clears refresh token + connected flag + calendar id + name.
   if (body.disconnect_google) {
     updates.google_calendar_connected = false;
     updates.google_calendar_id = null;
+    updates.google_calendar_name = null;
     updates.google_refresh_token_ref = null;
   }
   if (body.disconnect_outlook) {
     updates.outlook_calendar_connected = false;
     updates.outlook_calendar_id = null;
+    updates.outlook_calendar_name = null;
     updates.outlook_refresh_token_ref = null;
   }
 
@@ -93,8 +103,8 @@ Deno.serve(async (req) => {
     .eq("id", body.office_id)
     .select(
       "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, " +
-        "google_calendar_connected, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_calendar_id, " +
+        "google_calendar_connected, google_calendar_id, google_calendar_name, " +
+        "outlook_calendar_connected, outlook_calendar_id, outlook_calendar_name, " +
         "is_active, is_deleted"
     )
     .single();

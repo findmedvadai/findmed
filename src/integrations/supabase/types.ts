@@ -292,6 +292,7 @@ export type Database = {
           doctor_id: string
           google_calendar_connected: boolean
           google_calendar_id: string | null
+          google_calendar_name: string | null
           google_refresh_token_ref: string | null
           id: string
           is_active: boolean
@@ -299,6 +300,7 @@ export type Database = {
           name: string
           outlook_calendar_connected: boolean
           outlook_calendar_id: string | null
+          outlook_calendar_name: string | null
           outlook_refresh_token_ref: string | null
           updated_at: string
           zone_id: string | null
@@ -312,6 +314,7 @@ export type Database = {
           doctor_id: string
           google_calendar_connected?: boolean
           google_calendar_id?: string | null
+          google_calendar_name?: string | null
           google_refresh_token_ref?: string | null
           id?: string
           is_active?: boolean
@@ -319,6 +322,7 @@ export type Database = {
           name: string
           outlook_calendar_connected?: boolean
           outlook_calendar_id?: string | null
+          outlook_calendar_name?: string | null
           outlook_refresh_token_ref?: string | null
           updated_at?: string
           zone_id?: string | null
@@ -332,6 +336,7 @@ export type Database = {
           doctor_id?: string
           google_calendar_connected?: boolean
           google_calendar_id?: string | null
+          google_calendar_name?: string | null
           google_refresh_token_ref?: string | null
           id?: string
           is_active?: boolean
@@ -339,6 +344,7 @@ export type Database = {
           name?: string
           outlook_calendar_connected?: boolean
           outlook_calendar_id?: string | null
+          outlook_calendar_name?: string | null
           outlook_refresh_token_ref?: string | null
           updated_at?: string
           zone_id?: string | null

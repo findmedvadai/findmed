@@ -32,8 +32,10 @@ interface OfficeRow {
   doctor_id: string;
   google_calendar_connected: boolean;
   google_calendar_id: string | null;
+  google_calendar_name: string | null;
   outlook_calendar_connected: boolean;
   outlook_calendar_id: string | null;
+  outlook_calendar_name: string | null;
 }
 
 interface CalendarEntry {
@@ -50,12 +52,14 @@ type Provider = "google" | "outlook";
 
 export default function OfficeCalendarConnector({ office }: Props) {
   const queryClient = useQueryClient();
-  const invalidateOffices = () =>
-    queryClient.invalidateQueries({ queryKey: ["doctor-offices", office.doctor_id] });
 
-  // Patch a single office field in the cache without triggering a full
-  // refetch — avoids the momentary empty-list flash that refetch causes
-  // on sibling OfficeCalendarConnector instances.
+  // Patch a single office row in the cache. We deliberately AVOID invalidating
+  // the whole offices query after calendar mutations — invalidation triggers a
+  // refetch that re-runs every sibling OfficeCalendarConnector's effects, and
+  // even with placeholderData=keepPreviousData the briefly-changing references
+  // were causing other offices to flicker as "Desconectado" until the refetch
+  // resolved. Optimistic patch + targeted refetch fall through to the same
+  // end state without disturbing siblings.
   const patchOfficeCache = (patch: Record<string, unknown>) => {
     const key = ["doctor-offices", office.doctor_id];
     queryClient.setQueryData(key, (old: unknown) => {
@@ -83,9 +87,12 @@ export default function OfficeCalendarConnector({ office }: Props) {
   const [confirmReplace, setConfirmReplace] = useState<Provider | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<Provider | null>(null);
 
-  // Friendly names of currently selected calendars.
-  const [googleCalendarName, setGoogleCalendarName] = useState<string | null>(null);
-  const [outlookCalendarName, setOutlookCalendarName] = useState<string | null>(null);
+  // Friendly names: prefer the persisted snapshot stored on the office row at
+  // pick time (added 2026-05-18 — see migration 20260518100000). Fall back to
+  // a one-time live lookup for offices connected before the column existed —
+  // that backfill writes the name back so the next load is instant.
+  const googleCalendarName = office.google_calendar_name;
+  const outlookCalendarName = office.outlook_calendar_name;
 
   // Detect "we have a refresh_token but no calendar_id yet" — that's the
   // post-OAuth, pre-pick state.
@@ -119,17 +126,16 @@ export default function OfficeCalendarConnector({ office }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasOutlookToken]);
 
-  // When the office is connected, eagerly load both the friendly name AND
-  // the full calendars list. Without this the Select trigger renders empty
-  // because Radix can't match `value=calendar_id` against an empty list of
-  // SelectItem children — the doctor sees an empty field even though a
-  // calendar IS saved in DB. We resolve both on mount and after `connected`
-  // flips, so the dropdown is populated before the user clicks.
+  // Backfill the persisted calendar name (added 2026-05-18) for offices that
+  // were connected before the column existed. Once backfilled, the name lives
+  // on the office row and the SelectValue can render it without ever talking
+  // to the provider list endpoint. We do NOT trigger this when the name is
+  // already persisted — avoids unnecessary list calls on every page load.
   useEffect(() => {
     if (
       office.google_calendar_connected &&
       office.google_calendar_id &&
-      googleCalendars.length === 0 &&
+      !office.google_calendar_name &&
       !loadingGoogle
     ) {
       void resolveCalendarName("google");
@@ -137,7 +143,7 @@ export default function OfficeCalendarConnector({ office }: Props) {
     if (
       office.outlook_calendar_connected &&
       office.outlook_calendar_id &&
-      outlookCalendars.length === 0 &&
+      !office.outlook_calendar_name &&
       !loadingOutlook
     ) {
       void resolveCalendarName("outlook");
@@ -146,8 +152,10 @@ export default function OfficeCalendarConnector({ office }: Props) {
   }, [
     office.google_calendar_connected,
     office.google_calendar_id,
+    office.google_calendar_name,
     office.outlook_calendar_connected,
     office.outlook_calendar_id,
+    office.outlook_calendar_name,
   ]);
 
   const callList = async (provider: Provider): Promise<CalendarEntry[]> => {
@@ -165,11 +173,11 @@ export default function OfficeCalendarConnector({ office }: Props) {
     return (data.calendars || []) as CalendarEntry[];
   };
 
-  // Loads the calendars list AND resolves the friendly name in one shot. We
-  // populate `googleCalendars` / `outlookCalendars` so the Radix Select can
-  // match `value=calendar_id` against a SelectItem and render its label —
-  // without the list the trigger renders empty. The friendly name is a
-  // fallback used in the SelectValue placeholder.
+  // Backfills the persisted calendar name (and caches the list locally so the
+  // dropdown is ready to open). Runs ONLY when `office.{provider}_calendar_name`
+  // is null — i.e. a legacy connection from before migration 20260518100000.
+  // On success we both update the cache and persist to DB so the next page
+  // load gets the name directly from the office row, no live lookup needed.
   const resolveCalendarName = async (provider: Provider) => {
     if (provider === "google") setLoadingGoogle(true);
     else setLoadingOutlook(true);
@@ -180,8 +188,27 @@ export default function OfficeCalendarConnector({ office }: Props) {
       const targetId =
         provider === "google" ? office.google_calendar_id : office.outlook_calendar_id;
       const found = cals.find((c) => c.id === targetId);
-      if (provider === "google") setGoogleCalendarName(found?.summary ?? null);
-      else setOutlookCalendarName(found?.summary ?? null);
+      const friendly = found?.summary ?? null;
+      if (friendly) {
+        // Optimistic cache patch first so the UI updates immediately, then a
+        // best-effort write to DB. We don't surface errors from the persist —
+        // the cache patch alone is sufficient for the current session.
+        patchOfficeCache(
+          provider === "google"
+            ? { google_calendar_name: friendly }
+            : { outlook_calendar_name: friendly }
+        );
+        try {
+          await callUpdate({
+            office_id: office.id,
+            ...(provider === "google"
+              ? { google_calendar_name: friendly }
+              : { outlook_calendar_name: friendly }),
+          });
+        } catch {
+          // Persist failed — cache still has the name for this session.
+        }
+      }
     } catch {
       // Silent — friendly name is best-effort. If the refresh token is broken
       // the shared backend helper has already auto-disconnected the office,
@@ -243,23 +270,47 @@ export default function OfficeCalendarConnector({ office }: Props) {
       const id = provider === "google" ? googleSelected : outlookSelected;
       const cals = provider === "google" ? googleCalendars : outlookCalendars;
       const friendly = cals.find((c) => c.id === id)?.summary ?? null;
+      // Persist id + connected flag + friendly NAME in a single call so the
+      // office row carries everything the UI needs to render correctly on the
+      // next page load (no live lookup required).
       await callUpdate({
         office_id: office.id,
         ...(provider === "google"
-          ? { google_calendar_id: id, google_calendar_connected: true }
-          : { outlook_calendar_id: id, outlook_calendar_connected: true }),
+          ? {
+              google_calendar_id: id,
+              google_calendar_connected: true,
+              google_calendar_name: friendly,
+            }
+          : {
+              outlook_calendar_id: id,
+              outlook_calendar_connected: true,
+              outlook_calendar_name: friendly,
+            }),
       });
       toast.success(`Calendario de ${provider === "google" ? "Google" : "Outlook"} conectado`);
       if (provider === "google") {
         setGoogleCalendars([]);
         setHasGoogleToken(false);
-        setGoogleCalendarName(friendly);
       } else {
         setOutlookCalendars([]);
         setHasOutlookToken(false);
-        setOutlookCalendarName(friendly);
       }
-      invalidateOffices();
+      // Optimistic patch: do NOT invalidate the whole offices query. Sibling
+      // OfficeCalendarConnector instances would briefly see undefined props
+      // during the refetch, flickering "Desconectado" before settling.
+      patchOfficeCache(
+        provider === "google"
+          ? {
+              google_calendar_id: id,
+              google_calendar_connected: true,
+              google_calendar_name: friendly,
+            }
+          : {
+              outlook_calendar_id: id,
+              outlook_calendar_connected: true,
+              outlook_calendar_name: friendly,
+            }
+      );
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -273,23 +324,21 @@ export default function OfficeCalendarConnector({ office }: Props) {
       provider === "google" ? office.google_calendar_id : office.outlook_calendar_id;
     if (currentId === newId) return;
     try {
+      const cals = provider === "google" ? googleCalendars : outlookCalendars;
+      const friendly = cals.find((c) => c.id === newId)?.summary ?? null;
       await callUpdate({
         office_id: office.id,
         ...(provider === "google"
-          ? { google_calendar_id: newId }
-          : { outlook_calendar_id: newId }),
+          ? { google_calendar_id: newId, google_calendar_name: friendly }
+          : { outlook_calendar_id: newId, outlook_calendar_name: friendly }),
       });
-      const cals = provider === "google" ? googleCalendars : outlookCalendars;
-      const friendly = cals.find((c) => c.id === newId)?.summary ?? null;
-      if (provider === "google") setGoogleCalendarName(friendly);
-      else setOutlookCalendarName(friendly);
       toast.success("Calendario actualizado");
-      // Patch only this office's calendar_id in the cache — avoids a full
-      // refetch that would blank out the sibling office's picker briefly.
+      // Patch only this office's row in the cache — avoids a full refetch
+      // that would blank out sibling offices' pickers briefly.
       patchOfficeCache(
         provider === "google"
-          ? { google_calendar_id: newId }
-          : { outlook_calendar_id: newId }
+          ? { google_calendar_id: newId, google_calendar_name: friendly }
+          : { outlook_calendar_id: newId, outlook_calendar_name: friendly }
       );
     } catch (err) {
       toast.error((err as Error).message);
@@ -306,13 +355,24 @@ export default function OfficeCalendarConnector({ office }: Props) {
       if (provider === "google") {
         setGoogleCalendars([]);
         setHasGoogleToken(false);
-        setGoogleCalendarName(null);
       } else {
         setOutlookCalendars([]);
         setHasOutlookToken(false);
-        setOutlookCalendarName(null);
       }
-      invalidateOffices();
+      // Optimistic patch — no invalidate so siblings don't flicker.
+      patchOfficeCache(
+        provider === "google"
+          ? {
+              google_calendar_connected: false,
+              google_calendar_id: null,
+              google_calendar_name: null,
+            }
+          : {
+              outlook_calendar_connected: false,
+              outlook_calendar_id: null,
+              outlook_calendar_name: null,
+            }
+      );
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -352,7 +412,12 @@ export default function OfficeCalendarConnector({ office }: Props) {
           setConnectingOutlook(false);
           setHasOutlookToken(true);
         }
-        invalidateOffices();
+        // After OAuth, only THIS office's row changed in DB (the callback sets
+        // its refresh_token_ref + clears connected/calendar_id pending pick).
+        // We don't need to refetch the whole offices list — that would flicker
+        // sibling offices. The local `hasXxxToken=true` state is enough to
+        // surface the "Selecciona el calendario" picker for THIS office, and
+        // saveCalendar will optimistic-patch the cache when the doctor picks.
       };
       const handleMessage = (event: MessageEvent) => {
         if (event.data === expectedMessage) {

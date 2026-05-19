@@ -134,11 +134,13 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
               ? {
                   google_calendar_connected: false,
                   google_calendar_id: null,
+                  google_calendar_name: null,
                   google_refresh_token_ref: null,
                 }
               : {
                   outlook_calendar_connected: false,
                   outlook_calendar_id: null,
+                  outlook_calendar_name: null,
                   outlook_refresh_token_ref: null,
                 }
           )
