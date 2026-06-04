@@ -66,9 +66,9 @@ findmed/
 │   │   ├── utils.ts                # cn() = clsx + tailwind-merge
 │   │   └── specialty-colors.ts     # Paleta de colores para especialidades
 │   ├── pages/
-│   │   ├── Index.tsx               # Redirige a /login
-│   │   ├── Login.tsx
-│   │   ├── NotFound.tsx
+│   │   ├── Landing.tsx             # Landing pública en la raíz "/" (sin login). Homepage para verificación OAuth de Google.
+│   │   ├── Login.tsx               # Punto de entrada de doctores/admins en "/login"
+│   │   ├── NotFound.tsx            # Catch-all 404 (en español); su CTA lleva a la landing "/"
 │   │   ├── GoogleCalendarSuccess.tsx / OutlookCalendarSuccess.tsx  # Popups de OAuth
 │   │   ├── admin/                  # Calendario, Reservas, Doctores, Catalogos, Inbox, Webhooks, ApiKeys
 │   │   ├── doctor/                 # Agenda, Configuracion, PorCompletar, DoctorInbox
@@ -106,7 +106,9 @@ Alias de import: `@/*` → `./src/*` (definido en [tsconfig.json](tsconfig.json)
 1. **Usuarios autenticados (admin / doctor)**: usan el cliente Supabase con el JWT del usuario; **todas las consultas pasan por RLS**. Funciones SQL `has_role`, `is_admin_or_superadmin` y `get_doctor_id_for_user` son `SECURITY DEFINER` y manejan la autorización.
 2. **Pacientes (sin login)**: acceden vía Edge Functions públicas usando tokens temporales (`reservation_sessions.token` o `appointment_manage_tokens.token`) que llegan por URL (`/reserva?token=…`, `/gestionar?token=…`). La Edge Function valida el token, usa el service role key y devuelve sólo los campos necesarios.
 3. **Sistemas externos (n8n / WhatsApp bot)**: autenticación con API keys con prefijo `fm_` (validadas por SHA‑256 contra `api_keys.key_hash`). Endpoints: `triage-webhook`, `update-appointment-status`, `search-doctors`, etc.
-4. **Rutas públicas estáticas (sin login ni token)**: `/privacidad` y `/terminos` renderizan documentos legales (`src/content/legal/*.md`) requeridos para la verificación OAuth de Google/Microsoft. No tocan la base de datos. Están fuera de `ProtectedRoute` en [App.tsx](src/App.tsx). Un `Footer` global ([src/components/Footer.tsx](src/components/Footer.tsx)) enlaza a ambas desde la landing (`/login`) y desde las propias páginas legales.
+4. **Rutas públicas estáticas (sin login ni token)**: la raíz `/` ([Landing.tsx](src/pages/Landing.tsx)) y las páginas legales `/privacidad` y `/terminos` (`src/content/legal/*.md`). Todas están **fuera de `ProtectedRoute`** en [App.tsx](src/App.tsx) y son accesibles sin sesión.
+   - **`/` (landing)**: homepage pública requerida para la verificación OAuth de Google (el reviewer rechaza apps cuya homepage está detrás de login). Renderiza de inmediato sin depender del estado de carga de `useAuth` ni hacer fetch a Supabase, para que cargue rápido y sea indexable. Lee el auth solo de forma opcional para alternar el CTA entre "Iniciar sesión" (no autenticado) e "Ir al dashboard" (autenticado). Los meta tags SEO (title/description en español) viven en `index.html` (FindMed es un SPA Vite, sin SSR). **Antes**: `/` redirigía a `/login` vía `Index.tsx` (eliminado). **Ahora**: `/login` es solo el punto de entrada de doctores/admins; las rutas protegidas siguen redirigiendo a `/login` vía `ProtectedRoute` cuando no hay sesión.
+   - Las páginas legales no tocan la base de datos. Un `Footer` global ([src/components/Footer.tsx](src/components/Footer.tsx)) enlaza a `/privacidad`, `/terminos` y a la landing `/`, e incluye la razón social (LMVM Operadora de Asistencias y Servicios de Salud, S. de R.L. de C.V.). Se reutiliza en la landing, el login y las páginas legales.
 
 ### Realtime
 
