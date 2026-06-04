@@ -7,7 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AdminLayout from "@/components/layouts/AdminLayout";
 import DoctorLayout from "@/components/layouts/DoctorLayout";
-import Index from "./pages/Index";
+import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -48,7 +48,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Index />} />
+            <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/reserva" element={<Reserva />} />
             <Route path="/gestionar" element={<Gestionar />} />
