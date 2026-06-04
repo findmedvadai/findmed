@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuth";
+import Footer from "@/components/Footer";
 
 export default function Login() {
   const { session, role, loading, signOut } = useAuth();
@@ -73,7 +74,8 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-secondary/30 px-4">
+    <div className="flex min-h-screen flex-col bg-secondary/30">
+      <div className="flex flex-1 items-center justify-center px-4 py-8">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="items-center gap-1 pb-2">
           <h1 className="text-2xl font-bold text-primary">FindMed</h1>
@@ -119,6 +121,8 @@ export default function Login() {
           </p>
         </CardContent>
       </Card>
+      </div>
+      <Footer />
     </div>
   );
 }

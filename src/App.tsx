@@ -30,6 +30,10 @@ import DoctorInbox from "./pages/doctor/DoctorInbox";
 import Reserva from "./pages/patient/Reserva";
 import Gestionar from "./pages/patient/Gestionar";
 
+// Legal pages (públicas, sin auth)
+import Privacidad from "./pages/legal/Privacidad";
+import Terminos from "./pages/legal/Terminos";
+
 // Utility pages
 import GoogleCalendarSuccess from "./pages/GoogleCalendarSuccess";
 import OutlookCalendarSuccess from "./pages/OutlookCalendarSuccess";
@@ -48,6 +52,8 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/reserva" element={<Reserva />} />
             <Route path="/gestionar" element={<Gestionar />} />
+            <Route path="/privacidad" element={<Privacidad />} />
+            <Route path="/terminos" element={<Terminos />} />
             <Route path="/google-calendar-success" element={<GoogleCalendarSuccess />} />
             <Route path="/outlook-calendar-success" element={<OutlookCalendarSuccess />} />
 
