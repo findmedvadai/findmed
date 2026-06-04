@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getGoogleCalendarRedirectUri } from "../_shared/oauth-redirect.ts";
 
 // State decoder counterpart of google-calendar-auth. Two formats accepted:
 //   * `${doctorId}:${officeId}`                — legacy
@@ -35,7 +36,10 @@ serve(async (req) => {
     const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
     const SITE_URL_FALLBACK = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
-    const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
+    // MUST match the redirect_uri sent by google-calendar-auth exactly, or
+    // Google rejects the exchange with redirect_uri_mismatch. Both import the
+    // same shared constant to guarantee that.
+    const REDIRECT_URI = getGoogleCalendarRedirectUri();
 
     // Resolve which origin to redirect to: prefer the one encoded in `state`
     // by the frontend that initiated this flow; fall back to SITE_URL.
