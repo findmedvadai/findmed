@@ -1,5 +1,9 @@
 {
   "rewrites": [
+    {
+      "source": "/oauth/google/callback",
+      "destination": "https://jyzvdowflblxmlahlupo.supabase.co/functions/v1/google-calendar-callback"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

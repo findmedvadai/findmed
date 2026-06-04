@@ -303,6 +303,7 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 - Cada cita FindMed crea/actualiza/elimina un evento en ese calendario (`appointments.google_event_id`).
 - La `/doctor/agenda` pinta citas FindMed **+** eventos externos leídos por `google-calendar-events`.
 - Flujo OAuth abre popup → callback → popup cierra y postea `"google-calendar-connected"` al opener ([GoogleCalendarSuccess.tsx](src/pages/GoogleCalendarSuccess.tsx)).
+- **Redirect URI con dominio propio (proxy de Vercel).** Para que el consent screen de Google muestre `app.findmed.com.mx` y no el host interno `*.supabase.co`, el `redirect_uri` que se envía a Google es `https://app.findmed.com.mx/oauth/google/callback`. Esa ruta **no** existe en el SPA: [vercel.json](vercel.json) tiene un rewrite (antes del catch-all a `/index.html`) que la proxea a la Edge Function `google-calendar-callback` en Supabase, preservando query params (`code`, `state`, …), método y headers. El URI lo define un único helper compartido [`_shared/oauth-redirect.ts`](supabase/functions/_shared/oauth-redirect.ts) (`getGoogleCalendarRedirectUri`), importado tanto por `google-calendar-auth` (construcción de la URL de auth) como por `google-calendar-callback` (intercambio code→token), para que sean byte-idénticos y nunca haya `redirect_uri_mismatch`. El origen real del frontend (localhost/staging/prod) viaja en el `state`, no en el `redirect_uri`, así que un solo URI de producción sirve para todos los entornos. Override opcional vía secret `GOOGLE_OAUTH_REDIRECT_URI`. El URI viejo (`https://<project>.supabase.co/functions/v1/google-calendar-callback`) debe seguir registrado en Google Cloud Console en paralelo para no romper flujos en vuelo.
 
 ### Outlook Calendar
 
@@ -411,6 +412,7 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
 | `SUPABASE_ANON_KEY` | Anon key (para validar JWTs de usuarios desde las funciones). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role (acceso total, bypasea RLS). Requerido por prácticamente todas las Edge Functions. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth client de Google Cloud para Google Calendar. |
+| `GOOGLE_OAUTH_REDIRECT_URI` | **Opcional.** Override del redirect URI de Google Calendar. Si no se define, usa `https://app.findmed.com.mx/oauth/google/callback` (proxeado por Vercel a `google-calendar-callback`). Debe ser el mismo en `google-calendar-auth` y `google-calendar-callback` (es project-level, ambas lo leen). |
 | `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` | App registration de Microsoft (Azure AD) para Outlook Calendar. |
 | `APP_URL` | URL pública de la app (producción: URL de Vercel; desarrollo: `http://localhost:5173`); se usa para construir links `/reserva?token=…` y `/gestionar?token=…`. Actualizar en Supabase al hacer deploy. |
 

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getGoogleCalendarRedirectUri } from "../_shared/oauth-redirect.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -125,7 +126,10 @@ serve(async (req) => {
       });
     }
 
-    const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-calendar-callback`;
+    // Public redirect URI on app.findmed.com.mx (proxied by Vercel to the
+    // callback Edge Function). Shared with google-calendar-callback so the
+    // value sent to Google is byte-identical in both steps.
+    const REDIRECT_URI = getGoogleCalendarRedirectUri();
     const state = encodeState(office.doctor_id, office.id, origin);
 
     const params = new URLSearchParams({
