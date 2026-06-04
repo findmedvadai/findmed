@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,17 @@ export default function Login() {
 
   return (
     <div className="flex min-h-screen flex-col bg-secondary/30">
+      {/* Acceso de regreso a la landing pública. No afecta la sesión ni el
+          flujo de redirección post-login (solo navega a "/"). */}
+      <header className="px-4 py-4 sm:px-6">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver al inicio
+        </Link>
+      </header>
       <div className="flex flex-1 items-center justify-center px-4 py-8">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="items-center gap-1 pb-2">

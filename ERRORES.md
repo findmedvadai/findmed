@@ -448,3 +448,17 @@ Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`,
 **Solución aplicada:** Auditar cada evento contra su EF emisora y reescribir `PAYLOAD_EXAMPLES`. Cambios principales: (1) `appointment.created` agregó office_id/name/address, doctor_id, manage_token; (2) `appointment.confirmed` quitó doctor_name (no se emite) y agregó manage_url; (3) `appointment.cancelled_by_admin` extendió con source, previous_status, office_*, end_at, notify_patient/doctor; (4) `appointment.rescheduled` cambió a old_/new_appointment_id; (5) `appointment.rescheduled_by_staff` agregó office_address; (6) reminders 48h/day_of agregaron office_id/name/address y min_confirm_hours_before; (7) `appointment.status_changed` agregó manage_url; (8) `postconsultation.submitted` agregó end_at y symptoms. `appointment.cancelled` legacy y `patient.created` se anotaron con comentarios explicando su estado.
 
 **Lección aprendida:** Cuando se modifica el payload de un webhook, es obligatorio actualizar `PAYLOAD_EXAMPLES` en `Webhooks.tsx` en el mismo PR. Los ejemplos son la fuente de verdad documentada para el admin que configura n8n; si divergen, el admin construye plantillas Whaapy contra campos que no llegan.
+
+---
+
+## 2026-06-04 — Landing pública leía auth y ofrecía "Ir al dashboard" (bypass de login)
+
+**Categoría:** frontend / seguridad
+
+**Síntoma:** La landing pública (`/`) importaba `useAuth` y, si detectaba una sesión activa, cambiaba su CTA de "Iniciar sesión" a "Ir al dashboard" con un link directo a `/admin/calendario` o `/doctor/agenda`. Esto daba acceso directo a rutas autenticadas desde la homepage pública, saltándose por completo la página `/login` — la cual existe precisamente para forzar re-autenticación (ver entrada 2026-05-01 "/login no forzaba re-autenticación"). En una computadora compartida, cualquiera que abriera la raíz con una sesión persistida entraba al panel del usuario anterior con un clic.
+
+**Causa raíz:** Al construir la landing se añadió un "edge case" mal entendido: mostrar "Ir al dashboard" para usuarios autenticados. Eso reintrodujo el mismo agujero que `/login` ya resolvía con su `signOut()` forzado on-mount. La landing, además, dependía del contexto de auth (`useAuth`) cuando debía ser 100% estática e indexable. El bug nació de tratar la conveniencia ("ya está logueado, mándalo directo") como requisito, ignorando que el punto único de entrada autenticado debe ser `/login`.
+
+**Solución aplicada:** Eliminar todo uso de `useAuth` de `Landing.tsx`. El CTA es ahora SIEMPRE "Iniciar sesión" → `/login`, sin ramificar por estado de sesión. La redirección al dashboard para usuarios ya autenticados la sigue manejando exclusivamente `/login` (comportamiento estándar existente, con su `signOut()` forzado intacto). La landing quedó sin dependencias de auth context ni fetch.
+
+**Lección aprendida:** Una página pública NUNCA debe leer el estado de auth para ofrecer atajos a zonas autenticadas. El único punto de entrada a rutas protegidas es `/login`, que centraliza la política de re-autenticación. Si una página pública necesita "saber" si hay sesión para cambiar su CTA, eso es una señal de alerta: probablemente está a punto de bypasear el gate de seguridad. Mantener las páginas públicas estáticas y agnósticas del auth no es solo performance/SEO — es contención del blast radius de seguridad.
