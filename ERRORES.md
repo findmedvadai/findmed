@@ -462,3 +462,21 @@ Adicionalmente, el helper detecta strings técnicos como `non-2xx`, `TypeError`,
 **Solución aplicada:** Eliminar todo uso de `useAuth` de `Landing.tsx`. El CTA es ahora SIEMPRE "Iniciar sesión" → `/login`, sin ramificar por estado de sesión. La redirección al dashboard para usuarios ya autenticados la sigue manejando exclusivamente `/login` (comportamiento estándar existente, con su `signOut()` forzado intacto). La landing quedó sin dependencias de auth context ni fetch.
 
 **Lección aprendida:** Una página pública NUNCA debe leer el estado de auth para ofrecer atajos a zonas autenticadas. El único punto de entrada a rutas protegidas es `/login`, que centraliza la política de re-autenticación. Si una página pública necesita "saber" si hay sesión para cambiar su CTA, eso es una señal de alerta: probablemente está a punto de bypasear el gate de seguridad. Mantener las páginas públicas estáticas y agnósticas del auth no es solo performance/SEO — es contención del blast radius de seguridad.
+
+---
+
+## 2026-06-04 — Afirmaciones de seguridad falsas/infladas en la landing pública
+
+**Categoría:** frontend / datos
+
+**Síntoma:** La sección "Confianza y seguridad" de `Landing.tsx` publicaba 4 afirmaciones, dos de ellas no sustentadas por la realidad técnica del proyecto:
+1. **"Respaldos en la nube — Backups automáticos sobre infraestructura segura y redundante."** FALSO en el plan actual: FindMed corre sobre el plan **Free** de Supabase, que **no incluye backups automáticos** (los backups diarios empiezan en el plan Pro; PITR es add-on pago). Se prometía una capacidad inexistente.
+2. **"Alineado con la Ley General de Salud (Capítulo VI Bis, salud digital) y la LFPDPPP."** PARCIAL/inflado: el Aviso de Privacidad (`src/content/legal/privacidad.md`) referencia la LFPDPPP de forma sólida y menciona "las reformas a la Ley General de Salud … en materia de Salud Digital … **en lo que resulte aplicable**" (hedge), pero **nunca cita "Capítulo VI Bis"**. La landing inventó una cita de capítulo específica que el documento legal no hace, y "Alineado" sobreafirmaba respecto del "en lo que resulte aplicable" del aviso.
+
+Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credenciales/tokens (el cifrado at-rest de disco de Supabase aplica en todos los planes), y control de acceso por roles (enum `app_role`, tabla `user_roles`, funciones `has_role`/`is_admin_or_superadmin`, RLS en todas las tablas, tokens efímeros para pacientes).
+
+**Causa raíz:** La sección se redactó con lenguaje de marketing genérico de "SaaS médico" sin auditar cada afirmación contra (a) el plan de infraestructura contratado y (b) el texto de los documentos legales del propio repo. Las features de seguridad se asumieron por defecto ("todo SaaS tiene backups y cumple normas") en vez de verificarse.
+
+**Solución aplicada:** (1) Eliminar la card de "Respaldos en la nube" (queda en 3 cards, grid `md:grid-cols-3`) en vez de reformularla a un eufemismo igualmente no verificable como "alta disponibilidad" (el plan Free tampoco la garantiza). (2) Reformular "Cumplimiento normativo" a "Tratamiento de datos conforme a la LFPDPPP y a la reforma de Salud Digital de la Ley General de Salud (2026)", reflejando fielmente lo que dice el Aviso de Privacidad, sin citar capítulos inexistentes. (3) Ajustar las otras dos cards al texto exacto del aviso (TLS + cifrado de credenciales/tokens; roles + RLS + tokens).
+
+**Lección aprendida:** Toda afirmación pública de cumplimiento o capacidad técnica (backups, cifrado, certificaciones, marcos normativos) debe verificarse contra evidencia concreta del repo antes de publicarse: el plan de servicio contratado para capacidades de infraestructura, y los documentos legales (`src/content/legal/*.md`) para los marcos normativos — esos documentos son la fuente de verdad de lo que la empresa realmente afirma. Nunca citar artículos/capítulos de leyes que el aviso de privacidad no cita. Si una capacidad no existe en el plan actual, se quita; no se reformula a un eufemismo que siga siendo falso.
