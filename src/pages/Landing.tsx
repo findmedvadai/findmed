@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   ShieldCheck,
   Lock,
-  Cloud,
   FileCheck2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -62,22 +61,17 @@ const TRUST_ITEMS = [
     icon: FileCheck2,
     title: "Cumplimiento normativo",
     description:
-      "Alineado con la Ley General de Salud (Capítulo VI Bis, salud digital) y la LFPDPPP.",
+      "Tratamiento de datos conforme a la LFPDPPP y a la reforma de Salud Digital de la Ley General de Salud (2026).",
   },
   {
     icon: Lock,
     title: "Datos encriptados",
-    description: "Información clínica y personal cifrada en tránsito y en reposo.",
-  },
-  {
-    icon: Cloud,
-    title: "Respaldos en la nube",
-    description: "Backups automáticos sobre infraestructura segura y redundante.",
+    description: "Credenciales, tokens e información personal cifrados, con transmisión vía TLS.",
   },
   {
     icon: ShieldCheck,
     title: "Privacidad del paciente",
-    description: "Acceso por roles y tokens temporales; sin exponer datos sensibles.",
+    description: "Control de acceso por roles, RLS y tokens temporales; sin exponer datos sensibles.",
   },
 ];
 
@@ -231,7 +225,7 @@ export default function Landing() {
                 normativa mexicana de salud digital y protección de datos.
               </p>
             </div>
-            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-6 md:grid-cols-3">
               {TRUST_ITEMS.map(({ icon: Icon, title, description }) => (
                 <div
                   key={title}
