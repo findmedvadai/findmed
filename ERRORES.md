@@ -480,3 +480,17 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** (1) Eliminar la card de "Respaldos en la nube" (queda en 3 cards, grid `md:grid-cols-3`) en vez de reformularla a un eufemismo igualmente no verificable como "alta disponibilidad" (el plan Free tampoco la garantiza). (2) Reformular "Cumplimiento normativo" a "Tratamiento de datos conforme a la LFPDPPP y a la reforma de Salud Digital de la Ley General de Salud (2026)", reflejando fielmente lo que dice el Aviso de Privacidad, sin citar capítulos inexistentes. (3) Ajustar las otras dos cards al texto exacto del aviso (TLS + cifrado de credenciales/tokens; roles + RLS + tokens).
 
 **Lección aprendida:** Toda afirmación pública de cumplimiento o capacidad técnica (backups, cifrado, certificaciones, marcos normativos) debe verificarse contra evidencia concreta del repo antes de publicarse: el plan de servicio contratado para capacidades de infraestructura, y los documentos legales (`src/content/legal/*.md`) para los marcos normativos — esos documentos son la fuente de verdad de lo que la empresa realmente afirma. Nunca citar artículos/capítulos de leyes que el aviso de privacidad no cita. Si una capacidad no existe en el plan actual, se quita; no se reformula a un eufemismo que siga siendo falso.
+
+---
+
+## 2026-06-08 — Afirmaciones de cumplimiento normativo sin respaldo de NOMs son riesgo de declaración engañosa
+
+**Categoría:** frontend / datos
+
+**Síntoma:** La card "Cumplimiento normativo" de `Landing.tsx` decía "Tratamiento de datos **conforme a** la LFPDPPP y a la reforma de Salud Digital de la Ley General de Salud (2026)". El verbo "conforme a" (igual que "cumple con" / "alineado con") afirma adecuación total al marco normativo. Esa afirmación no es respaldable hoy: las **Normas Oficiales Mexicanas (NOMs) técnicas** derivadas de la reforma de Salud Digital de la LGS aún no se han publicado. Sin las NOMs que definen los requisitos técnicos concretos, ningún operador puede declarar cumplimiento total — hacerlo es una potencial declaración engañosa frente al usuario y la autoridad.
+
+**Causa raíz:** Al corregir una versión anterior (entrada 2026-06-04) se reformuló la card de "Alineado con … Capítulo VI Bis" a "conforme a", pero "conforme a" sigue siendo un verbo de adecuación. Se subestimó que la reforma de Salud Digital es marco habilitante sin reglamentación técnica vigente; el cumplimiento "total" no es declarable hasta que existan las NOMs.
+
+**Solución aplicada:** Reformular a lenguaje descriptivo de operación, no de adecuación: título "Marco normativo" y texto "FindMed opera dentro del marco mexicano de protección de datos personales (LFPDPPP) y los principios de salud digital de la Ley General de Salud." "Opera dentro del marco" describe el contexto legal sin afirmar cumplimiento total ni certificación, y sin citar fechas del DOF. Las otras dos cards (Datos encriptados, Privacidad del paciente) quedaron intactas.
+
+**Lección aprendida:** En claims normativos públicos, distinguir entre "operar dentro de un marco" (descriptivo, defendible) y "cumplir/conformarse/alinearse con" (afirmación de adecuación, requiere evidencia). Cuando una ley es habilitante pero su reglamentación técnica (NOMs, lineamientos) aún no se publica, NO se puede declarar cumplimiento total — el verbo correcto es "opera dentro de", "respeta los principios de", "en el marco de". Evitar siempre lenguaje de certificación y fechas específicas del DOF en copy de marketing.
