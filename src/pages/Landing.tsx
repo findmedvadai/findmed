@@ -59,9 +59,9 @@ const FEATURES = [
 const TRUST_ITEMS = [
   {
     icon: FileCheck2,
-    title: "Cumplimiento normativo",
+    title: "Marco normativo",
     description:
-      "Tratamiento de datos conforme a la LFPDPPP y a la reforma de Salud Digital de la Ley General de Salud (2026).",
+      "FindMed opera dentro del marco mexicano de protección de datos personales (LFPDPPP) y los principios de salud digital de la Ley General de Salud.",
   },
   {
     icon: Lock,
