@@ -23,6 +23,7 @@
 // `id`; the connection flags and refresh token are read from it.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { recordAutoDisconnect } from "./connection-events.ts";
 
 export interface CalendarFields {
   google_calendar_connected?: boolean | null;
@@ -126,6 +127,40 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
       console.warn(
         `[calendar-tokens] ${provider} invalid_grant for office ${office.id} — auto-disconnecting`
       );
+
+      // Durably record the disconnect BEFORE clearing the office, so the
+      // forensic evidence (the actual provider error + token lifetime) survives
+      // regardless of Edge Function log retention. Best-effort: never blocks the
+      // disconnect. We read doctor_id + the connect timestamp here (rare path)
+      // because the office object callers pass in may not include them.
+      let doctorId: string | null = null;
+      let connectedAt: string | null = null;
+      try {
+        const { data: row } = await supabase
+          .from("doctor_offices")
+          .select("doctor_id, google_connected_at, outlook_connected_at")
+          .eq("id", office.id)
+          .maybeSingle();
+        if (row) {
+          doctorId = (row as Record<string, string | null>).doctor_id ?? null;
+          connectedAt =
+            provider === "google"
+              ? (row as Record<string, string | null>).google_connected_at ?? null
+              : (row as Record<string, string | null>).outlook_connected_at ?? null;
+        }
+      } catch (err) {
+        console.error(`[calendar-tokens] failed to read office for event record:`, err);
+      }
+      await recordAutoDisconnect(supabase, {
+        provider,
+        officeId: office.id,
+        doctorId,
+        reasonCode: errorCode,
+        httpStatus: res.status,
+        providerResponse: data,
+        connectedAt,
+      });
+
       try {
         await supabase
           .from("doctor_offices")
@@ -136,12 +171,14 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
                   google_calendar_id: null,
                   google_calendar_name: null,
                   google_refresh_token_ref: null,
+                  google_connected_at: null,
                 }
               : {
                   outlook_calendar_connected: false,
                   outlook_calendar_id: null,
                   outlook_calendar_name: null,
                   outlook_refresh_token_ref: null,
+                  outlook_connected_at: null,
                 }
           )
           .eq("id", office.id);

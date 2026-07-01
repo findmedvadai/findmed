@@ -190,6 +190,7 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 | `notifications` | Feed para admin y doctor: `recipient_role`, `doctor_id`, `title`, `body`, `type`, `appointment_id`, `is_read`. En publicación realtime. |
 | `webhooks` | Webhooks salientes firmados con HMAC: `url`, `events[]`, `secret`, `payload_overrides`, `is_active`. |
 | `api_keys` | API keys externas: `key_hash` (SHA‑256), `key_prefix`, `is_active`, `last_used_at`. |
+| `calendar_connection_events` | **Bitácora durable append-only** de desconexiones de calendario (Google/Outlook). `provider`, `event_type` (`auto_disconnect` \| `manual_disconnect`), `office_id`/`doctor_id` (UUID **sin FK**, para sobrevivir borrados y ser investigable indefinidamente), `reason_code`, `http_status`, `provider_response` (jsonb con la respuesta cruda del proveedor), `actor_user_id`/`actor_role` (manual), `connected_at` (snapshot) + `lifetime_seconds` (generada), `occurred_at`. Independiente del retention de logs. RLS: SELECT solo admins; los inserts vienen de Edge Functions con service role. No se borra nunca. Complementa las columnas `doctor_offices.google_connected_at` / `outlook_connected_at` (timestamp al conectar). |
 
 ### Funciones SQL helper (`SECURITY DEFINER`, `search_path = public`)
 
@@ -268,7 +269,8 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `slot-validation.ts` | `validateSlotAvailable` — verifica que un slot no colisione con citas existentes en el mismo office. |
 | `availability-check.ts` | `checkAvailability` — verifica si un slot cae dentro de la disponibilidad semanal configurada del office. |
 | `office-resolver.ts` | Helpers para resolver el office a partir de doctor_id (p. ej. office primario para backwards-compat). |
-| `calendar-tokens.ts` | `getGoogleAccessToken`, `getOutlookAccessToken` — intercambian refresh token por access token vía el secret del office. |
+| `calendar-tokens.ts` | `getGoogleAccessToken`, `getOutlookAccessToken` — intercambian refresh token por access token vía el secret del office. En `invalid_grant` auto-desconecta el office **y** registra el evento durable vía `recordAutoDisconnect`. |
+| `connection-events.ts` | `recordAutoDisconnect` / `recordManualDisconnect` — insertan en `calendar_connection_events` (bitácora durable). Best-effort: nunca lanzan ni bloquean el flujo de conexión/desconexión. Único lugar que escribe esa tabla. |
 
 ### Triaje / recordatorios / webhooks
 
