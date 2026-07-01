@@ -4,6 +4,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdminOrDoctor } from "../_shared/auth.ts";
+import { recordManualDisconnect } from "../_shared/connection-events.ts";
 
 interface Body {
   office_id: string;
@@ -47,7 +48,10 @@ Deno.serve(async (req) => {
 
   const { data: office } = await supabase
     .from("doctor_offices")
-    .select("id, doctor_id, is_deleted")
+    .select(
+      "id, doctor_id, is_deleted, google_calendar_connected, outlook_calendar_connected, " +
+        "google_connected_at, outlook_connected_at"
+    )
     .eq("id", body.office_id)
     .maybeSingle();
   if (!office || office.is_deleted) {
@@ -79,18 +83,40 @@ Deno.serve(async (req) => {
   if (body.outlook_calendar_name !== undefined)
     updates.outlook_calendar_name = body.outlook_calendar_name;
 
-  // Hard disconnect: clears refresh token + connected flag + calendar id + name.
+  // Connect-time capture: stamp `*_connected_at` at the moment a connection
+  // goes live (calendar picked → connected flips true). Only stamp on the
+  // not-connected → connected transition (or to backfill a legacy connection
+  // whose timestamp is still NULL) so switching calendars on an already-live
+  // connection — same OAuth token — does not reset the measured lifetime.
+  const nowIso = new Date().toISOString();
+  if (
+    body.google_calendar_connected === true &&
+    (office.google_calendar_connected !== true || office.google_connected_at == null)
+  ) {
+    updates.google_connected_at = nowIso;
+  }
+  if (
+    body.outlook_calendar_connected === true &&
+    (office.outlook_calendar_connected !== true || office.outlook_connected_at == null)
+  ) {
+    updates.outlook_connected_at = nowIso;
+  }
+
+  // Hard disconnect: clears refresh token + connected flag + calendar id + name
+  // + connect timestamp.
   if (body.disconnect_google) {
     updates.google_calendar_connected = false;
     updates.google_calendar_id = null;
     updates.google_calendar_name = null;
     updates.google_refresh_token_ref = null;
+    updates.google_connected_at = null;
   }
   if (body.disconnect_outlook) {
     updates.outlook_calendar_connected = false;
     updates.outlook_calendar_id = null;
     updates.outlook_calendar_name = null;
     updates.outlook_refresh_token_ref = null;
+    updates.outlook_connected_at = null;
   }
 
   if (Object.keys(updates).length === 0) {
@@ -118,6 +144,32 @@ Deno.serve(async (req) => {
     }
     console.error("[doctor-office-update] update failed:", error);
     return jsonResponse({ error: "No se pudo actualizar el consultorio", details: error.message }, 500);
+  }
+
+  // Durably record manual disconnects (best-effort; never blocks the response).
+  // Disambiguates a doctor/admin-initiated disconnect from a provider
+  // auto-disconnect when investigating a dead office later. `connected_at` is
+  // snapshotted from the pre-update office row so token lifetime is derivable.
+  const actorRole = auth.isAdmin ? "admin" : "doctor";
+  if (body.disconnect_google) {
+    await recordManualDisconnect(supabase, {
+      provider: "google",
+      officeId: office.id,
+      doctorId: office.doctor_id,
+      actorUserId: auth.userId,
+      actorRole,
+      connectedAt: office.google_connected_at ?? null,
+    });
+  }
+  if (body.disconnect_outlook) {
+    await recordManualDisconnect(supabase, {
+      provider: "outlook",
+      officeId: office.id,
+      doctorId: office.doctor_id,
+      actorUserId: auth.userId,
+      actorRole,
+      connectedAt: office.outlook_connected_at ?? null,
+    });
   }
 
   return jsonResponse({ success: true, office: data });

@@ -282,6 +282,54 @@ export type Database = {
           },
         ]
       }
+      calendar_connection_events: {
+        Row: {
+          actor_role: string | null
+          actor_user_id: string | null
+          connected_at: string | null
+          doctor_id: string | null
+          event_type: string
+          http_status: number | null
+          id: string
+          lifetime_seconds: number | null
+          occurred_at: string
+          office_id: string
+          provider: string
+          provider_response: Json | null
+          reason_code: string | null
+        }
+        Insert: {
+          actor_role?: string | null
+          actor_user_id?: string | null
+          connected_at?: string | null
+          doctor_id?: string | null
+          event_type: string
+          http_status?: number | null
+          id?: string
+          lifetime_seconds?: number | null
+          occurred_at?: string
+          office_id: string
+          provider: string
+          provider_response?: Json | null
+          reason_code?: string | null
+        }
+        Update: {
+          actor_role?: string | null
+          actor_user_id?: string | null
+          connected_at?: string | null
+          doctor_id?: string | null
+          event_type?: string
+          http_status?: number | null
+          id?: string
+          lifetime_seconds?: number | null
+          occurred_at?: string
+          office_id?: string
+          provider?: string
+          provider_response?: Json | null
+          reason_code?: string | null
+        }
+        Relationships: []
+      }
       doctor_offices: {
         Row: {
           address: string | null
@@ -293,6 +341,7 @@ export type Database = {
           google_calendar_connected: boolean
           google_calendar_id: string | null
           google_calendar_name: string | null
+          google_connected_at: string | null
           google_refresh_token_ref: string | null
           id: string
           is_active: boolean
@@ -301,6 +350,7 @@ export type Database = {
           outlook_calendar_connected: boolean
           outlook_calendar_id: string | null
           outlook_calendar_name: string | null
+          outlook_connected_at: string | null
           outlook_refresh_token_ref: string | null
           updated_at: string
           zone_id: string | null
@@ -315,6 +365,7 @@ export type Database = {
           google_calendar_connected?: boolean
           google_calendar_id?: string | null
           google_calendar_name?: string | null
+          google_connected_at?: string | null
           google_refresh_token_ref?: string | null
           id?: string
           is_active?: boolean
@@ -323,6 +374,7 @@ export type Database = {
           outlook_calendar_connected?: boolean
           outlook_calendar_id?: string | null
           outlook_calendar_name?: string | null
+          outlook_connected_at?: string | null
           outlook_refresh_token_ref?: string | null
           updated_at?: string
           zone_id?: string | null
@@ -337,6 +389,7 @@ export type Database = {
           google_calendar_connected?: boolean
           google_calendar_id?: string | null
           google_calendar_name?: string | null
+          google_connected_at?: string | null
           google_refresh_token_ref?: string | null
           id?: string
           is_active?: boolean
@@ -345,6 +398,7 @@ export type Database = {
           outlook_calendar_connected?: boolean
           outlook_calendar_id?: string | null
           outlook_calendar_name?: string | null
+          outlook_connected_at?: string | null
           outlook_refresh_token_ref?: string | null
           updated_at?: string
           zone_id?: string | null
