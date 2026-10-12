@@ -125,8 +125,13 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   }
 }
 
-/** Replaces globalThis.fetch and records calls; every call returns `status`. */
-export function stubFetch(status = 200) {
+type Route = (url: string) => { status: number; body: unknown } | undefined;
+
+/**
+ * Replaces globalThis.fetch and records calls. `route` may answer specific
+ * URLs; anything else returns `{}` with `status`.
+ */
+export function stubFetch(status = 200, route?: Route) {
   const calls: { url: string; body: unknown }[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -134,8 +139,10 @@ export function stubFetch(status = 200) {
     let body: unknown = init?.body;
     try {
       body = typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
-    } catch { /* keep raw */ }
+    } catch { /* keep raw (e.g. URLSearchParams) */ }
     calls.push({ url, body });
+    const routed = route?.(url);
+    if (routed) return Promise.resolve(new Response(JSON.stringify(routed.body), { status: routed.status }));
     return Promise.resolve(new Response("{}", { status }));
   }) as typeof fetch;
   return { calls, restore: () => (globalThis.fetch = original) };
