@@ -133,6 +133,7 @@ Enum `app_role` (SQL): `superadmin | admin | doctor`. El rol se lee de `public.u
   - `/admin/doctores` → CRUD de doctores (alta crea usuario auth + fila en `doctors` + `users`).
   - `/admin/catalogos` → CRUD de especialidades, ciudades, zonas, hospitales y laboratorios.
   - `/admin/inbox` → notificaciones (citas nuevas, canceladas, completadas, post‑consultas).
+  - `/admin/casos` → cola de casos y canalización humana (B6): tomar, seguimiento, notas, cierre con motivo. Escrituras vía Edge Function `case-actions`.
   - `/admin/webhooks` → gestión de webhooks salientes (protegido por [PasswordGate](src/components/admin/PasswordGate.tsx)).
   - `/admin/api-keys` → gestión de API keys para sistemas externos (protegido por PasswordGate).
 
@@ -191,6 +192,9 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 | `webhooks` | Webhooks salientes firmados con HMAC: `url`, `events[]`, `secret`, `payload_overrides`, `is_active`. |
 | `api_keys` | API keys externas: `key_hash` (SHA‑256), `key_prefix`, `is_active`, `last_used_at`. |
 | `calendar_connection_events` | **Bitácora durable append-only** de desconexiones de calendario (Google/Outlook). `provider`, `event_type` (`auto_disconnect` \| `manual_disconnect`), `office_id`/`doctor_id` (UUID **sin FK**, para sobrevivir borrados y ser investigable indefinidamente), `reason_code`, `http_status`, `provider_response` (jsonb con la respuesta cruda del proveedor), `actor_user_id`/`actor_role` (manual), `connected_at` (snapshot) + `lifetime_seconds` (generada), `occurred_at`. Independiente del retention de logs. RLS: SELECT solo admins; los inserts vienen de Edge Functions con service role. No se borra nunca. Complementa las columnas `doctor_offices.google_connected_at` / `outlook_connected_at` (timestamp al conectar). |
+| `patient_cases` | **B6.** Solicitudes que necesitan a una persona (hospital, estudios, urgencia, seguimiento, sin opciones). `status` open → awaiting_assignment → assigned → awaiting_patient/awaiting_provider → resolved/closed (cierre exige `resolution_reason`). Un caso activo por `(subject_phone, request_type)`. Proyección WHAAPY: `ai_state`, `whaapy_assignment`, ids de conversación/contacto. RLS: SELECT admins; escrituras solo Edge Functions. |
+| `case_events` | **B6.** Historial interno append-only de cada caso (quién, qué, resultado del proveedor). Nunca se muestra al paciente. |
+| `operation_requests` / `whaapy_events` | Acciones preparadas idempotentes (confirmar/cancelar) y eventos recibidos de WHAAPY (retención 12 meses). Ver `docs/findmed-migration/`. |
 
 ### Funciones SQL helper (`SECURITY DEFINER`, `search_path = public`)
 
@@ -274,8 +278,16 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `office-resolver.ts` | Helpers para resolver el office a partir de doctor_id (p. ej. office primario para backwards-compat). |
 | `calendar-tokens.ts` | `getGoogleAccessToken`, `getOutlookAccessToken` — intercambian refresh token por access token vía el secret del office. En `invalid_grant` auto-desconecta el office **y** registra el evento durable vía `recordAutoDisconnect`. |
 | `connection-events.ts` | `recordAutoDisconnect` / `recordManualDisconnect` — insertan en `calendar_connection_events` (bitácora durable). Best-effort: nunca lanzan ni bloquean el flujo de conexión/desconexión. Único lugar que escribe esa tabla. |
+| `cases.ts` | **B6.** `openCase`, `requestHandoff`, `getMyCases`, `applyStaffAction`. Persistir, apagar la IA y asignar son pasos separados registrados en `case_events`; nunca se reporta `assigned` sin que una persona tome el caso. |
+| `whaapy-client.ts` | Cliente REST de WHAAPY (by-phone, IA por conversación, equipo, contactos) con timeout; nunca lanza ni expone la API key. |
 
 ### Triaje / recordatorios / webhooks
+
+| Función | Qué hace |
+|---|---|
+| `findmed-mcp` | Servidor MCP (JSON-RPC) para el agente nativo de WHAAPY. Auth: bearer `FINDMED_MCP_TOKEN`. Tools de búsqueda, horarios, enlace de reserva, citas, acciones preparadas y casos. |
+| `whaapy-inbound` | Webhook de WHAAPY firmado (HMAC con `WHAAPY_WEBHOOK_SECRET`); guarda en `whaapy_events` deduplicado. |
+| `case-actions` | Acciones del equipo sobre casos (`/admin/casos`). Auth: JWT admin (`requireAdmin`). |
 
 | Función | Qué hace |
 |---|---|
@@ -426,6 +438,11 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
 | `GOOGLE_OAUTH_REDIRECT_URI` | **Opcional.** Override del redirect URI de Google Calendar. Si no se define, usa `https://app.findmed.com.mx/oauth/google/callback` (proxeado por Vercel a `google-calendar-callback`). Debe ser el mismo en `google-calendar-auth` y `google-calendar-callback` (es project-level, ambas lo leen). |
 | `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` | App registration de Microsoft (Azure AD) para Outlook Calendar. |
 | `APP_URL` | URL pública de la app (producción: URL de Vercel; desarrollo: `http://localhost:5173`); se usa para construir links `/reserva?token=…` y `/gestionar?token=…`. Actualizar en Supabase al hacer deploy. |
+| `FINDMED_MCP_TOKEN` | Bearer que WHAAPY envía al MCP `findmed-mcp`. |
+| `MCP_CHAT_ACTIONS_ENABLED` | `true` publica `commit_appointment_action` (default apagado). |
+| `WHAAPY_WEBHOOK_SECRET` | Secreto HMAC de los webhooks de WHAAPY (`whaapy-inbound`). |
+| `WHAAPY_API_KEY` / `WHAAPY_API_BASE_URL` | API de WHAAPY para handoff, asignación y (B7) envío de plantillas. Base por defecto `https://api.whaapy.com`. |
+| `FINDMED_CRON_SECRET` | Credencial de pg_cron → Edge Functions (valor también en Vault `service_role_key`). |
 
 No commitear claves nuevas al repo. El `.env` actual sólo contiene las variables `VITE_*` del cliente.
 

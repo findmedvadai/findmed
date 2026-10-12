@@ -4,7 +4,7 @@
 // escrituras pasan por la Edge Function case-actions (que también apaga/
 // reactiva la IA y asigna en WHAAPY); esta página solo lee por RLS.
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -130,6 +130,7 @@ export default function Casos() {
         : [...rows].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9));
     },
     refetchInterval: 20_000,
+    placeholderData: keepPreviousData,
   });
 
   const { data: staff } = useQuery({
@@ -264,6 +265,7 @@ function CaseSheet({
       if (error) throw error;
       return (data ?? []) as CaseEvent[];
     },
+    placeholderData: keepPreviousData,
   });
 
   const action = useMutation({
