@@ -52,7 +52,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | B2-bis | Regla D2 (bloqueo por doctor) en BD y validadores | B0 | Solapamientos existentes revisados; R18, R25 | implementado sin validar (IS passed; falta aplicar en prod) |
 | B3 | Alta médica transaccional y reporte de consultorios | B2 | R14–R16 | implementado sin validar (parcial) |
 | B4 | Dominio de citas: acciones comunes, idempotencia, calendario honesto | B1, B2 | R17–R28 | en implementación |
-| B5 | `findmed-mcp` | Lectura: B1+B2; escritura: B4 | R29, R30 | pendiente |
+| B5 | `findmed-mcp` | Lectura: B1+B2; escritura: B4 | R29, R30 | implementado sin validar (fase lectura + enlace; U passed; IR bloqueado sin WHAAPY de prueba) |
 | B6 | Casos y handoff | B2, B5; token API WHAAPY | R31, R32, R10 | pendiente |
 | B7 | Outbox, worker, `whaapy-inbound`, templates | B2, B4; token y webhook WHAAPY de prueba | R33–R37 | pendiente |
 | B8 | Agente WHAAPY (prompt, tools, campos, embudo) | B5, B6; reglas clínicas aprobadas | R01–R13 | pendiente |
@@ -63,11 +63,11 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 
 | M | Capacidad | Tool (A3) | Seguridad | Bloque | Estado |
 |---|---|---|---|---|---|
-| M01 | Opciones de atención (none/one/many, office_id) | `search_care_options` | lectura | B1, B5 | en implementación (dominio listo en `_shared/care-search.ts`; falta tool MCP) |
+| M01 | Opciones de atención (none/one/many, office_id) | `search_care_options` | lectura | B1, B5 | implementado sin validar |
 | M02 | Sugerir especialidad | `suggest_specialty` | lectura | B5 | bloqueado (F10) |
-| M03 | Horarios disponibles con estado de verificación | `list_available_slots` | lectura | B4, B5 | pendiente |
-| M04 | Enlace de reserva | `create_booking_link` | escritura limitada | B5 | pendiente |
-| M05 | Mis citas | `list_my_appointments` | lectura privada | B5 | pendiente |
+| M03 | Horarios disponibles con estado de verificación | `list_available_slots` | lectura | B4, B5 | implementado sin validar (`_shared/day-slots.ts`) |
+| M04 | Enlace de reserva | `create_booking_link` | escritura limitada | B5 | implementado sin validar (`_shared/booking-session.ts`) |
+| M05 | Mis citas | `list_my_appointments` | lectura privada | B5 | implementado sin validar |
 | M06 | Preparar acción | `prepare_appointment_action` | preparación | B4, B5 | pendiente |
 | M07 | Ejecutar acción confirmada | `commit_appointment_action` | escritura | B4, B5 | pendiente (flag apagado hasta A4) |
 | M08 | Estado de operación | `get_operation_status` | lectura privada | B4, B5 | pendiente |
@@ -103,4 +103,4 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | X09 | Cancelar/reagendar coherente en BD, calendario y mensajes | B4 `appointment-actions`, R27 | en implementación (confirm/cancel de paciente unificados; staff y reagenda pendientes) |
 | X10 | Canalización humana verificable | A7, R31, R32 | pendiente |
 | X11 | Un dueño por conversación y evento durante la migración | A5 `event_owner`, R38 | pendiente |
-| X12 | Enlace ≠ cita; etiqueta ≠ asignación; HTTP 200 ≠ entrega | Contratos MCP, outbox, R13, R31, R34 | pendiente |
+| X12 | Enlace ≠ cita; etiqueta ≠ asignación; HTTP 200 ≠ entrega | Contratos MCP, outbox, R13, R31, R34 | en implementación (`link_created`/`appointment_created:false` en MCP) |

@@ -47,21 +47,21 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R13 | Enlace emitido sin reservar ≠ cita agendada | IR | B7, B8 | — | not_run |
 | R14 | Alta médica completa (Auth, rol, especialidades, sede) | IR | B3 | Supabase local | not_run |
 | R15 | Fallo a mitad del alta y reintento | IR | B3 | Supabase local | not_run |
-| R16 | Consultorio sin horarios/inactivo/eliminado no ofrece slots | U+IR | B4 | — | not_run |
-| R17 | office_id de otro doctor rechazado | IR | B4 | — | not_run |
+| R16 | Consultorio sin horarios/inactivo/eliminado no ofrece slots | U+IR | B4 | — | U passed (`day-slots_test.ts`); IR not_run |
+| R17 | office_id de otro doctor rechazado | U+IR | B4 | — | U passed (`create_booking_link`); IR not_run |
 | R18 | Dos reservas al mismo horario → máximo una | IS (PGlite) / IR | B2-bis, B4 | IR: Postgres con 2 conexiones | IS passed (`supabase/tests/booking-constraint_test.ts`); IR not_run |
 | R19 | Reintento tras timeout devuelve resultado original; payload distinto → conflicto | IR | B4 | — | not_run |
-| R20 | Horario pasado, fuera de bloque o malformado → rechazo | U+IR | B4 | — | not_run |
+| R20 | Horario pasado, fuera de bloque o malformado → rechazo | U+IR | B4 | — | U passed (fecha malformada/pasada en day-slots); IR not_run |
 | R21 | Sesión vencida o consumida no crea otra cita | IR | B4 | — | not_run |
-| R22 | Token Google revocado vs fallo temporal: estados distintos, sin "verificado" falso | IS+IR | B4 | calendario de prueba | blocked |
+| R22 | Token Google revocado vs fallo temporal: estados distintos, sin "verificado" falso | IS+IR | B4 | calendario de prueba | IS passed (calendario caído → `external_calendar_unverified`); IR blocked |
 | R23 | >50 eventos y bloqueo de día completo | IS+IR | B4 | calendario de prueba | not_run |
 | R24 | Sede en otra zona horaria y cruce de medianoche | U | B4 | IANA por sede (pendiente) | not_run |
 | R25 | Mismo doctor en dos consultorios (regla D2) | IS (PGlite) / IR | B2-bis | prod: migración aplicada | IS passed; IR not_run |
 | R26 | Paciente con varias citas: elección explícita de appointment_id | U+IR | B4, B5 | — | U passed (`appointment-actions_test.ts`); IR not_run |
 | R27 | Cancelar/reagendar desde paciente, doctor, staff y botón: misma transición | IR | B4, B7 | — | not_run |
 | R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | IR | B4, B5 | — | not_run |
-| R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | not_run |
-| R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | not_run |
+| R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | U passed (`findmed-mcp_test.ts`); IR blocked |
+| R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | U passed (401 sin token, token erróneo y secret ausente); timeout por revisar en IR |
 | R31 | Handoff con agente disponible: caso, asignación, pausa, sin doble respuesta | IR+OP | B6 | número de prueba | blocked |
 | R32 | Handoff sin personal o error del proveedor → `awaiting_assignment` | IS+IR | B6 | — | not_run |
 | R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | not_run |
