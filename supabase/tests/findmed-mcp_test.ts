@@ -5,7 +5,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handleMcpRequest, PROTOCOL_VERSION } from "../functions/findmed-mcp/server.ts";
-import { TOOLS, type ToolDef } from "../functions/findmed-mcp/tools.ts";
+import { buildTools, TOOLS, type ToolDef } from "../functions/findmed-mcp/tools.ts";
 import { FakeDb } from "./fake-supabase.ts";
 
 Deno.env.set("SUPABASE_URL", "https://example.supabase.co");
@@ -109,6 +109,8 @@ Deno.test("R29: tools/list exposes object-rooted schemas for every real tool", a
     "list_available_slots",
     "create_booking_link",
     "list_my_appointments",
+    "prepare_appointment_action",
+    "get_operation_status",
   ]);
   for (const t of tools) {
     assertEquals(t.inputSchema.type, "object");
@@ -194,4 +196,9 @@ Deno.test("R17: create_booking_link rejects an office of another doctor", async 
   assertEquals(body.result.isError, true);
   assertEquals(envelope.errors[0].code, "office_not_found");
   assertEquals(db.rows("reservation_sessions").length, 0);
+});
+
+Deno.test("A4: commit_appointment_action is only published behind the feature flag", () => {
+  assertEquals(TOOLS.some((t) => t.name === "commit_appointment_action"), false);
+  assertEquals(buildTools({ chatActions: true }).some((t) => t.name === "commit_appointment_action"), true);
 });
