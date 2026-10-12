@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { getServiceKey, getPublishableKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,8 +26,8 @@ Deno.serve(async (req) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const serviceRoleKey = getServiceKey();
+    const anonKey = getPublishableKey();
 
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
@@ -200,21 +201,42 @@ Deno.serve(async (req) => {
       .insert({ doctor_id: doctor.id });
     if (settingsErr) console.error("[create-doctor] insert settings failed:", settingsErr);
 
-    // 7. default Mon-Fri 09:00-17:00
-    const weekdays = [1, 2, 3, 4, 5].map((wd) => ({
-      doctor_id: doctor.id,
-      weekday: wd,
-      start_time: "09:00",
-      end_time: "17:00",
-      is_enabled: true,
-    }));
-    const { error: availErr } = await adminClient
-      .from("doctor_weekly_availability")
-      .insert(weekdays);
-    if (availErr) console.error("[create-doctor] insert availability failed:", availErr);
+    // 7. default office. Since Mejora 2 everything (availability, calendars,
+    // duration) hangs off doctor_offices, and doctor_weekly_availability
+    // requires office_id — without this row the availability insert below
+    // silently failed and every new doctor started with no office/hours.
+    const { data: office, error: officeErr } = await adminClient
+      .from("doctor_offices")
+      .insert({
+        doctor_id: doctor.id,
+        name: "Consultorio principal",
+        address: address || null,
+        city_id: city_id || null,
+        zone_id: zone_id || null,
+        appointment_duration_minutes: 30,
+      })
+      .select("id")
+      .single();
+    if (officeErr || !office) {
+      console.error("[create-doctor] insert office failed:", officeErr);
+    } else {
+      // 8. default Mon-Fri 09:00-17:00 on that office
+      const weekdays = [1, 2, 3, 4, 5].map((wd) => ({
+        doctor_id: doctor.id,
+        office_id: office.id,
+        weekday: wd,
+        start_time: "09:00",
+        end_time: "17:00",
+        is_enabled: true,
+      }));
+      const { error: availErr } = await adminClient
+        .from("doctor_weekly_availability")
+        .insert(weekdays);
+      if (availErr) console.error("[create-doctor] insert availability failed:", availErr);
+    }
 
     return jsonResponse(
-      { success: true, doctor_id: doctor.id, auth_user_id: authUserId },
+      { success: true, doctor_id: doctor.id, auth_user_id: authUserId, office_id: office?.id ?? null },
       200
     );
   } catch (err: unknown) {
