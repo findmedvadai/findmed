@@ -45,3 +45,18 @@ Deno.test("operation_requests migration applies and enforces one live intent", a
   assertEquals(rls.rows[0].relrowsecurity, true);
   await db.close();
 });
+
+Deno.test("whaapy_events migration applies; dedupe_key is unique; RLS on", async () => {
+  const sql = await Deno.readTextFile(new URL("../migrations/20261013110000_whaapy_events.sql", import.meta.url));
+  const db = await PGlite.create();
+  await db.exec(STUBS);
+  await db.exec(sql);
+  await db.exec(`INSERT INTO whaapy_events (dedupe_key, event_type, payload) VALUES ('k1', 'message.delivered', '{}')`);
+  const dup = await assertRejects(() =>
+    db.exec(`INSERT INTO whaapy_events (dedupe_key, event_type, payload) VALUES ('k1', 'message.delivered', '{}')`)
+  ) as { code?: string };
+  assertEquals(dup.code, "23505");
+  const rls = await db.query<{ relrowsecurity: boolean }>("SELECT relrowsecurity FROM pg_class WHERE relname = 'whaapy_events'");
+  assertEquals(rls.rows[0].relrowsecurity, true);
+  await db.close();
+});

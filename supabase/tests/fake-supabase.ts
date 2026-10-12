@@ -28,7 +28,8 @@ export class FakeDb {
 
 class Query implements PromiseLike<{ data: unknown; error: null }> {
   private filters: Filter[] = [];
-  private op: "select" | "insert" | "update" = "select";
+  private op: "select" | "insert" | "update" | "upsert" = "select";
+  private conflictCol: string | null = null;
   private payload: Row | Row[] | null = null;
   private orderBy: { col: string; asc: boolean } | null = null;
   private max: number | null = null;
@@ -42,6 +43,13 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   insert(values: Row | Row[]) {
     this.op = "insert";
     this.payload = values;
+    return this;
+  }
+  /** Only the ignoreDuplicates flavor (insert unless onConflict value exists). */
+  upsert(values: Row, opts: { onConflict: string; ignoreDuplicates?: boolean }) {
+    this.op = "upsert";
+    this.payload = values;
+    this.conflictCol = opts.onConflict;
     return this;
   }
   update(values: Row) {
@@ -98,7 +106,12 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   private run(): { data: unknown; error: null } {
     const all = this.db.rows(this.table);
     let affected: Row[];
-    if (this.op === "insert") {
+    if (this.op === "upsert") {
+      const v = this.payload as Row;
+      const col = this.conflictCol!;
+      affected = all.some((r) => r[col] === v[col]) ? [] : [{ id: crypto.randomUUID(), ...v }];
+      all.push(...affected);
+    } else if (this.op === "insert") {
       const items = (Array.isArray(this.payload) ? this.payload : [this.payload]) as Row[];
       affected = items.map((it) => ({ id: crypto.randomUUID(), ...it }));
       all.push(...affected);
