@@ -84,10 +84,14 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | EV02 | `appointment.cancelled_by_doctor` | findmed-cancelacionDoctor | canceladadoc_estado_cita | outbox + worker; caso de reubicación si FindMed lo aprueba | ¿Abrir caso automático? | pendiente |
 | EV03 | `appointment.reminder_48h` | findmed-Confirmacion | dosdias_pre_confirmacion (+ botones) | cron idempotente (N08) → outbox → worker; botones con appointment_id | — | pendiente |
 | EV04 | `appointment.auto_cancelled` | findmed-Autocancelacion | autocancelada_estado_cita | outbox + worker; calendario reconciliado | — | pendiente |
-| EV05 | `appointment.reminder_day_of` | findmed-Recordatorio8am | cita_manana_recordatorio (+ botón cancelar) | outbox + worker | **Contradicción "día de 8 am" vs template "mañana"**: revisar cuerpo real | pendiente |
-| EV06 | `postconsultation.submitted` | findmed-Formulario_doc (sin consumidor) | — | caso/notificación interna | ¿Se avisa al paciente? | pendiente |
-| EV07 | `postconsultation.report_sent` | findmed-Envio_informe (sin consumidor) | — | por definir | **Semántica: solicitud vs envío realizado** | pendiente |
+| EV05 | `appointment.reminder_day_of` | findmed-Recordatorio8am | cita_manana_recordatorio (+ botón cancelar) | outbox + worker | Resuelto (12-oct, cuerpo real vía API): el template dice "el día de hoy"; es recordatorio del mismo día, solo el nombre engaña | pendiente |
+| EV06 | `postconsultation.submitted` | findmed-Formulario_doc (sin consumidor) | — | caso/notificación interna | Evidencia 12-oct: no existe template al paciente → evento interno (interpretación, confirmar con FindMed) | pendiente |
+| EV07 | `postconsultation.report_sent` | findmed-Envio_informe (sin consumidor) | — | por definir | No existe template al paciente → interno; semántica solicitud vs envío sigue por confirmar | pendiente |
 | EV08 | `appointment.rescheduled_by_staff` | findmed-reagendado | cita_reagendada_staff | outbox + worker; revisar también reagenda de paciente/doctor | — | pendiente |
+
+## Plantillas WHAAPY (leídas por API el 12-oct)
+
+37 aprobadas (es_MX). Las 12 del flujo n8n existen. Las de estado usan botón URL `https://app.findmed.com.mx/gestionar?token={{1}}` (camino seguro). `boton_confirmar_cita` / `boton_cancelar_cita` son plantillas MARKETING separadas con QUICK_REPLY (hoy procesadas por n8n por teléfono, F14 → A6). `pedir_documentos` pide póliza + INE por WhatsApp: los archivos llegan como `message.received` con `media_url` de 24 h → B7b debe guardarlos en almacenamiento privado. Hay 25 plantillas adicionales (varias duplicadas/antiguas) a depurar en el centro de mensajería.
 
 ## Requisitos adicionales (instrucciones de Alex, 12-oct)
 
