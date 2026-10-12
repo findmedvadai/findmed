@@ -67,7 +67,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | not_run |
 | R34 | 429/5xx, respuesta perdida, reinicio del worker | IS | B7 | — | not_run |
 | R35 | Recordatorio vs confirmación vs autocancelación en carrera | U+IR | B7 | migración | U passed (guarda de estado previo en confirm/cancel); IR not_run |
-| R36 | Firma inválida o evento repetido rechazado (WHAAPY firma JSON re-serializado, N20) | U+IR | B7 | webhook de prueba | not_run |
+| R36 | Firma inválida o evento repetido rechazado (WHAAPY firma JSON re-serializado, N20) | U+IR | B7 | webhook de prueba | U passed (`whaapy-inbound_test.ts`); IR not_run |
 | R37 | Postconsulta y envío de informe con recorrido definido | OP | B7 | decisión EV06/EV07 | blocked |
 | R38 | Corte de agente y eventos en momentos distintos: un solo dueño | OP | B10 | — | not_run |
 | R39 | Reversión con operaciones en vuelo | OP | B10 | — | not_run |

@@ -589,3 +589,16 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** La URL base vive en Vault (`edge_functions_base_url`). La migración la deriva una sola vez del cron existente (solo existe en prod); en una BD nueva no hay cron previo, no se crea el secret y `invoke_edge_function` es un no-op con `NOTICE`.
 
 **Lección aprendida:** Una migración corre en *todos* los ambientes. Nada específico de un ambiente (URLs, project refs, llaves) va literal en SQL versionado; va en Vault/secrets y el código debe degradar a no-op cuando falta.
+---
+
+## 2026-10-12 — Migración editada después de haberse aplicado en producción (drift)
+
+**Categoría:** schema / deploy
+
+**Síntoma:** Producción tenía aplicada `20261012120000` con la restricción **por consultorio** y la URL de producción literal en `invoke_edge_function`, pero el archivo del repo ya decía **por doctor** y URL en Vault. `schema_migrations` la marcaba como aplicada, así que un `db push` nunca habría aplicado los cambios nuevos: repo y base divergían en silencio.
+
+**Causa raíz:** El archivo se modificó (decisión D2) asumiendo que no se había aplicado; mientras tanto alguien corrió el `db push` con la versión anterior. No se verificó `supabase_migrations.schema_migrations` antes de editar.
+
+**Solución aplicada:** Restaurar `20261012120000` byte a byte a la versión aplicada (commit original) y mover D2 + URL en Vault a una migración nueva `20261013000000`, probada en PGlite reproduciendo el orden real (por consultorio → por doctor; crons en prod siguen llamando al mismo proyecto, en ambientes nuevos quedan inertes).
+
+**Lección aprendida:** Una migración commiteada se considera aplicada en algún ambiente: nunca se edita, se agrega otra. Antes de tocar migraciones, consultar `schema_migrations` del ambiente real (`bash scripts/sb.sh db query "select max(version) from supabase_migrations.schema_migrations"`).

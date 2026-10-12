@@ -29,13 +29,13 @@ Fecha de revisión: 12-oct-2026. Sin secretos ni datos de pacientes.
 | Componente | En `main` | En producción |
 |---|---|---|
 | Frontend | `9ed5aa5` (incluye Gestionar con office_id y CSPRNG en API keys/secrets) | Vercel despliega desde `main` (no verificado en esta sesión). |
-| Edge Functions | Correcciones de seguridad/agenda/crons + `supabase-keys` | Versiones del 1-jul-2026 (vulnerables). `seed-admin` eliminada. |
-| Migraciones | hasta `20261012120000` | hasta `20260701120000` (registrada como aplicada el 12-oct). |
-| Cron jobs | definidos en migración `20261012120000` | 4 jobs vigentes creados a mano; responden 200. |
+| Edge Functions | Rama `feat/whaapy-mcp-migration` | Mixto (N25): 7 funciones del 12-oct, el resto del 1-jul; `findmed-mcp` y `whaapy-inbound` nunca desplegadas; `seed-admin` eliminada. |
+| Migraciones | hasta `20261013110000` | hasta `20261012120000` (versión original: exclusión por consultorio). Pendientes: `20261013000000`, `20261013100000`, `20261013110000`. |
+| Cron jobs | `20261012120000` + `20261013000000` (URL en Vault) | 4 jobs vía `invoke_edge_function` (URL literal); 27×200 en 3 h (12-oct 22:45 UTC). |
 | Vault | — | `service_role_key` = key legacy filtrada (N01). |
 
 ## Bloqueos de entorno
 
-1. **403 en el proyecto Supabase** para la cuenta de Alex (SQL y funciones). Restauración pendiente por Alex.
-2. **Permisos de Claude Code**: el clasificador bloquea `supabase functions deploy`, `supabase db push` y `git push --force`. Opciones: reglas en `.claude/settings.local.json` o ejecución manual de Alex.
-3. Sin número/token WHAAPY de prueba, sin acceso al Postgres Vadai, sin Especificación Findi v2.0.
+1. ~~403~~ Resuelto: token de la cuenta FindMed en `.env.local`, usado por `bash scripts/sb.sh` (la CLI global sigue con la cuenta de otros proyectos).
+2. Permisos: `.claude/settings.local.json` permite `bash scripts/sb.sh` (autorizado por Alex). Producción se toca solo con su visto bueno por paso.
+3. WHAAPY: API key en `.env.local` (verificada: 37 templates, 3 agentes, 1 webhook a n8n). Pendiente: crear el webhook hacia `whaapy-inbound`. Sin acceso al Postgres Vadai ni a la Especificación Findi v2.0.

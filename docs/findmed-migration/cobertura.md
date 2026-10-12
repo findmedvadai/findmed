@@ -54,7 +54,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | B4 | Dominio de citas: acciones comunes, idempotencia, calendario honesto | B1, B2 | R17–R28 | implementado sin validar (partes 1 y 2) |
 | B5 | `findmed-mcp` | Lectura: B1+B2; escritura: B4 | R29, R30 | implementado sin validar (fase lectura + enlace; U passed; IR bloqueado sin WHAAPY de prueba) |
 | B6 | Casos y handoff | B2, B5; token API WHAAPY | R31, R32, R10 | pendiente |
-| B7 | Outbox, worker, `whaapy-inbound`, templates | B2, B4; token y webhook WHAAPY de prueba | R33–R37 | pendiente |
+| B7 | Outbox, worker, `whaapy-inbound`, templates | B2, B4; token y webhook WHAAPY de prueba | R33–R37 | en implementación (`whaapy-inbound` fase 1: verificar, deduplicar y guardar) |
 | B7b | Centro de mensajería en el admin (D8): templates desde API WHAAPY, mapeo evento→template, historial de envíos/entregas | B7; `WHAAPY_API_KEY` | X13; R33, R34 | pendiente |
 | B8 | Agente WHAAPY (prompt, tools, campos, embudo) | B5, B6; reglas clínicas aprobadas | R01–R13 | pendiente |
 | B9 | Validación conjunta | B3–B8; número de prueba | R40 + T01–T30 si existen | pendiente |
