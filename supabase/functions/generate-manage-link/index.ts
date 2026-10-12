@@ -1,6 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
+import { verifyApiKey } from "../_shared/api-key.ts";
+import { isServiceRequest } from "../_shared/service-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,6 +26,15 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+
+  // A manage link grants view/cancel/reschedule over a patient's appointment,
+  // so it is only issued to our backend or to n8n with an `fm_` API key.
+  if (!isServiceRequest(req) && !(await verifyApiKey(req, supabase))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   let body: { appointment_id?: string; patient_phone?: string };
   try {

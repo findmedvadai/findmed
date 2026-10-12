@@ -1,5 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
+import { verifyApiKey } from "../_shared/api-key.ts";
+import { isServiceRequest } from "../_shared/service-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,12 +36,29 @@ Deno.serve(async (req) => {
     });
   }
 
-  const { appointment_id, patient_phone, manage_token } = body;
+  const { manage_token } = body;
+  let { appointment_id, patient_phone } = body;
   if (!appointment_id && !patient_phone && !manage_token) {
     return new Response(
       JSON.stringify({ error: "appointment_id, patient_phone o manage_token requerido" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+
+  // Auth: an `fm_` API key (n8n) or the service key may confirm by any
+  // identifier. Without them, only the patient's own manage_token is accepted —
+  // possessing the token is the authorization. Looking up by bare phone or
+  // appointment_id anonymously let anyone confirm other people's appointments.
+  const trusted = isServiceRequest(req) || (await verifyApiKey(req, supabase));
+  if (!trusted) {
+    if (!manage_token) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    appointment_id = undefined;
+    patient_phone = undefined;
   }
 
   let resolvedAppointmentId: string | undefined = appointment_id;
