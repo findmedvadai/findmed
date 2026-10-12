@@ -50,7 +50,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R16 | Consultorio sin horarios/inactivo/eliminado no ofrece slots | U+IR | B4 | — | U passed (`day-slots_test.ts`); IR not_run |
 | R17 | office_id de otro doctor rechazado | U+IR | B4 | — | U passed (`create_booking_link`); IR not_run |
 | R18 | Dos reservas al mismo horario → máximo una | IS (PGlite) / IR | B2-bis, B4 | IR: Postgres con 2 conexiones | IS passed (`supabase/tests/booking-constraint_test.ts`); IR not_run |
-| R19 | Reintento tras timeout devuelve resultado original; payload distinto → conflicto | IR | B4 | — | not_run |
+| R19 | Reintento tras timeout devuelve resultado original; payload distinto → conflicto | U+IR | B4 | — | U passed (`operations_test.ts`: replay sin segunda ejecución ni evento); IR not_run |
 | R20 | Horario pasado, fuera de bloque o malformado → rechazo | U+IR | B4 | — | U passed (fecha malformada/pasada en day-slots); IR not_run |
 | R21 | Sesión vencida o consumida no crea otra cita | IR | B4 | — | not_run |
 | R22 | Token Google revocado vs fallo temporal: estados distintos, sin "verificado" falso | IS+IR | B4 | calendario de prueba | IS passed (calendario caído → `external_calendar_unverified`); IR blocked |
@@ -59,7 +59,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R25 | Mismo doctor en dos consultorios (regla D2) | IS (PGlite) / IR | B2-bis | prod: migración aplicada | IS passed; IR not_run |
 | R26 | Paciente con varias citas: elección explícita de appointment_id | U+IR | B4, B5 | — | U passed (`appointment-actions_test.ts`); IR not_run |
 | R27 | Cancelar/reagendar desde paciente, doctor, staff y botón: misma transición | IR | B4, B7 | — | not_run |
-| R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | IR | B4, B5 | — | not_run |
+| R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | U+IR | B4, B5 | — | U passed (otra cita/otro teléfono = not_found); botón reenviado pendiente de B7 |
 | R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | U passed (`findmed-mcp_test.ts`); IR blocked |
 | R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | U passed (401 sin token, token erróneo y secret ausente); timeout por revisar en IR |
 | R31 | Handoff con agente disponible: caso, asignación, pausa, sin doble respuesta | IR+OP | B6 | número de prueba | blocked |
