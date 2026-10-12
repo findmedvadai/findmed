@@ -531,7 +531,7 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 
 **Causa raíz:** Toda la protección era check-then-insert en Edge Functions (racy por diseño) y el flujo del paciente ni siquiera hacía el check. `reservation_sessions.used_at` se marcaba *después* del insert y sin condición, así que un doble clic creaba dos citas.
 
-**Solución aplicada:** Migración `20261012120000`: `btree_gist` + `EXCLUDE USING gist (office_id WITH =, tstzrange(start_at,end_at,'[)') WITH &&) WHERE status IN ('scheduled','confirmed')` + `CHECK (end_at > start_at)`. Las EFs mapean SQLSTATE `23P01` → HTTP 409 con mensaje amable. `reserve-create` ahora valida fecha/hora, pasado, `doctor_date_overrides`, `checkAvailability` y `validateSlotAvailable`, y reclama la sesión atómicamente (`UPDATE … WHERE used_at IS NULL RETURNING`) *antes* del insert, liberándola si el insert falla. `manage-reschedule` valida igual, inserta la cita nueva **antes** de cancelar la vieja (antes borraba eventos y cancelaba primero: si el insert fallaba el paciente se quedaba sin cita) y extiende `expires_at` del token.
+**Solución aplicada:** Migración `20261012120000`: `btree_gist` + `EXCLUDE USING gist (doctor_id WITH =, tstzrange(start_at,end_at,'[)') WITH &&) WHERE status IN ('scheduled','confirmed')` (por doctor, decisión D2) + `CHECK (end_at > start_at)`. Las EFs mapean SQLSTATE `23P01` → HTTP 409 con mensaje amable. `reserve-create` ahora valida fecha/hora, pasado, `doctor_date_overrides`, `checkAvailability` y `validateSlotAvailable`, y reclama la sesión atómicamente (`UPDATE … WHERE used_at IS NULL RETURNING`) *antes* del insert, liberándola si el insert falla. `manage-reschedule` valida igual, inserta la cita nueva **antes** de cancelar la vieja (antes borraba eventos y cancelaba primero: si el insert fallaba el paciente se quedaba sin cita) y extiende `expires_at` del token.
 
 **Lección aprendida:** Las invariantes de negocio que no pueden romperse (no doble reserva) viven en la BD como constraint, no en código de aplicación. Cada endpoint público valida su propia entrada aunque "el frontend ya filtró". Las operaciones "marcar como usado" se hacen con UPDATE condicional y RETURNING, nunca select-then-update.
 
@@ -576,3 +576,16 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** Columnas `reminder_48h_sent_at` / `reminder_day_of_sent_at`; cada cron reclama la fila con `UPDATE … WHERE marker IS NULL RETURNING` antes de enviar; `auto-cancel` y `auto-complete` condicionan el update al estado previo y saltan si no afectó filas. Schedules de pg_cron ahora versionados en la migración (`cron.schedule` con jobname existente lo actualiza in-place) vía `public.invoke_edge_function(slug)`.
 
 **Lección aprendida:** Todo cron debe ser idempotente por construcción: marcador persistente + claim atómico. Toda transición de estado va con guarda del estado previo. Lo que viva solo en la BD de producción (cron jobs) se pierde; va en una migración.
+---
+
+## 2026-10-12 — Migración con la URL de producción hardcodeada en la función que usan los crons
+
+**Categoría:** schema / deploy
+
+**Síntoma:** (Detectado antes de aplicarse.) La primera versión de `20261012120000` definía `invoke_edge_function` con `https://jyzvdowflblxmlahlupo.supabase.co/functions/v1/…` literal. Cualquier `supabase start`, rama de preview o proyecto de staging que aplicara las migraciones habría registrado crons que llaman a las funciones de **producción**; mientras `send-day-of-reminders` siga sin guarda en prod, eso dispara WhatsApps reales a pacientes desde un ambiente de pruebas.
+
+**Causa raíz:** Copiar a una migración el comando que se había creado a mano en producción, sin preguntarse en qué otros ambientes corre una migración.
+
+**Solución aplicada:** La URL base vive en Vault (`edge_functions_base_url`). La migración la deriva una sola vez del cron existente (solo existe en prod); en una BD nueva no hay cron previo, no se crea el secret y `invoke_edge_function` es un no-op con `NOTICE`.
+
+**Lección aprendida:** Una migración corre en *todos* los ambientes. Nada específico de un ambiente (URLs, project refs, llaves) va literal en SQL versionado; va en Vault/secrets y el código debe degradar a no-op cuando falta.

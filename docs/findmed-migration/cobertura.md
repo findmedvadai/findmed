@@ -49,7 +49,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | B0 | Diagnóstico, conciliación, cobertura persistente | — | Documentos sin secretos; conteos conciliados | validado |
 | B1 | Búsqueda: alias, none/one/many, office_id extremo a extremo | B0 | R02–R06 | pendiente |
 | B2 | Entradas privilegiadas e identidad | B0; deploy requiere acceso | Probes anónimos = 401; productores legítimos OK | implementado sin validar (código en main) |
-| B2-bis | Regla D2 (bloqueo por doctor) en BD y validadores | B0 | Solapamientos existentes revisados; R18, R25 | en implementación |
+| B2-bis | Regla D2 (bloqueo por doctor) en BD y validadores | B0 | Solapamientos existentes revisados; R18, R25 | implementado sin validar (IS passed; falta aplicar en prod) |
 | B3 | Alta médica transaccional y reporte de consultorios | B2 | R14–R16 | implementado sin validar (parcial) |
 | B4 | Dominio de citas: acciones comunes, idempotencia, calendario honesto | B1, B2 | R17–R28 | en implementación |
 | B5 | `findmed-mcp` | Lectura: B1+B2; escritura: B4 | R29, R30 | pendiente |
@@ -96,7 +96,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | X02 | Propagación y validación doctor_id/office_id | B1, B4, triage-webhook | pendiente |
 | X03 | Cero / una / varias coincidencias distintas | M01, R03–R05 | pendiente |
 | X04 | Disponibilidad real, zona horaria, salud de calendario | B4, F13, F15, N06 | en implementación |
-| X05 | Sin reservas simultáneas incompatibles | A8, D2, R18 | en implementación |
+| X05 | Sin reservas simultáneas incompatibles | A8, D2, R18 | implementado sin validar |
 | X06 | Idempotencia y recuperación tras timeout | B4 (`operation_requests`), M08, R19 | pendiente |
 | X07 | Propiedad de cada cita y caso | A2, R28 | pendiente |
 | X08 | Confirmación auténtica antes de acciones | A4, A6 | pendiente |

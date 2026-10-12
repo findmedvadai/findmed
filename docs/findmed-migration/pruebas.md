@@ -11,7 +11,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | `npm run build` | ok | bundle principal 1.1 MB (sin code-splitting) |
 | `npm run lint` | 83 errores, 9 warnings | previos; no se ocultan con desactivaciones globales |
 | `npx tsc -p tsconfig.app.json --noEmit` | 16 errores | previos (types.ts desincronizado, N15) |
-| `deno check` de las Edge Functions | 155 errores previos | los commits de esta sesión eliminaron 2 (TS2304 `tokenData`, TS2339 `token`) y no agregaron ninguno |
+| `deno check` de las Edge Functions | 155 errores previos | 142 tras B2-bis (reserve-slots en 0 al usar un select literal); ningún error nuevo por archivo |
 | `npm run test` | 6 passed | legales + ejemplo; no cubren agenda, MCP ni WhatsApp |
 
 ## Pruebas ya ejecutadas en esta sesión
@@ -26,7 +26,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | P-006 | `dispatch-webhook` (versión vieja en prod) acepta llamadas anónimas | IR | passed (confirma el defecto) | evento falso sin suscriptores → 200 |
 | P-007 | Vault `service_role_key` = key legacy filtrada | IR | passed (confirma N01) | comparación de hashes, sin imprimir valores |
 
-> Pendiente: convertir P-001–P-004 en `deno test` versionados dentro del repo (B4).
+> P-001–P-004 versionados en `supabase/tests/shared-helpers_test.ts`. Correr todo con `npm run test:edge` (6 tests, 8 pasos, passed el 12-oct).
 
 ## Suite R01–R40
 
@@ -49,14 +49,14 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R15 | Fallo a mitad del alta y reintento | IR | B3 | Supabase local | not_run |
 | R16 | Consultorio sin horarios/inactivo/eliminado no ofrece slots | U+IR | B4 | — | not_run |
 | R17 | office_id de otro doctor rechazado | IR | B4 | — | not_run |
-| R18 | Dos reservas concurrentes al mismo horario → máximo una | IR | B2-bis, B4 | Supabase local + migración | not_run |
+| R18 | Dos reservas al mismo horario → máximo una | IS (PGlite) / IR | B2-bis, B4 | IR: Postgres con 2 conexiones | IS passed (`supabase/tests/booking-constraint_test.ts`); IR not_run |
 | R19 | Reintento tras timeout devuelve resultado original; payload distinto → conflicto | IR | B4 | — | not_run |
 | R20 | Horario pasado, fuera de bloque o malformado → rechazo | U+IR | B4 | — | not_run |
 | R21 | Sesión vencida o consumida no crea otra cita | IR | B4 | — | not_run |
 | R22 | Token Google revocado vs fallo temporal: estados distintos, sin "verificado" falso | IS+IR | B4 | calendario de prueba | blocked |
 | R23 | >50 eventos y bloqueo de día completo | IS+IR | B4 | calendario de prueba | not_run |
 | R24 | Sede en otra zona horaria y cruce de medianoche | U | B4 | IANA por sede (pendiente) | not_run |
-| R25 | Mismo doctor en dos consultorios (regla D2) | IR | B2-bis | migración | not_run |
+| R25 | Mismo doctor en dos consultorios (regla D2) | IS (PGlite) / IR | B2-bis | prod: migración aplicada | IS passed; IR not_run |
 | R26 | Paciente con varias citas: elección explícita de appointment_id | IR | B4, B5 | — | not_run |
 | R27 | Cancelar/reagendar desde paciente, doctor, staff y botón: misma transición | IR | B4, B7 | — | not_run |
 | R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | IR | B4, B5 | — | not_run |
