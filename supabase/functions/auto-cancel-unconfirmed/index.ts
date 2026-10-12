@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,7 +25,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   const now = new Date();
@@ -56,7 +57,7 @@ Deno.serve(async (req) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
 
   let cancelled = 0;
 
@@ -76,15 +77,22 @@ Deno.serve(async (req) => {
 
     // If we're past the deadline, auto-cancel
     if (now >= deadline) {
-      const { error: cancelError } = await supabase
+      // Guard on the previous status: a patient who confirmed between our
+      // select and this update must NOT be cancelled. Zero rows = someone
+      // else transitioned it first; skip silently.
+      const { data: cancelledRow, error: cancelError } = await supabase
         .from("appointments")
         .update({ status: "cancelled", cancel_reason: "no_confirmation" })
-        .eq("id", appt.id);
+        .eq("id", appt.id)
+        .eq("status", "scheduled")
+        .select("id")
+        .maybeSingle();
 
       if (cancelError) {
         console.error(`Error cancelling appointment ${appt.id}:`, cancelError);
         continue;
       }
+      if (!cancelledRow) continue;
 
       // Insert doctor notification
       await supabase.from("notifications").insert({

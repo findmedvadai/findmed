@@ -10,6 +10,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,7 +34,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   const now = new Date();
@@ -66,7 +67,7 @@ Deno.serve(async (req) => {
 
   const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
 
   let completed = 0;
 
@@ -75,15 +76,21 @@ Deno.serve(async (req) => {
     const doctor = appt.doctors as { full_name: string } | null;
     const office = appt.doctor_offices as { name: string } | null;
 
-    const { error: completeErr } = await supabase
+    // Guard on the previous status so two overlapping runs (or the doctor's
+    // own post-consultation form) can't emit `appointment.completed` twice.
+    const { data: completedRow, error: completeErr } = await supabase
       .from("appointments")
       .update({ status: "completed" })
-      .eq("id", appt.id);
+      .eq("id", appt.id)
+      .eq("status", "confirmed")
+      .select("id")
+      .maybeSingle();
 
     if (completeErr) {
       console.error(`[auto-complete] failed to mark ${appt.id} as completed:`, completeErr);
       continue;
     }
+    if (!completedRow) continue;
 
     // Reuse existing manage token if any. If none exists, create one with a
     // 7-day window so post-consultation flows (feedback, encuestas) have a

@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,7 +25,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   const now = new Date();
@@ -43,6 +44,7 @@ Deno.serve(async (req) => {
       patients(full_name, phone)
     `)
     .eq("status", "scheduled")
+    .is("reminder_48h_sent_at", null)
     .gte("start_at", windowStart)
     .lte("start_at", windowEnd);
 
@@ -63,11 +65,24 @@ Deno.serve(async (req) => {
 
   const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
 
   let processed = 0;
 
   for (const appt of appointments) {
+    // Atomic claim: the 47–49h window is wider than the cron interval, so
+    // without a sent-marker the same appointment got two reminders. Only the
+    // run that flips the marker from NULL sends.
+    const { data: claimed } = await supabase
+      .from("appointments")
+      .update({ reminder_48h_sent_at: now.toISOString() })
+      .eq("id", appt.id)
+      .eq("status", "scheduled")
+      .is("reminder_48h_sent_at", null)
+      .select("id")
+      .maybeSingle();
+    if (!claimed) continue;
+
     const patient = appt.patients as { full_name: string; phone: string } | null;
     const doctor = appt.doctors as { full_name: string } | null;
     const office = appt.doctor_offices as { name: string; address: string | null } | null;
