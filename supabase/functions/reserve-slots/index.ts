@@ -9,6 +9,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { isValidLocalDate, mxDayBoundsMs, mxLocalToMs, mxToday } from "../_shared/mx-time.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,7 +29,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   let body: { office_id?: string; doctor_id?: string; date: string };
@@ -50,6 +52,19 @@ Deno.serve(async (req) => {
       JSON.stringify({ error: "office_id (o doctor_id legacy) y date requeridos" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+  if (!isValidLocalDate(date)) {
+    return new Response(JSON.stringify({ error: "date debe tener formato YYYY-MM-DD" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // Past days never have slots.
+  if (date < mxToday()) {
+    return new Response(JSON.stringify({ slots: [] }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   if (!office_id && doctor_id) {
@@ -150,44 +165,54 @@ Deno.serve(async (req) => {
   // Dedupe (when blocks share boundaries) and sort.
   const uniqueSlots = [...new Set(allSlots)].sort();
 
-  // Existing appointments for this office on this day.
-  const dayStart = `${date}T00:00:00`;
-  const dayEnd = `${date}T23:59:59`;
+  // Everything below compares absolute instants (epoch ms). The previous
+  // version compared minutes-of-day and built the day window without an
+  // offset (read as UTC by Postgres), so appointments from 18:00–23:59 CDMX
+  // were missed and those slots could be double-booked.
+  const { startMs: dayStartMs, endMs: dayEndMs } = mxDayBoundsMs(date);
+  const dayStartIso = new Date(dayStartMs).toISOString();
+  const dayEndIso = new Date(dayEndMs).toISOString();
+
+  // Existing appointments for this office that overlap this CDMX day.
   const { data: existingAppts } = await supabase
     .from("appointments")
     .select("start_at, end_at")
     .eq("office_id", office_id)
     .in("status", ["scheduled", "confirmed"])
-    .gte("start_at", dayStart)
-    .lte("start_at", dayEnd);
+    .lt("start_at", dayEndIso)
+    .gt("end_at", dayStartIso);
+
+  const busy: { startMs: number; endMs: number }[] = (existingAppts ?? []).map((a) => ({
+    startMs: Date.parse(a.start_at),
+    endMs: Date.parse(a.end_at),
+  }));
 
   // External calendar conflicts. Only the office's connected provider counts.
-  let externalEvents: { startMin: number; endMin: number }[] = [];
-
   if (office.google_calendar_connected && office.google_calendar_id) {
     try {
       const accessToken = await getGoogleAccessToken({ supabase, office });
       if (accessToken) {
         const calendarId = encodeURIComponent(office.google_calendar_id);
-        const timeMin = `${date}T00:00:00Z`;
-        const timeMax = `${date}T23:59:59Z`;
         const eventsUrl =
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events?` +
-          new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "50" });
+          new URLSearchParams({
+            timeMin: dayStartIso,
+            timeMax: dayEndIso,
+            singleEvents: "true",
+            orderBy: "startTime",
+            maxResults: "250",
+          });
         const eventsRes = await fetch(eventsUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         const eventsData = await eventsRes.json();
-        const parseLocalMinutes = (dt: string): number => {
-          const timePart = dt.split("T")[1];
-          const hh = parseInt(timePart.substring(0, 2), 10);
-          const mm = parseInt(timePart.substring(3, 5), 10);
-          return hh * 60 + mm;
-        };
-        externalEvents = (eventsData.items || [])
-          .filter((e: any) => e.start?.dateTime)
-          .map((e: any) => ({
-            startMin: parseLocalMinutes(e.start.dateTime),
-            endMin: parseLocalMinutes(e.end?.dateTime || e.start.dateTime),
-          }));
+        // Timed events only (all-day events keep being ignored, as before).
+        // Google returns dateTime with an explicit offset, so Date.parse is exact.
+        for (const e of eventsData.items || []) {
+          if (!e.start?.dateTime) continue;
+          busy.push({
+            startMs: Date.parse(e.start.dateTime),
+            endMs: Date.parse(e.end?.dateTime || e.start.dateTime),
+          });
+        }
       }
     } catch (err) {
       console.error("Error fetching Google Calendar events:", err);
@@ -200,93 +225,51 @@ Deno.serve(async (req) => {
         const eventsUrl =
           `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/calendarView?` +
           new URLSearchParams({
-            startDateTime: `${date}T00:00:00Z`,
-            endDateTime: `${date}T23:59:59Z`,
-            $top: "50",
+            startDateTime: dayStartIso,
+            endDateTime: dayEndIso,
+            $top: "250",
             $select: "id,start,end",
           });
-        const eventsRes = await fetch(eventsUrl, { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+        // Was `tokenData.access_token` (undefined -> ReferenceError swallowed by
+        // the catch), so Outlook busy times never blocked patient slots.
+        const eventsRes = await fetch(eventsUrl, {
+          headers: { Authorization: `Bearer ${accessToken}`, Prefer: 'outlook.timezone="UTC"' },
+        });
         const eventsData = await eventsRes.json();
-        const toMxMinutes = (dtStr: string): number => {
-          const fmt = new Intl.DateTimeFormat("es-MX", {
-            timeZone: "America/Mexico_City",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
+        // With Prefer UTC, Graph returns naive UTC dateTimes; append Z.
+        const parseGraph = (dt: string): number =>
+          Date.parse(dt.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(dt) ? dt : dt + "Z");
+        for (const e of eventsData.value || []) {
+          if (!e.start?.dateTime) continue;
+          busy.push({
+            startMs: parseGraph(e.start.dateTime),
+            endMs: parseGraph(e.end?.dateTime || e.start.dateTime),
           });
-          // Microsoft Graph returns naive UTC dateTimes; treat as UTC by default.
-          const ts = dtStr.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(dtStr) ? dtStr : dtStr + "Z";
-          const parts = fmt.formatToParts(new Date(ts));
-          const h = parseInt(parts.find((p) => p.type === "hour")!.value);
-          const m = parseInt(parts.find((p) => p.type === "minute")!.value);
-          return h * 60 + m;
-        };
-        externalEvents = (eventsData.value || [])
-          .filter((e: any) => e.start?.dateTime)
-          .map((e: any) => ({
-            startMin: toMxMinutes(e.start.dateTime),
-            endMin: e.end?.dateTime ? toMxMinutes(e.end.dateTime) : toMxMinutes(e.start.dateTime),
-          }));
+        }
       }
     } catch (err) {
       console.error("Error fetching Outlook Calendar events:", err);
     }
   }
 
-  const toMxMinutes = (dtStr: string): number => {
-    const d = new Date(dtStr);
-    const fmt = new Intl.DateTimeFormat("es-MX", {
-      timeZone: "America/Mexico_City",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-    const parts = fmt.formatToParts(d);
-    const h = parseInt(parts.find((p) => p.type === "hour")!.value);
-    const m = parseInt(parts.find((p) => p.type === "minute")!.value);
-    return h * 60 + m;
-  };
+  // Same cutoffs as before: past slots are never offered, and for *today* the
+  // slot must also be at least min_confirm_hours_before away.
+  const nowMs = Date.now();
+  const cutoffMs = date === mxToday(nowMs) ? nowMs + minConfirmHours * 60 * 60 * 1000 : nowMs;
 
   const availableSlots = uniqueSlots.filter((slot) => {
-    const slotStart = parseInt(slot.split(":")[0]) * 60 + parseInt(slot.split(":")[1]);
-    const slotEnd = slotStart + durationMinutes;
-    for (const a of existingAppts || []) {
-      const aStart = toMxMinutes(a.start_at);
-      const aEnd = toMxMinutes(a.end_at);
-      if (slotStart < aEnd && slotEnd > aStart) return false;
-    }
-    for (const e of externalEvents) {
-      if (slotStart < e.endMin && slotEnd > e.startMin) return false;
-    }
-
-    // Don't show past slots for today (Mexico City timezone).
-    const now = new Date();
-    const todayMxStr = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Mexico_City",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(now);
-    if (date === todayMxStr) {
-      const mxParts = new Intl.DateTimeFormat("es-MX", {
-        timeZone: "America/Mexico_City",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).formatToParts(now);
-      const nowMxH = parseInt(mxParts.find((p) => p.type === "hour")!.value);
-      const nowMxM = parseInt(mxParts.find((p) => p.type === "minute")!.value);
-      const nowMin = nowMxH * 60 + nowMxM;
-      const cutoff = nowMin + minConfirmHours * 60;
-      if (slotStart < cutoff) return false;
+    const slotStartMs = mxLocalToMs(date, slot);
+    const slotEndMs = slotStartMs + durationMinutes * 60 * 1000;
+    if (slotStartMs < cutoffMs) return false;
+    for (const b of busy) {
+      if (slotStartMs < b.endMs && slotEndMs > b.startMs) return false;
     }
     return true;
   });
 
   let within48h = false;
   if (availableSlots.length > 0) {
-    const slotDateTime = new Date(`${date}T${availableSlots[0]}:00-06:00`);
-    within48h = slotDateTime.getTime() - Date.now() < 48 * 60 * 60 * 1000;
+    within48h = mxLocalToMs(date, availableSlots[0]) - nowMs < 48 * 60 * 60 * 1000;
   }
 
   return new Response(
