@@ -27,12 +27,29 @@ export interface ServerDeps {
 type JsonRpcId = string | number | null;
 
 const json = (status: number, body: unknown, extraHeaders: Record<string, string> = {}) =>
-  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...extraHeaders } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...extraHeaders },
+  });
 
-const rpcError = (id: JsonRpcId, code: number, message: string, data?: unknown, status = 200) =>
-  json(status, { jsonrpc: "2.0", id, error: { code, message, ...(data !== undefined ? { data } : {}) } });
+interface Reply {
+  result(id: JsonRpcId, result: unknown): Response;
+  error(id: JsonRpcId, code: number, message: string, data?: unknown, status?: number): Response;
+}
 
-const rpcResult = (id: JsonRpcId, result: unknown) => json(200, { jsonrpc: "2.0", id, result });
+/**
+ * JSON-RPC responder. Always JSON (WHAAPY documents JSON replies), even though
+ * WHAAPY also accepts text/event-stream. An apparent gateway problem with that
+ * Accept header turned out to be TLS interception by local antivirus (N28).
+ */
+function makeReply(): Reply {
+  const send = (body: unknown, status = 200) => json(status, body);
+  return {
+    result: (id, result) => send({ jsonrpc: "2.0", id, result }),
+    error: (id, code, message, data, status = 200) =>
+      send({ jsonrpc: "2.0", id, error: { code, message, ...(data !== undefined ? { data } : {}) } }, status),
+  };
+}
 
 export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<Response> {
   // --- Auth (before anything else, including protocol details) ---
@@ -50,28 +67,29 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
   if (version && !SUPPORTED_VERSIONS.has(version)) {
     return json(400, { error: "unsupported_protocol_version", supported: [...SUPPORTED_VERSIONS] });
   }
+  const reply = makeReply();
 
   let msg: unknown;
   try {
     msg = await req.json();
   } catch {
-    return rpcError(null, -32700, "Parse error", undefined, 400);
+    return reply.error(null, -32700, "Parse error", undefined, 400);
   }
-  if (Array.isArray(msg)) return rpcError(null, -32600, "Batching is not supported", undefined, 400);
+  if (Array.isArray(msg)) return reply.error(null, -32600, "Batching is not supported", undefined, 400);
   if (typeof msg !== "object" || msg === null || (msg as { jsonrpc?: unknown }).jsonrpc !== "2.0") {
-    return rpcError(null, -32600, "Invalid Request", undefined, 400);
+    return reply.error(null, -32600, "Invalid Request", undefined, 400);
   }
   const m = msg as { id?: JsonRpcId; method?: unknown; params?: unknown };
 
   // Notifications and client responses carry no id to answer → 202, no body.
   if (m.id === undefined) return new Response(null, { status: 202 });
   const id = m.id;
-  if (typeof m.method !== "string") return rpcError(id, -32600, "Invalid Request");
+  if (typeof m.method !== "string") return reply.error(id, -32600, "Invalid Request");
 
   switch (m.method) {
     case "initialize": {
       const requested = (m.params as { protocolVersion?: string } | undefined)?.protocolVersion;
-      return rpcResult(id, {
+      return reply.result(id, {
         protocolVersion: requested && SUPPORTED_VERSIONS.has(requested) ? requested : PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
@@ -80,26 +98,26 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
       });
     }
     case "ping":
-      return rpcResult(id, {});
+      return reply.result(id, {});
     case "tools/list":
-      return rpcResult(id, {
+      return reply.result(id, {
         tools: deps.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });
     case "tools/call":
-      return await callTool(id, m.params, deps);
+      return await callTool(id, m.params, deps, reply);
     default:
-      return rpcError(id, -32601, "Method not found", { method: m.method });
+      return reply.error(id, -32601, "Method not found", { method: m.method });
   }
 }
 
-async function callTool(id: JsonRpcId, params: unknown, deps: ServerDeps): Promise<Response> {
+async function callTool(id: JsonRpcId, params: unknown, deps: ServerDeps, reply: Reply): Promise<Response> {
   const p = params as { name?: unknown; arguments?: unknown } | undefined;
   const tool = deps.tools.find((t) => t.name === p?.name);
-  if (!tool) return rpcError(id, -32602, "Unknown tool", { name: p?.name ?? null });
+  if (!tool) return reply.error(id, -32602, "Unknown tool", { name: p?.name ?? null });
 
   const args = (p?.arguments ?? {}) as Record<string, unknown>;
   const invalid = validate(tool.inputSchema, args);
-  if (invalid) return rpcError(id, -32602, "Invalid arguments", invalid);
+  if (invalid) return reply.error(id, -32602, "Invalid arguments", invalid);
 
   const traceId = crypto.randomUUID();
   const started = performance.now();
@@ -138,5 +156,5 @@ async function callTool(id: JsonRpcId, params: unknown, deps: ServerDeps): Promi
   });
 
   const envelope = { ...outcome, toolName: tool.name, safety: tool.safety, durationMs, trace_id: traceId };
-  return rpcResult(id, { content: [{ type: "text", text: JSON.stringify(envelope) }], isError: !outcome.ok });
+  return reply.result(id, { content: [{ type: "text", text: JSON.stringify(envelope) }], isError: !outcome.ok });
 }

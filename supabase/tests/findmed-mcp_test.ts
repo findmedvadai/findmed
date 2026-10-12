@@ -33,6 +33,16 @@ function call(deps: Parameters<typeof handleMcpRequest>[1], body: unknown, opts:
   );
 }
 
+/** Reads a JSON-RPC message from a JSON or single-event SSE response. */
+async function rpc(res: Response) {
+  const text = await res.text();
+  if ((res.headers.get("Content-Type") ?? "").includes("text/event-stream")) {
+    const line = text.split("\n").find((l) => l.startsWith("data: "));
+    return JSON.parse(line!.slice(6));
+  }
+  return JSON.parse(text);
+}
+
 const echoTool: ToolDef = {
   name: "echo",
   description: "test",
@@ -52,7 +62,7 @@ const deps = (db = new FakeDb(), tools: ToolDef[] = [echoTool]) => ({
   log: () => {},
 });
 const toolPayload = async (res: Response) => {
-  const body = await res.json();
+  const body = await rpc(res);
   return { body, envelope: JSON.parse(body.result.content[0].text) };
 };
 
@@ -74,7 +84,7 @@ Deno.test("R29: initialize negotiates 2025-06-18 and declares tools", async () =
     method: "initialize",
     params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "whaapy-mcp-client", version: "1.0.0" } },
   });
-  const body = await res.json();
+  const body = await rpc(res);
   assertEquals(res.status, 200);
   assertEquals(body.result.protocolVersion, PROTOCOL_VERSION);
   assert(body.result.capabilities.tools);
@@ -91,19 +101,19 @@ Deno.test("R29: notifications → 202 empty; DELETE → 204; GET → 405", async
 
 Deno.test("R29: parse error, batch, bad version, unknown method", async () => {
   let r = await call(deps(), "{not json");
-  assertEquals((await r.json()).error.code, -32700);
+  assertEquals((await rpc(r)).error.code, -32700);
   r = await call(deps(), [{ jsonrpc: "2.0", id: 1, method: "ping" }]);
-  assertEquals((await r.json()).error.code, -32600);
+  assertEquals((await rpc(r)).error.code, -32600);
   r = await call(deps(), { jsonrpc: "2.0", id: 1, method: "ping" }, { headers: { "MCP-Protocol-Version": "1999-01-01" } });
   assertEquals(r.status, 400);
   r = await call(deps(), { jsonrpc: "2.0", id: 7, method: "resources/list" });
-  const b = await r.json();
+  const b = await rpc(r);
   assertEquals([b.id, b.error.code], [7, -32601]);
 });
 
 Deno.test("R29: tools/list exposes object-rooted schemas for every real tool", async () => {
   const r = await call(deps(new FakeDb(), TOOLS), { jsonrpc: "2.0", id: 2, method: "tools/list" });
-  const tools = (await r.json()).result.tools;
+  const tools = (await rpc(r)).result.tools;
   assertEquals(tools.map((t: { name: string }) => t.name), [
     "search_care_options",
     "list_available_slots",
@@ -120,11 +130,11 @@ Deno.test("R29: tools/list exposes object-rooted schemas for every real tool", a
 });
 
 Deno.test("R29: tools/call validates arguments (required, types, additionalProperties)", async () => {
-  const bad = async (args: unknown) => (await (await call(deps(), { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: args } })).json()).error;
+  const bad = async (args: unknown) => (await (await rpc(await call(deps(), { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: args } })))).error;
   assertEquals((await bad({})).data, { field: "text", reason: "required" });
   assertEquals((await bad({ text: "x", extra: 1 })).data.reason, "unexpected property");
   assertEquals((await bad({ text: "x", tags: "a,b" })).data, { field: "tags", reason: "expected array" });
-  const unknown = await (await call(deps(), { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "nope", arguments: {} } })).json();
+  const unknown = await (await rpc(await call(deps(), { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "nope", arguments: {} } })));
   assertEquals(unknown.error.code, -32602);
 });
 
@@ -201,4 +211,11 @@ Deno.test("R17: create_booking_link rejects an office of another doctor", async 
 Deno.test("A4: commit_appointment_action is only published behind the feature flag", () => {
   assertEquals(TOOLS.some((t) => t.name === "commit_appointment_action"), false);
   assertEquals(buildTools({ chatActions: true }).some((t) => t.name === "commit_appointment_action"), true);
+});
+
+Deno.test("N28: replies are JSON even when the client also accepts text/event-stream (WHAAPY)", async () => {
+  const msg = { jsonrpc: "2.0", id: 1, method: "ping" };
+  const res = await call(deps(), msg); // default Accept: application/json, text/event-stream
+  assertEquals(res.headers.get("Content-Type"), "application/json");
+  assertEquals((await res.json()).result, {});
 });
