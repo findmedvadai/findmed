@@ -13,6 +13,7 @@ import { createReservationSession } from "../_shared/booking-session.ts";
 import { findUpcomingAppointmentsByPhone } from "../_shared/appointment-actions.ts";
 import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "../_shared/phone.ts";
 import { msToMxIso } from "../_shared/mx-time.ts";
+import { commitAction, getOperation, prepareAction } from "../_shared/operations.ts";
 import { DATE_PATTERN, type Schema, UUID_PATTERN } from "./schema.ts";
 
 export type Safety = "read_only" | "read_private" | "mutation_limited";
@@ -285,9 +286,132 @@ const listMyAppointmentsTool: ToolDef = {
   },
 };
 
-export const TOOLS: ToolDef[] = [
-  searchCareOptionsTool,
-  listAvailableSlotsTool,
-  createBookingLinkTool,
-  listMyAppointmentsTool,
-];
+const ACTION_SCHEMA: Schema = {
+  type: "string",
+  enum: ["confirm", "cancel"],
+  description: "confirm = confirmar asistencia; cancel = cancelar la cita.",
+};
+
+const prepareAppointmentActionTool: ToolDef = {
+  name: "prepare_appointment_action",
+  safety: "read_private",
+  description: [
+    "Prepara confirmar o cancelar UNA cita del paciente. No cambia nada todavía.",
+    "When to use: cuando el paciente pide confirmar o cancelar y ya sabes cuál cita (appointment_id de list_my_appointments). Si tiene varias, pregunta primero cuál.",
+    "Never use for: reagendar (usa el enlace manage_url), ni citas de otra persona.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}; solo funciona con citas de ese teléfono.",
+    "Result: data.summary (fecha, hora, médico, consultorio) para que el paciente confirme lo que se hará, data.operation_id (vence en 15 min) y data.manage_url: enlace seguro donde el paciente puede hacerlo él mismo.",
+    "Si commit_appointment_action no está disponible, envía data.manage_url para que el paciente confirme o cancele desde ahí. Nunca digas que la cita ya se confirmó o canceló con este paso.",
+    "Side effects: ninguno sobre la cita (solo registra la intención).",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone", "appointment_id", "action"],
+    properties: {
+      phone: PHONE_SCHEMA,
+      appointment_id: { type: "string", pattern: UUID_PATTERN },
+      action: ACTION_SCHEMA,
+    },
+  },
+  async handler(supabase, args) {
+    const r = await prepareAction(supabase, {
+      phone: String(args.phone),
+      appointmentId: String(args.appointment_id),
+      action: args.action as "confirm" | "cancel",
+      channel: "mcp",
+    });
+    if (!r.ok) return fail(r.code, r.message_es);
+    return {
+      ok: true,
+      status: "pending_confirmation",
+      data: {
+        operation_id: r.operation_id,
+        action: r.action,
+        expires_at: r.expires_at,
+        summary: r.summary,
+        manage_url: r.manage_url,
+      },
+    };
+  },
+};
+
+const getOperationStatusTool: ToolDef = {
+  name: "get_operation_status",
+  safety: "read_private",
+  description: [
+    "Consulta el estado de una acción preparada o ejecutada (operation_id).",
+    "When to use: después de un error de red o timeout, ANTES de reintentar; o si el paciente pregunta si su confirmación/cancelación quedó.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}.",
+    "Result: data.status = pending_confirmation | executing | succeeded | failed | expired, y data.result.",
+    "Side effects: ninguno.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone", "operation_id"],
+    properties: { phone: PHONE_SCHEMA, operation_id: { type: "string", pattern: UUID_PATTERN } },
+  },
+  async handler(supabase, args) {
+    const r = await getOperation(supabase, { phone: String(args.phone), operationId: String(args.operation_id) });
+    if (!r.ok) return fail(r.code, r.message_es);
+    return { ok: true, status: "success", data: { operation_id: r.operation_id, status: r.status, action: r.action, result: r.result, expires_at: r.expires_at } };
+  },
+};
+
+const commitAppointmentActionTool: ToolDef = {
+  name: "commit_appointment_action",
+  safety: "mutation_limited",
+  description: [
+    "Ejecuta una acción preparada con prepare_appointment_action, una sola vez.",
+    "When to use: SOLO después de mostrar data.summary al paciente y de que él responda explícitamente que sí (por ejemplo 'sí, cancélala').",
+    "Never use for: acciones que el paciente no confirmó en su último mensaje, ni para reintentar a ciegas: si hubo error, usa get_operation_status primero.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}.",
+    "Result: status success con data.new_status cuando se ejecutó; failed con errors si la cita ya no lo permite; si se repite la misma operación devuelve el resultado original (data.replayed=true).",
+    "Side effects: cambia el estado de la cita, borra el evento del calendario al cancelar y avisa al médico.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone", "operation_id"],
+    properties: { phone: PHONE_SCHEMA, operation_id: { type: "string", pattern: UUID_PATTERN } },
+  },
+  async handler(supabase, args) {
+    const r = await commitAction(supabase, {
+      phone: String(args.phone),
+      operationId: String(args.operation_id),
+      evidence: { type: "chat_confirmation" },
+    });
+    if (!("operation_id" in r)) return fail(r.code, r.message_es);
+    const data = { operation_id: r.operation_id, status: r.status, replayed: r.replayed, ...(r.result ?? {}) };
+    if (r.status === "succeeded") return { ok: true, status: "success", data };
+    if (r.status === "executing") return { ok: true, status: "queued", data };
+    if (r.status === "expired") {
+      return { ok: false, status: "failed", data, errors: [{ code: "expired", message_es: "La solicitud venció; prepárala de nuevo.", retryable: true }] };
+    }
+    const code = String((r.result as { code?: string } | null)?.code ?? "failed");
+    const message_es = String((r.result as { message_es?: string } | null)?.message_es ?? "No se pudo completar la acción.");
+    return { ok: false, status: "failed", data, errors: [{ code, message_es }] };
+  },
+};
+
+/**
+ * Tool catalog. `chatActions` publishes commit_appointment_action, which lets
+ * the agent execute after the patient's explicit "yes" in chat. It stays OFF
+ * (env MCP_CHAT_ACTIONS_ENABLED) until FindMed accepts chat confirmation as
+ * evidence or the WhatsApp-button path (A4/A6) is in place; meanwhile the agent
+ * prepares the action and sends the secure /gestionar link.
+ */
+export function buildTools(opts: { chatActions: boolean }): ToolDef[] {
+  return [
+    searchCareOptionsTool,
+    listAvailableSlotsTool,
+    createBookingLinkTool,
+    listMyAppointmentsTool,
+    prepareAppointmentActionTool,
+    getOperationStatusTool,
+    ...(opts.chatActions ? [commitAppointmentActionTool] : []),
+  ];
+}
+
+export const TOOLS: ToolDef[] = buildTools({ chatActions: false });

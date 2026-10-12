@@ -7,6 +7,7 @@
 // can build the same /gestionar URL regardless of who created the row.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { appBaseUrl } from "./events.ts";
 
 const TOKEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
 const TOKEN_LENGTH = 32;
@@ -42,7 +43,7 @@ interface CreateManageTokenInput {
 
 export interface ManageTokenResult {
   token: string;
-  /** Full /gestionar URL. APP_URL env var or the lovable fallback. */
+  /** Full /gestionar URL built from APP_URL (see events.ts appBaseUrl). */
   manageUrl: string;
 }
 
@@ -57,11 +58,14 @@ export async function getOrCreateManageUrl(input: {
   endAt: string;
   patientPhone: string;
 }): Promise<string> {
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
+  const baseUrl = appBaseUrl();
+  // Only reuse a token that is still valid; an expired one would send the
+  // patient a dead link.
   const { data: existing } = await input.supabase
     .from("appointment_manage_tokens")
     .select("token")
     .eq("appointment_id", input.appointmentId)
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -92,6 +96,6 @@ export async function createManageToken(input: CreateManageTokenInput): Promise<
   });
   if (error) throw error;
 
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
+  const baseUrl = appBaseUrl();
   return { token, manageUrl: `${baseUrl}/gestionar?token=${token}` };
 }
