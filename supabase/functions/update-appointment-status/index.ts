@@ -1,6 +1,19 @@
+// Confirm or cancel an appointment on the patient's behalf from an integration
+// (formerly the n8n WhatsApp bot). Auth: `fm_` API key or our service key.
+//
+// Body: { action: "confirm" | "cancel", appointment_id? , patient_phone? }.
+// Prefer appointment_id. With only a phone, exactly one upcoming appointment
+// eligible for the action must match; otherwise 409 `multiple_appointments`
+// with the candidates — the old code acted on the first row it found (F14).
+// Cancelling now also deletes the external calendar event (it didn't).
+// The transition lives in _shared/appointment-actions.ts.
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { verifyApiKey } from "../_shared/api-key.ts";
+import { isServiceRequest } from "../_shared/service-auth.ts";
+import { applyPatientAction, findUpcomingAppointmentsByPhone, httpStatusFor } from "../_shared/appointment-actions.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,245 +21,43 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const json = (status: number, payload: unknown) =>
+  new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getServiceKey());
+  if (!isServiceRequest(req) && !(await verifyApiKey(req, supabase))) return json(401, { error: "Unauthorized" });
 
-  // --- API Key validation (same pattern as triage-webhook) ---
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const rawKey = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  if (!rawKey.startsWith("fm_")) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    getServiceKey()
-  );
-
-  const encoded = new TextEncoder().encode(rawKey);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-  const keyHash = Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-
-  const { data: apiKey } = await supabase
-    .from("api_keys")
-    .select("id")
-    .eq("key_hash", keyHash)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // Update last_used_at
-  supabase.from("api_keys").update({ last_used_at: new Date().toISOString() } as any).eq("id", apiKey.id).then(() => {});
-
-  // --- Parse body ---
-  let body: { appointment_id?: string; patient_phone?: string; action: "confirm" | "cancel" };
+  let body: { appointment_id?: string; patient_phone?: string; action?: "confirm" | "cancel" };
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json(400, { error: "Invalid JSON body" });
   }
-
   const { action, appointment_id, patient_phone } = body;
+  if (action !== "confirm" && action !== "cancel") return json(400, { error: "action must be 'confirm' or 'cancel'" });
+  if (!appointment_id && !patient_phone) return json(400, { error: "Provide appointment_id or patient_phone" });
 
-  if (!action || !["confirm", "cancel"].includes(action)) {
-    return new Response(JSON.stringify({ error: "action must be 'confirm' or 'cancel'" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  let targetId = appointment_id;
+  if (!targetId) {
+    const found = await findUpcomingAppointmentsByPhone(supabase, mxPhoneLookupVariants(normalizeMxPhone(patient_phone!)));
+    if (!found.ok) return json(500, { error: "Failed to look up appointments" });
+    const eligible = found.appointments.filter((a) => action === "cancel" || a.status === "scheduled");
+    if (eligible.length === 0) return json(404, { error: "No active appointment found" });
+    if (eligible.length > 1) return json(409, { error: "multiple_appointments", appointments: eligible });
+    targetId = eligible[0].appointment_id;
   }
 
-  if (!appointment_id && !patient_phone) {
-    return new Response(JSON.stringify({ error: "Provide appointment_id or patient_phone" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // --- Find the appointment ---
-  let appointmentQuery = supabase
-    .from("appointments")
-    .select("id, status, doctor_id, patient_id, start_at, end_at, patients(full_name, phone), doctors(full_name)")
-    .in("status", ["scheduled", "confirmed"])
-    .order("start_at", { ascending: true })
-    .limit(1);
-
-  if (appointment_id) {
-    appointmentQuery = appointmentQuery.eq("id", appointment_id);
-  } else if (patient_phone) {
-    // Match against both Mexican `+52` / `+521` variants so the n8n flow can
-    // pass any form the patient typed without missing the row.
-    const phoneVariants = mxPhoneLookupVariants(normalizeMxPhone(patient_phone));
-    const { data: patientMatches } = await supabase
-      .from("patients")
-      .select("id")
-      .in("phone", phoneVariants)
-      .order("created_at", { ascending: true })
-      .limit(1);
-    const patient = patientMatches?.[0];
-
-    if (!patient) {
-      return new Response(JSON.stringify({ error: "Patient not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    appointmentQuery = appointmentQuery.eq("patient_id", patient.id);
-  }
-
-  const { data: appointments, error: queryError } = await appointmentQuery;
-
-  if (queryError || !appointments || appointments.length === 0) {
-    return new Response(JSON.stringify({ error: "No active appointment found" }), {
-      status: 404,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  const appointment = appointments[0] as any;
-  const previousStatus = appointment.status;
-
-  // --- Validate action coherence ---
-  if (action === "confirm" && appointment.status === "confirmed") {
-    return new Response(JSON.stringify({ error: "Appointment is already confirmed" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  if (action === "cancel" && appointment.status === "cancelled") {
-    return new Response(JSON.stringify({ error: "Appointment is already cancelled" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // --- Execute action ---
-  const newStatus = action === "confirm" ? "confirmed" : "cancelled";
-  const updateData: any = { status: newStatus };
-  if (action === "cancel") {
-    updateData.cancel_reason = "patient";
-  }
-
-  const { error: updateError } = await supabase
-    .from("appointments")
-    .update(updateData)
-    .eq("id", appointment.id);
-
-  if (updateError) {
-    console.error("Update error:", updateError);
-    return new Response(JSON.stringify({ error: "Failed to update appointment" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // --- Create notification ---
-  const patientName = appointment.patients?.full_name ?? "Paciente";
-  const doctorName = appointment.doctors?.full_name ?? "Doctor";
-  const notifType = action === "confirm"
-    ? "appointment_scheduled" // reuse for confirmed via WhatsApp
-    : "appointment_cancelled_by_patient";
-
-  const notifTitle = action === "confirm"
-    ? `Cita confirmada — ${patientName}`
-    : `Cita cancelada — ${patientName}`;
-
-  const notifBody = action === "confirm"
-    ? `${patientName} confirmó su cita con ${doctorName} vía WhatsApp.`
-    : `${patientName} canceló su cita con ${doctorName} vía WhatsApp.`;
-
-  // Notification for doctor
-  await supabase.from("notifications").insert({
-    title: notifTitle,
-    body: notifBody,
-    type: notifType,
-    recipient_role: "doctor",
-    doctor_id: appointment.doctor_id,
-    appointment_id: appointment.id,
+  const result = await applyPatientAction(supabase, { appointmentId: targetId, action, channel: "whatsapp" });
+  if (!result.ok) return json(httpStatusFor(result.code), { error: result.code, message_es: result.message_es });
+  return json(200, {
+    success: true,
+    appointment_id: result.appointment_id,
+    new_status: result.new_status,
+    previous_status: result.previous_status,
+    calendar: result.calendar ?? null,
   });
-
-  // --- Dispatch webhooks ---
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
-
-  // Look up manage token for this appointment
-  const { data: manageTokenRow } = await supabase
-    .from("appointment_manage_tokens")
-    .select("token")
-    .eq("appointment_id", appointment.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const manageUrl = manageTokenRow ? `${baseUrl}/gestionar?token=${manageTokenRow.token}` : null;
-
-  const webhookPayload = {
-    appointment_id: appointment.id,
-    doctor_id: appointment.doctor_id,
-    patient_name: patientName,
-    patient_phone: appointment.patients?.phone ?? patient_phone,
-    start_at: appointment.start_at,
-    end_at: appointment.end_at,
-    previous_status: previousStatus,
-    new_status: newStatus,
-    manage_url: manageUrl,
-  };
-
-  // Dispatch specific event. Patient cancellation via WhatsApp uses the same
-  // event type as cancellation via the /gestionar UI, so n8n only needs one
-  // template path for "patient cancelled".
-  const specificEvent = action === "confirm" ? "appointment.confirmed" : "appointment.cancelled_by_patient";
-  fetch(`${SUPABASE_URL}/functions/v1/dispatch-webhook`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
-    body: JSON.stringify({ event_type: specificEvent, payload: webhookPayload }),
-  }).catch((e) => console.error("Dispatch specific webhook error:", e));
-
-  // Dispatch status_changed event
-  fetch(`${SUPABASE_URL}/functions/v1/dispatch-webhook`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
-    body: JSON.stringify({ event_type: "appointment.status_changed", payload: webhookPayload }),
-  }).catch((e) => console.error("Dispatch status_changed webhook error:", e));
-
-  return new Response(
-    JSON.stringify({
-      success: true,
-      appointment_id: appointment.id,
-      new_status: newStatus,
-      previous_status: previousStatus,
-    }),
-    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
 });

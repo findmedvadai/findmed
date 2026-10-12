@@ -1,8 +1,19 @@
+// Confirms an appointment. Callers:
+//   * our backend (service key) or an integration with an `fm_` API key: may
+//     identify the appointment by appointment_id, manage_token or patient_phone;
+//   * anyone else: ONLY with the patient's own manage_token (possessing the
+//     link is the authorization; anonymous lookups by phone/appointment_id
+//     allowed confirming other people's appointments — N03).
+// By phone, exactly one upcoming appointment must match; otherwise 409
+// `multiple_appointments` with the candidates (never "the first row" — F14).
+// The transition itself lives in _shared/appointment-actions.ts.
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 import { verifyApiKey } from "../_shared/api-key.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { applyPatientAction, findUpcomingAppointmentsByPhone, httpStatusFor } from "../_shared/appointment-actions.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,219 +21,64 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const json = (status: number, payload: unknown) =>
+  new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    getServiceKey()
-  );
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getServiceKey());
 
   let body: { appointment_id?: string; patient_phone?: string; manage_token?: string };
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json(400, { error: "Invalid JSON body" });
   }
-
   const { manage_token } = body;
   let { appointment_id, patient_phone } = body;
   if (!appointment_id && !patient_phone && !manage_token) {
-    return new Response(
-      JSON.stringify({ error: "appointment_id, patient_phone o manage_token requerido" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json(400, { error: "appointment_id, patient_phone o manage_token requerido" });
   }
 
-  // Auth: an `fm_` API key (n8n) or the service key may confirm by any
-  // identifier. Without them, only the patient's own manage_token is accepted —
-  // possessing the token is the authorization. Looking up by bare phone or
-  // appointment_id anonymously let anyone confirm other people's appointments.
   const trusted = isServiceRequest(req) || (await verifyApiKey(req, supabase));
   if (!trusted) {
-    if (!manage_token) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!manage_token) return json(401, { error: "Unauthorized" });
     appointment_id = undefined;
     patient_phone = undefined;
   }
 
-  let resolvedAppointmentId: string | undefined = appointment_id;
+  let targetId: string | undefined = appointment_id;
 
-  // Resolve via manage_token if provided
-  if (manage_token && !resolvedAppointmentId) {
+  if (!targetId && manage_token) {
     const { data: tokenRow } = await supabase
       .from("appointment_manage_tokens")
       .select("appointment_id, expires_at")
       .eq("token", manage_token)
       .maybeSingle();
+    if (!tokenRow) return json(404, { error: "Token inválido" });
+    if (new Date(tokenRow.expires_at) < new Date()) return json(410, { error: "Este enlace ha expirado" });
+    targetId = tokenRow.appointment_id;
+  }
 
-    if (!tokenRow) {
-      return new Response(JSON.stringify({ error: "Token inválido" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+  if (!targetId && patient_phone) {
+    const found = await findUpcomingAppointmentsByPhone(supabase, mxPhoneLookupVariants(normalizeMxPhone(patient_phone)));
+    if (!found.ok) return json(500, { error: "Error al buscar la cita" });
+    const confirmable = found.appointments.filter((a) => a.status === "scheduled");
+    if (confirmable.length === 0) return json(404, { error: "Cita no encontrada" });
+    if (confirmable.length > 1) {
+      return json(409, { error: "multiple_appointments", appointments: confirmable });
     }
-    if (new Date(tokenRow.expires_at) < new Date()) {
-      return new Response(JSON.stringify({ error: "Este enlace ha expirado" }), {
-        status: 410,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    resolvedAppointmentId = tokenRow.appointment_id;
+    targetId = confirmable[0].appointment_id;
   }
 
-  let appointmentQuery = supabase
-    .from("appointments")
-    .select("id, status, doctor_id, patient_id, start_at");
-
-  if (resolvedAppointmentId) {
-    appointmentQuery = appointmentQuery.eq("id", resolvedAppointmentId);
-  } else {
-    // Find by patient phone — match against both Mexican variants so calls
-    // from n8n with `+52` or `+521` formats both resolve correctly.
-    const phoneVariants = mxPhoneLookupVariants(normalizeMxPhone(patient_phone!));
-    const { data: patientMatches } = await supabase
-      .from("patients")
-      .select("id")
-      .in("phone", phoneVariants)
-      .order("created_at", { ascending: true })
-      .limit(1);
-    const patientRow = patientMatches?.[0];
-
-    if (!patientRow) {
-      return new Response(JSON.stringify({ error: "Paciente no encontrado" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    appointmentQuery = appointmentQuery
-      .eq("patient_id", patientRow.id)
-      .eq("status", "scheduled")
-      .order("start_at", { ascending: true })
-      .limit(1);
-  }
-
-  const { data: appointments } = await appointmentQuery;
-  const appointment = appointments?.[0];
-
-  if (!appointment) {
-    return new Response(JSON.stringify({ error: "Cita no encontrada" }), {
-      status: 404,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  if (appointment.status !== "scheduled") {
-    return new Response(
-      JSON.stringify({ error: `La cita tiene estado '${appointment.status}', no se puede confirmar` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
-
-  // Update to confirmed
-  const { error: updateError } = await supabase
-    .from("appointments")
-    .update({ status: "confirmed" })
-    .eq("id", appointment.id);
-
-  if (updateError) {
-    return new Response(
-      JSON.stringify({ error: "Error al confirmar", details: updateError.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
-
-  // Get patient info for notification
-  const { data: patient } = await supabase
-    .from("patients")
-    .select("full_name, phone")
-    .eq("id", appointment.patient_id)
-    .maybeSingle();
-
-  // Insert notification for doctor
-  await supabase.from("notifications").insert({
-    doctor_id: appointment.doctor_id,
-    appointment_id: appointment.id,
-    recipient_role: "doctor",
-    type: "appointment_scheduled",
-    title: "Cita confirmada",
-    body: `${patient?.full_name ?? "Paciente"} confirmó su cita del ${appointment.start_at?.split("T")[0] ?? ""}`,
+  const result = await applyPatientAction(supabase, {
+    appointmentId: targetId!,
+    action: "confirm",
+    channel: trusted ? "api" : "web",
+    manageToken: manage_token ?? null,
   });
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = getServiceKey();
-  const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
-
-  // Look up manage token for this appointment
-  const { data: manageTokenRow } = await supabase
-    .from("appointment_manage_tokens")
-    .select("token")
-    .eq("appointment_id", appointment.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const manageUrl = manageTokenRow ? `${baseUrl}/gestionar?token=${manageTokenRow.token}` : null;
-
-  // Dispatch webhooks (fire-and-forget)
-  try {
-    await Promise.all([
-      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
-        body: JSON.stringify({
-          event_type: "appointment.confirmed",
-          payload: {
-            appointment_id: appointment.id,
-            patient_name: patient?.full_name,
-            patient_phone: patient?.phone ?? null,
-            start_at: appointment.start_at,
-            confirmed_at: new Date().toISOString(),
-            manage_url: manageUrl,
-          },
-        }),
-      }),
-      fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
-        body: JSON.stringify({
-          event_type: "appointment.status_changed",
-          payload: {
-            appointment_id: appointment.id,
-            patient_phone: patient?.phone ?? null,
-            patient_name: patient?.full_name ?? null,
-            previous_status: "scheduled",
-            new_status: "confirmed",
-            start_at: appointment.start_at,
-            timestamp: new Date().toISOString(),
-            manage_url: manageUrl,
-          },
-        }),
-      }),
-    ]);
-  } catch (e) {
-    console.error("Error dispatching webhooks:", e);
-  }
-
-  return new Response(
-    JSON.stringify({ success: true, appointment_id: appointment.id }),
-    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+  if (!result.ok) return json(httpStatusFor(result.code), { error: result.message_es, code: result.code });
+  return json(200, { success: true, appointment_id: result.appointment_id });
 });

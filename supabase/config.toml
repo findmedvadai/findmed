@@ -71,3 +71,7 @@ verify_jwt = false
 
 [functions.outlook-calendar-delete-event]
 verify_jwt = false
+
+# Auth in code: fm_ API key or service key (not a JWT, so the gateway check must be off).
+[functions.update-appointment-status]
+verify_jwt = false
