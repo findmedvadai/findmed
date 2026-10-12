@@ -26,3 +26,6 @@ dist-ssr
 # Supabase CLI local state (per-machine project link, do not commit)
 supabase/.temp/
 supabase/migrations.zip
+
+# Claude Code local settings (permissions of this machine)
+.claude/settings.local.json
