@@ -53,7 +53,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | B3 | Alta médica transaccional y reporte de consultorios | B2 | R14–R16 | implementado sin validar (parcial) |
 | B4 | Dominio de citas: acciones comunes, idempotencia, calendario honesto | B1, B2 | R17–R28 | implementado sin validar (partes 1 y 2) |
 | B5 | `findmed-mcp` | Lectura: B1+B2; escritura: B4 | R29, R30 | implementado sin validar (fase lectura + enlace; U passed; IR bloqueado sin WHAAPY de prueba) |
-| B6 | Casos y handoff | B2, B5; token API WHAAPY | R31, R32, R10 | pendiente |
+| B6 | Casos y handoff | B2, B5; token API WHAAPY | R31, R32, R10 | implementado sin validar (código + U; migración y deploy pendientes de OK; IR con número de prueba) |
 | B7 | Outbox, worker, `whaapy-inbound`, templates | B2, B4; token y webhook WHAAPY de prueba | R33–R37 | en implementación (`whaapy-inbound` fase 1: verificar, deduplicar y guardar) |
 | B7b | Centro de mensajería en el admin (D8): templates desde API WHAAPY, mapeo evento→template, historial de envíos/entregas | B7; `WHAAPY_API_KEY` | X13; R33, R34 | pendiente |
 | B8 | Agente WHAAPY (prompt, tools, campos, embudo) | B5, B6; reglas clínicas aprobadas | R01–R13 | pendiente |
@@ -72,9 +72,9 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | M06 | Preparar acción | `prepare_appointment_action` | preparación | B4, B5 | implementado sin validar (`_shared/operations.ts`) |
 | M07 | Ejecutar acción confirmada | `commit_appointment_action` | escritura | B4, B5 | implementado sin validar, publicado solo con `MCP_CHAT_ACTIONS_ENABLED=true` (A4) |
 | M08 | Estado de operación | `get_operation_status` | lectura privada | B4, B5 | implementado sin validar |
-| M09 | Abrir caso | `open_case` | escritura | B6 | pendiente |
-| M10 | Solicitar humano | `request_handoff` | escritura | B6 | pendiente |
-| M11 | Estado de mi caso | `get_my_case_status` | lectura privada | B6 | pendiente |
+| M09 | Abrir caso | `open_case` | escritura | B6 | implementado sin validar |
+| M10 | Solicitar humano | `request_handoff` | escritura | B6 | implementado sin validar |
+| M11 | Estado de mi caso | `get_my_case_status` | lectura privada | B6 | implementado sin validar |
 
 ## Eventos EV01–EV08
 
@@ -103,10 +103,10 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | X04 | Disponibilidad real, zona horaria, salud de calendario | B4, F13, F15, N06 | en implementación |
 | X05 | Sin reservas simultáneas incompatibles | A8, D2, R18 | implementado sin validar |
 | X06 | Idempotencia y recuperación tras timeout | B4 (`operation_requests`), M08, R19 | implementado sin validar |
-| X07 | Propiedad de cada cita y caso | A2, R28 | implementado sin validar (citas); casos en B6 |
+| X07 | Propiedad de cada cita y caso | A2, R28 | implementado sin validar (citas y casos; U en `operations_test.ts` y `cases_test.ts`) |
 | X08 | Confirmación auténtica antes de acciones | A4, A6 | en implementación (prepare/commit + evidencia registrada; commit por chat apagado) |
 | X09 | Cancelar/reagendar coherente en BD, calendario y mensajes | B4 `appointment-actions`, R27 | en implementación (confirm/cancel de paciente unificados; staff y reagenda pendientes) |
-| X10 | Canalización humana verificable | A7, R31, R32 | pendiente |
+| X10 | Canalización humana verificable | A7, R31, R32 | implementado sin validar (U passed; IR bloqueada por número de prueba) |
 | X11 | Un dueño por conversación y evento durante la migración | A5 `event_owner`, R38 | pendiente |
 | X13 | FindMed gestiona plantillas, envíos y su estado desde su frontend, sin entrar a WHAAPY (D8) | B7b: catálogo de templates vía API WHAAPY, mapeo evento→template editable, bitácora de envíos y entregas, reenvío | pendiente |
 | X12 | Enlace ≠ cita; etiqueta ≠ asignación; HTTP 200 ≠ entrega | Contratos MCP, outbox, R13, R31, R34 | en implementación (`link_created`/`appointment_created:false` en MCP) |

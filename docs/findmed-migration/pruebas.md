@@ -41,8 +41,8 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R06 | Zona/ciudad ambigua: aclarar, no inventar | U+OP | B1, B8 | — | U passed (`ambiguous_city`/`unknown_zone`); OP not_run |
 | R07 | Solicitud en cualquier ciudad del catálogo (D6), no la regla vieja CDMX/QRO | OP | B8 | — | not_run |
 | R08 | Señal de urgencia según protocolo aprobado | OP | B8 | texto clínico aprobado | blocked |
-| R09 | Estudio/laboratorio sin agenda: caso rastreable, sin cita inventada | IR | B6 | — | not_run |
-| R10 | Seguimiento: solo datos del propio paciente | IR | B6 | — | not_run |
+| R09 | Estudio/laboratorio sin agenda: caso rastreable, sin cita inventada | IR | B6 | — | U passed (`cases_test.ts` M09); IR not_run |
+| R10 | Seguimiento: solo datos del propio paciente | IR | B6 | — | U passed (`cases_test.ts` X07); IR not_run |
 | R11 | Campo de urgencia: escribir y releer nombre canónico | IR | B8 | número de prueba | blocked |
 | R12 | Mensaje final una sola vez, sin metadata | OP | B8 | — | not_run |
 | R13 | Enlace emitido sin reservar ≠ cita agendada | IR | B7, B8 | — | not_run |
@@ -63,8 +63,8 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | U+IR | B4, B5 | — | U passed (otra cita/otro teléfono = not_found); botón reenviado pendiente de B7 |
 | R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | U passed; IR parcial passed en prod 12-oct (initialize, tools/list, search_care_options con CDMX/Qro/acentos); falta "Probar conexión" desde WHAAPY |
 | R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | U passed; IR passed (401 en prod sin token) |
-| R31 | Handoff con agente disponible: caso, asignación, pausa, sin doble respuesta | IR+OP | B6 | número de prueba | blocked |
-| R32 | Handoff sin personal o error del proveedor → `awaiting_assignment` | IS+IR | B6 | — | not_run |
+| R31 | Handoff con agente disponible: caso, asignación, pausa, sin doble respuesta | IR+OP | B6 | número de prueba | U passed (`cases_test.ts`, WHAAPY simulado); IR blocked (número/contacto de prueba) |
+| R32 | Handoff sin personal o error del proveedor → `awaiting_assignment` | IS+IR | B6 | — | U passed (errores 503, sin conversación, sin configurar); IR not_run |
 | R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | not_run |
 | R34 | 429/5xx, respuesta perdida, reinicio del worker | IS | B7 | — | not_run |
 | R35 | Recordatorio vs confirmación vs autocancelación en carrera | U+IR | B7 | migración | U passed (guarda de estado previo en confirm/cancel); IR not_run |

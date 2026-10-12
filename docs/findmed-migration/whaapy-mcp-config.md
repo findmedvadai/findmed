@@ -24,7 +24,7 @@ no coincide o el secret no está configurado (falla cerrado).
 | Autenticación | `bearer` → el valor de `FINDMED_MCP_TOKEN` |
 | Motor del agente | `colme-2` (tools, MCPs, batching, handoff) |
 
-Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 4 tools.
+Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 9 tools (10 con `MCP_CHAT_ACTIONS_ENABLED=true`).
 
 ## 3. Tools habilitadas y mapeo de campos
 
@@ -35,11 +35,26 @@ Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 4 t
 | `create_booking_link` | escritura limitada (crea sesión de reserva) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
 | | | patient_name, doctor_id, office_id, symptoms | vacío |
 | `list_my_appointments` | lectura privada | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
+| `prepare_appointment_action` | lectura privada (registra intención) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
+| | | appointment_id, action | vacío |
+| `get_operation_status` | lectura privada | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
+| `open_case` | escritura limitada (crea caso) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
+| | | request_type, summary, priority, city, zone | vacío |
+| | | contact_name | `{{contact.name}}` (opcional) |
+| `request_handoff` | escritura limitada (apaga la IA de esa conversación) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
+| | | case_id, reason, priority | vacío |
+| `get_my_case_status` | lectura privada | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
 
 Nunca dejes `phone` vacío: la IA podría inventarlo o tomar el de otra persona. La identidad del paciente es tan confiable
 como este mapeo (decisión A2).
 
 Pendientes antes de habilitar acciones de confirmar/cancelar por chat (M06/M07): ver `decisiones.md` A4/A6.
+
+**Handoff (B6)**: `request_handoff` y `/admin/casos` llaman a la API de WHAAPY con el secret de funciones
+`WHAAPY_API_KEY` (scopes necesarios: conversaciones lectura/escritura, contactos escritura, equipo lectura).
+Para que "Tomar caso" asigne también en WHAAPY, el correo del usuario de FindMed debe ser el mismo que el del
+agente en el equipo de WHAAPY. No crear en WHAAPY otra automatización que pause o asigne en handoff: el dueño
+único es FindMed (`decisiones.md` A7).
 
 ## 4. Pruebas mínimas en número de prueba (registrar en `pruebas.md`)
 
@@ -51,3 +66,6 @@ Pendientes antes de habilitar acciones de confirmar/cancelar por chat (M06/M07):
 | "¿Cuándo es mi cita?" | `list_my_appointments` solo con citas de ese número (R10, R28) |
 | Token inválido en el conector | WHAAPY muestra error de conexión (R30) |
 | Corte de red / función caída | el agente ofrece canalizar con asesor, no inventa (R30) |
+| "Quiero hablar con una persona" | `open_case` + `request_handoff` → `awaiting_assignment`; el agente dice que una persona de FindMed tomará su solicitud, sin prometer tiempo; la IA deja de responder (R31) |
+| Mensaje del paciente tras el handoff | la IA no contesta (apagada en esa conversación); el caso aparece en `/admin/casos` (R31) |
+| "¿Qué pasó con mi solicitud?" | `get_my_case_status` con frase para el paciente, sin notas internas (R10) |

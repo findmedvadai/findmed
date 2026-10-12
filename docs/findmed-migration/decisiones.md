@@ -53,7 +53,13 @@ Cada decisión registra: quién decide, evidencia, alternativas, desventajas que
 
 ### A7 · Casos y handoff
 - No existe entidad equivalente (Inbox = notificaciones). Nuevas tablas `patient_cases` + `case_events` con RLS de admin.
-- `request_handoff` persiste el caso, busca la conversación por teléfono (`/conversations/v1/by-phone`), pausa la IA (`POST /conversations/v1/{id}/ai/pause`) y asigna. Devuelve `assigned` solo con confirmación; si no, `awaiting_assignment`.
+- **Implementado (B6, 12-oct)** — tres operaciones distintas, cada una registrada en `case_events` y proyectada en el caso:
+  1. **Persistir**: `open_case` crea el caso (`open`); un caso activo por teléfono + tipo (índice parcial único) → repetir devuelve el mismo `case_id` (`deduplicated`).
+  2. **Apagar la IA**: `request_handoff` busca la conversación (`GET /conversations/v1/by-phone`) y la apaga con `PATCH /conversations/v1/{id}/ai {aiEnabled:false}`. **Desviación del plan**: no se usa la pausa temporal (`/ai/pause`, máx. 24 h) porque la IA volvería sola a mitad de la atención (R32 lo prohíbe); se reactiva solo cuando el equipo cierra el caso y marca "Reactivar la IA".
+  3. **Asignar**: dueño único = el equipo en FindMed (`/admin/casos` → "Tomar caso", guardado contra doble toma). `request_handoff` deja `awaiting_assignment` y **nunca** devuelve `assigned` por sí solo. Al tomar, se asigna también en WHAAPY (`PATCH /contacts/v1/{id} {assigned_agent_id}`) al agente cuyo correo coincide con el del usuario de FindMed; si no hay coincidencia o falla, el caso queda asignado solo en FindMed con aviso visible. Al cerrar se libera (`assigned_agent_id:null`), porque WHAAPY asigna también las conversaciones futuras del contacto.
+- Etiquetas `apoyo_asesor` / `urgencia` (mismos nombres que n8n, N065–N067) se agregan como **proyección** (`add_tags`), nunca como prueba de canalización.
+- **Pendiente de FindMed**: regla de escalación cuando nadie toma un caso (fuera de horario, tiempos por prioridad). Hoy: cola ordenada por prioridad y antigüedad, contador en el menú y vencimiento manual por caso; no se fijó SLA (plan §9).
+- **Cambiaría si**: FindMed prefiere asignación automática (WHAAPY `assign_agent` round-robin/least-loaded); entonces el dueño pasaría a una automatización WHAAPY verificada y FindMed reflejaría `conversation.assigned` desde `whaapy-inbound`.
 
 ### A8 · Agenda: restricción en BD
 - Exclusión GiST `(doctor_id WITH =, tstzrange(start_at,end_at,'[)') WITH &&)` para `scheduled|confirmed` (D2) + `CHECK end_at > start_at`. Las Edge Functions mapean `23P01` → 409.
