@@ -33,11 +33,11 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R | Qué verifica | Tipo | Bloque | Depende de | Estado |
 |---|---|---|---|---|---|
 | R01 | "Quiero una cita" sin especialidad: preguntas breves, sin negar médicos | OP | B8 | B5 | not_run |
-| R02 | "Ortopedista en CDMX" ≡ "Ortopedia / Ciudad de México" | U+IR | B1 | — | not_run |
+| R02 | "Ortopedista en CDMX" ≡ "Ortopedia / Ciudad de México" | U+IR | B1 | — | U passed (`care-search_test.ts`); IR not_run |
 | R03 | Tres opciones: presentar alternativas con consultorio, nunca "no tenemos" | IS+OP | B1, B8 | B5 | not_run |
 | R04 | Una opción: confirmar sede y propagar doctor_id/office_id hasta la reserva | IR | B1, B5 | — | not_run |
 | R05 | Cero opciones: explicar límite y abrir caso/handoff | OP | B6, B8 | B5 | not_run |
-| R06 | Zona/ciudad ambigua: aclarar, no inventar | IS+OP | B1, B8 | — | not_run |
+| R06 | Zona/ciudad ambigua: aclarar, no inventar | U+OP | B1, B8 | — | U passed (`ambiguous_city`/`unknown_zone`); OP not_run |
 | R07 | Solicitud fuera de CDMX/QRO: consultar catálogo vigente, no regla vieja | OP | B8 | cobertura FindMed | blocked |
 | R08 | Señal de urgencia según protocolo aprobado | OP | B8 | texto clínico aprobado | blocked |
 | R09 | Estudio/laboratorio sin agenda: caso rastreable, sin cita inventada | IR | B6 | — | not_run |

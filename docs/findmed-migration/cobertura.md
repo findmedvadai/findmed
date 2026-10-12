@@ -47,7 +47,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | Bloque | Objetivo | Dependencia real | Aceptación | Estado |
 |---|---|---|---|---|
 | B0 | Diagnóstico, conciliación, cobertura persistente | — | Documentos sin secretos; conteos conciliados | validado |
-| B1 | Búsqueda: alias, none/one/many, office_id extremo a extremo | B0 | R02–R06 | pendiente |
+| B1 | Búsqueda: alias, none/one/many, office_id extremo a extremo | B0 | R02–R06 | implementado sin validar (`_shared/care-search.ts`, search-doctors, validación de teléfono) |
 | B2 | Entradas privilegiadas e identidad | B0; deploy requiere acceso | Probes anónimos = 401; productores legítimos OK | implementado sin validar (código en main) |
 | B2-bis | Regla D2 (bloqueo por doctor) en BD y validadores | B0 | Solapamientos existentes revisados; R18, R25 | implementado sin validar (IS passed; falta aplicar en prod) |
 | B3 | Alta médica transaccional y reporte de consultorios | B2 | R14–R16 | implementado sin validar (parcial) |
@@ -63,7 +63,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 
 | M | Capacidad | Tool (A3) | Seguridad | Bloque | Estado |
 |---|---|---|---|---|---|
-| M01 | Opciones de atención (none/one/many, office_id) | `search_care_options` | lectura | B1, B5 | pendiente |
+| M01 | Opciones de atención (none/one/many, office_id) | `search_care_options` | lectura | B1, B5 | en implementación (dominio listo en `_shared/care-search.ts`; falta tool MCP) |
 | M02 | Sugerir especialidad | `suggest_specialty` | lectura | B5 | bloqueado (F10) |
 | M03 | Horarios disponibles con estado de verificación | `list_available_slots` | lectura | B4, B5 | pendiente |
 | M04 | Enlace de reserva | `create_booking_link` | escritura limitada | B5 | pendiente |
@@ -94,7 +94,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 |---|---|---|---|
 | X01 | Selección explícita de médico y consultorio | M01, M04, F01, F03 | pendiente |
 | X02 | Propagación y validación doctor_id/office_id | B1, B4, triage-webhook | pendiente |
-| X03 | Cero / una / varias coincidencias distintas | M01, R03–R05 | pendiente |
+| X03 | Cero / una / varias coincidencias distintas | M01, R03–R05 | implementado sin validar (campo `result` + `reason`) |
 | X04 | Disponibilidad real, zona horaria, salud de calendario | B4, F13, F15, N06 | en implementación |
 | X05 | Sin reservas simultáneas incompatibles | A8, D2, R18 | implementado sin validar |
 | X06 | Idempotencia y recuperación tras timeout | B4 (`operation_requests`), M08, R19 | pendiente |
