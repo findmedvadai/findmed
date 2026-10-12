@@ -121,6 +121,9 @@ Deno.test("R29: tools/list exposes object-rooted schemas for every real tool", a
     "list_my_appointments",
     "prepare_appointment_action",
     "get_operation_status",
+    "open_case",
+    "request_handoff",
+    "get_my_case_status",
   ]);
   for (const t of tools) {
     assertEquals(t.inputSchema.type, "object");

@@ -1,0 +1,121 @@
+// Minimal WHAAPY REST client for the conversation operations FindMed owns
+// (handoff, AI pause/resume, agent assignment, tag projection). Docs:
+//   GET   /conversations/v1/by-phone/:phone   → conversation + contact
+//   PATCH /conversations/v1/:id/ai            { aiEnabled }  (until changed again)
+//   GET   /team/v1                            → agents (id, email, is_available)
+//   PATCH /contacts/v1/:id                    { assigned_agent_id | null, add_tags }
+//
+// Every call returns a result object (never throws), with a per-call timeout
+// so a slow provider can't eat the MCP tool budget (15 s). Errors carry the
+// HTTP status and a short provider message; the API key never appears in them.
+//
+// Secrets: WHAAPY_API_KEY (wha_…), WHAAPY_API_BASE_URL (default https://api.whaapy.com).
+
+export type WhaapyResult<T> =
+  | { ok: true; status: number; data: T }
+  | { ok: false; status: number; error: string };
+
+export interface WhaapyConversation {
+  id: string;
+  contact_id: string | null;
+  ai_enabled: boolean | null;
+}
+
+export interface WhaapyAgent {
+  id: string;
+  email: string | null;
+  name: string | null;
+  role: string | null;
+  is_available: boolean;
+}
+
+export interface WhaapyClient {
+  configured: boolean;
+  conversationByPhone(phone: string): Promise<WhaapyResult<WhaapyConversation | null>>;
+  setAiEnabled(conversationId: string, enabled: boolean): Promise<WhaapyResult<unknown>>;
+  listAgents(): Promise<WhaapyResult<WhaapyAgent[]>>;
+  updateContact(
+    contactId: string,
+    patch: { assigned_agent_id?: string | null; add_tags?: string[] },
+  ): Promise<WhaapyResult<unknown>>;
+}
+
+const TIMEOUT_MS = 5000;
+
+export function createWhaapyClient(
+  opts: { apiKey?: string | null; baseUrl?: string | null; timeoutMs?: number } = {},
+): WhaapyClient {
+  const apiKey = opts.apiKey ?? Deno.env.get("WHAAPY_API_KEY") ?? "";
+  const baseUrl = (opts.baseUrl ?? Deno.env.get("WHAAPY_API_BASE_URL") ?? "https://api.whaapy.com").replace(/\/+$/, "");
+  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+
+  async function call<T>(method: string, path: string, body?: unknown): Promise<WhaapyResult<T>> {
+    if (!apiKey) return { ok: false, status: 0, error: "not_configured" };
+    try {
+      const res = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      let json: unknown = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch { /* non-JSON body */ }
+      if (!res.ok) {
+        const j = json as { message?: string; error?: string } | null;
+        return { ok: false, status: res.status, error: String(j?.message ?? j?.error ?? text.slice(0, 160) ?? "error") };
+      }
+      return { ok: true, status: res.status, data: json as T };
+    } catch (e) {
+      const timeout = e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+      return { ok: false, status: 0, error: timeout ? "timeout" : "network_error" };
+    }
+  }
+
+  return {
+    configured: !!apiKey,
+
+    async conversationByPhone(phone) {
+      const r = await call<{ data?: Record<string, unknown> }>(
+        "GET",
+        `/conversations/v1/by-phone/${encodeURIComponent(phone)}`,
+      );
+      if (!r.ok) return r.status === 404 ? { ok: true, status: 404, data: null } : r;
+      const d = r.data?.data;
+      if (!d || typeof d.id !== "string") return { ok: true, status: r.status, data: null };
+      const contact = d.contact as { id?: string } | undefined;
+      const settings = d.settings as { aiEnabled?: boolean } | undefined;
+      return {
+        ok: true,
+        status: r.status,
+        data: { id: d.id, contact_id: contact?.id ?? null, ai_enabled: settings?.aiEnabled ?? null },
+      };
+    },
+
+    setAiEnabled(conversationId, enabled) {
+      return call("PATCH", `/conversations/v1/${encodeURIComponent(conversationId)}/ai`, { aiEnabled: enabled });
+    },
+
+    async listAgents() {
+      const r = await call<{ agents?: Record<string, unknown>[] }>("GET", "/team/v1");
+      if (!r.ok) return r;
+      const agents = (r.data?.agents ?? []).map((a) => ({
+        id: String(a.id),
+        email: typeof a.email === "string" ? a.email : null,
+        name: typeof a.name === "string" ? a.name : null,
+        role: typeof a.role === "string" ? a.role : null,
+        is_available: a.is_available === true,
+      }));
+      return { ok: true, status: r.status, data: agents };
+    },
+
+    updateContact(contactId, patch) {
+      return call("PATCH", `/contacts/v1/${encodeURIComponent(contactId)}`, patch);
+    },
+  };
+}

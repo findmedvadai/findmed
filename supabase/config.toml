@@ -84,6 +84,10 @@ verify_jwt = false
 [functions.whaapy-inbound]
 verify_jwt = false
 
+# Staff actions on patient cases. Auth: admin JWT verified in code (requireAdmin).
+[functions.case-actions]
+verify_jwt = false
+
 # Cron-only: auth in code (FINDMED_CRON_SECRET / service key), not a JWT.
 [functions.auto-cancel-unconfirmed]
 verify_jwt = false

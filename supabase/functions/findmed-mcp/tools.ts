@@ -14,6 +14,8 @@ import { findUpcomingAppointmentsByPhone } from "../_shared/appointment-actions.
 import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "../_shared/phone.ts";
 import { msToMxIso } from "../_shared/mx-time.ts";
 import { commitAction, getOperation, prepareAction } from "../_shared/operations.ts";
+import { getMyCases, openCase, PRIORITIES, REQUEST_TYPES, requestHandoff, type Priority, type RequestType } from "../_shared/cases.ts";
+import { createWhaapyClient, type WhaapyClient } from "../_shared/whaapy-client.ts";
 import { DATE_PATTERN, type Schema, UUID_PATTERN } from "./schema.ts";
 
 export type Safety = "read_only" | "read_private" | "mutation_limited";
@@ -395,6 +397,113 @@ const commitAppointmentActionTool: ToolDef = {
   },
 };
 
+// --- Cases and human handoff (B6: M09/M10/M11) -----------------------------
+
+const openCaseTool: ToolDef = {
+  name: "open_case",
+  safety: "mutation_limited",
+  description: [
+    "Registra una solicitud que necesita seguimiento de una persona de FindMed.",
+    "When to use: hospital, estudios/laboratorio, urgencia, seguimiento, búsqueda sin opciones automáticas (result='none' por no_active_offices), o cuando el paciente pide hablar con una persona.",
+    "Never use for: solicitudes que ya resolviste con search_care_options + create_booking_link.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}.",
+    "request_type: appointment_help | hospital | studies | urgency | follow_up | other. priority: normal | high | urgent (urgency → urgent).",
+    "summary: 1–3 frases con lo indispensable (qué necesita, para quién, dónde). Sin diagnósticos ni datos que el paciente no dio.",
+    "Result: data.case_id y data.status. Si data.deduplicated=true ya existía una solicitud igual abierta: no la dupliques.",
+    "Next step: si el paciente necesita a una persona, llama request_handoff con data.case_id.",
+    "Side effects: crea (o reutiliza) un caso visible para el equipo de FindMed. No asigna a nadie ni detiene la IA.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone", "request_type", "summary"],
+    properties: {
+      phone: PHONE_SCHEMA,
+      request_type: { type: "string", enum: [...REQUEST_TYPES] },
+      summary: { type: "string", minLength: 3, maxLength: 1000 },
+      priority: { type: "string", enum: [...PRIORITIES] },
+      contact_name: { type: "string", maxLength: 120, description: "Nombre que dio el paciente, si lo dio." },
+      city: { type: "string", maxLength: 80 },
+      zone: { type: "string", maxLength: 80 },
+    },
+  },
+  async handler(supabase, args) {
+    const r = await openCase(supabase, {
+      phone: String(args.phone),
+      requestType: args.request_type as RequestType,
+      summary: String(args.summary),
+      priority: args.priority as Priority | undefined,
+      contactName: args.contact_name ? String(args.contact_name) : null,
+      city: args.city ? String(args.city) : null,
+      zone: args.zone ? String(args.zone) : null,
+    });
+    if (!r.ok) return fail(r.code, r.message_es);
+    return { ok: true, status: "success", data: { case_id: r.case_id, status: r.status, priority: r.priority, deduplicated: r.deduplicated } };
+  },
+};
+
+const requestHandoffTool = (whaapy: WhaapyClient): ToolDef => ({
+  name: "request_handoff",
+  safety: "mutation_limited",
+  description: [
+    "Pasa la conversación a una persona del equipo de FindMed para un caso abierto con open_case.",
+    "When to use: el paciente pide una persona, es una urgencia, o no hay solución automática y el paciente acepta que lo contacte un asesor.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}; el case_id debe ser de ese mismo contacto.",
+    "Result: data.assignment = 'awaiting_assignment' (nadie lo ha tomado aún) o 'assigned' (una persona ya lo tiene). data.ai_paused=true significa que dejarás de responder en esta conversación.",
+    "Qué decir: con awaiting_assignment, que su solicitud quedó registrada y que una persona del equipo de FindMed la tomará; NO digas que ya hay un asesor asignado ni prometas un tiempo de respuesta. Con assigned, que una persona de FindMed ya lleva su caso.",
+    "Si data.ai_paused=false, la canalización quedó registrada pero sigues activo: continúa ayudando sin contradecir lo anterior.",
+    "Side effects: marca el caso en espera de asignación, apaga la IA en esta conversación y etiqueta el contacto. Repetir la llamada no duplica nada.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone", "case_id", "reason"],
+    properties: {
+      phone: PHONE_SCHEMA,
+      case_id: { type: "string", pattern: UUID_PATTERN },
+      reason: { type: "string", minLength: 3, maxLength: 500, description: "Por qué se canaliza (p. ej. 'paciente pide asesor', 'urgencia', 'sin opciones en su ciudad')." },
+      priority: { type: "string", enum: [...PRIORITIES] },
+    },
+  },
+  async handler(supabase, args) {
+    const r = await requestHandoff(supabase, whaapy, {
+      phone: String(args.phone),
+      caseId: String(args.case_id),
+      reason: String(args.reason),
+      priority: args.priority as Priority | undefined,
+    });
+    if (!r.ok) return fail(r.code, r.message_es);
+    return {
+      ok: true,
+      status: r.assignment === "assigned" ? "success" : "queued",
+      data: { case_id: r.case_id, status: r.status, assignment: r.assignment, ai_paused: r.ai_paused, replayed: r.replayed },
+    };
+  },
+});
+
+const getMyCaseStatusTool: ToolDef = {
+  name: "get_my_case_status",
+  safety: "read_private",
+  description: [
+    "Consulta el estado de las solicitudes (casos) recientes del contacto que escribe.",
+    "When to use: el paciente pregunta qué pasó con su solicitud, hospital, estudios o con el asesor.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}; solo devuelve casos de ese teléfono (últimos 30 días).",
+    "Result: data.cases[] con case_id, request_type, status y status_es (frase lista para el paciente). Lista vacía = no hay solicitudes recientes con ese número.",
+    "Side effects: ninguno.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone"],
+    properties: { phone: PHONE_SCHEMA },
+  },
+  async handler(supabase, args) {
+    const r = await getMyCases(supabase, String(args.phone));
+    if (!r.ok) return fail(r.code, r.message_es);
+    return { ok: true, status: "success", data: { cases: r.cases } };
+  },
+};
+
 /**
  * Tool catalog. `chatActions` publishes commit_appointment_action, which lets
  * the agent execute after the patient's explicit "yes" in chat. It stays OFF
@@ -402,7 +511,8 @@ const commitAppointmentActionTool: ToolDef = {
  * evidence or the WhatsApp-button path (A4/A6) is in place; meanwhile the agent
  * prepares the action and sends the secure /gestionar link.
  */
-export function buildTools(opts: { chatActions: boolean }): ToolDef[] {
+export function buildTools(opts: { chatActions: boolean; whaapy?: WhaapyClient }): ToolDef[] {
+  const whaapy = opts.whaapy ?? createWhaapyClient();
   return [
     searchCareOptionsTool,
     listAvailableSlotsTool,
@@ -411,6 +521,9 @@ export function buildTools(opts: { chatActions: boolean }): ToolDef[] {
     prepareAppointmentActionTool,
     getOperationStatusTool,
     ...(opts.chatActions ? [commitAppointmentActionTool] : []),
+    openCaseTool,
+    requestHandoffTool(whaapy),
+    getMyCaseStatusTool,
   ];
 }
 
