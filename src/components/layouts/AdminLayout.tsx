@@ -1,5 +1,5 @@
 import { Outlet } from "react-router-dom";
-import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key } from "lucide-react";
+import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key, LifeBuoy } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ const navItems = [
   { title: "Doctores", url: "/admin/doctores", icon: UserCog },
   { title: "Catálogos", url: "/admin/catalogos", icon: Layers },
   { title: "Inbox", url: "/admin/inbox", icon: Inbox },
+  { title: "Casos", url: "/admin/casos", icon: LifeBuoy },
 ];
 
 const settingsItems = [
@@ -49,6 +50,19 @@ export default function AdminLayout() {
         .eq("is_read", false);
       return count ?? 0;
     },
+  });
+
+  // Casos esperando que alguien los tome (canalizaciones del agente de WhatsApp).
+  const { data: pendingCases = 0 } = useQuery({
+    queryKey: ["admin-pending-cases"],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("patient_cases")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "awaiting_assignment");
+      return count ?? 0;
+    },
+    refetchInterval: 30_000,
   });
 
   // Realtime: refresh count when notifications change
@@ -91,6 +105,11 @@ export default function AdminLayout() {
                           <span>{item.title}</span>
                           {item.url === "/admin/inbox" && unreadCount > 0 && (
                             <span className="ml-auto h-2 w-2 rounded-full bg-destructive" />
+                          )}
+                          {item.url === "/admin/casos" && pendingCases > 0 && (
+                            <span className="ml-auto rounded-full bg-destructive px-1.5 text-xs font-medium text-destructive-foreground">
+                              {pendingCases}
+                            </span>
                           )}
                         </NavLink>
                       </SidebarMenuButton>

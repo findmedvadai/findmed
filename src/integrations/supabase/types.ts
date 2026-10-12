@@ -164,6 +164,44 @@ export type Database = {
           },
         ]
       }
+      case_events: {
+        Row: {
+          actor: string
+          actor_user_id: string | null
+          case_id: string
+          created_at: string
+          detail: Json
+          event_type: string
+          id: string
+        }
+        Insert: {
+          actor: string
+          actor_user_id?: string | null
+          case_id: string
+          created_at?: string
+          detail?: Json
+          event_type: string
+          id?: string
+        }
+        Update: {
+          actor?: string
+          actor_user_id?: string | null
+          case_id?: string
+          created_at?: string
+          detail?: Json
+          event_type?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_events_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "patient_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cities: {
         Row: {
           created_at: string
@@ -686,6 +724,98 @@ export type Database = {
             columns: ["doctor_id"]
             isOneToOne: false
             referencedRelation: "doctors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      patient_cases: {
+        Row: {
+          ai_state: string
+          assigned_at: string | null
+          assigned_user_id: string | null
+          city: string | null
+          contact_name: string | null
+          created_at: string
+          due_at: string | null
+          handoff_reason: string | null
+          handoff_requested_at: string | null
+          id: string
+          next_action: string | null
+          patient_id: string | null
+          priority: string
+          request_type: string
+          resolution_reason: string | null
+          resolved_at: string | null
+          source: string
+          status: string
+          subject_phone: string
+          summary: string
+          updated_at: string
+          whaapy_assignment: string
+          whaapy_contact_id: string | null
+          whaapy_conversation_id: string | null
+          zone: string | null
+        }
+        Insert: {
+          ai_state?: string
+          assigned_at?: string | null
+          assigned_user_id?: string | null
+          city?: string | null
+          contact_name?: string | null
+          created_at?: string
+          due_at?: string | null
+          handoff_reason?: string | null
+          handoff_requested_at?: string | null
+          id?: string
+          next_action?: string | null
+          patient_id?: string | null
+          priority?: string
+          request_type: string
+          resolution_reason?: string | null
+          resolved_at?: string | null
+          source?: string
+          status?: string
+          subject_phone: string
+          summary: string
+          updated_at?: string
+          whaapy_assignment?: string
+          whaapy_contact_id?: string | null
+          whaapy_conversation_id?: string | null
+          zone?: string | null
+        }
+        Update: {
+          ai_state?: string
+          assigned_at?: string | null
+          assigned_user_id?: string | null
+          city?: string | null
+          contact_name?: string | null
+          created_at?: string
+          due_at?: string | null
+          handoff_reason?: string | null
+          handoff_requested_at?: string | null
+          id?: string
+          next_action?: string | null
+          patient_id?: string | null
+          priority?: string
+          request_type?: string
+          resolution_reason?: string | null
+          resolved_at?: string | null
+          source?: string
+          status?: string
+          subject_phone?: string
+          summary?: string
+          updated_at?: string
+          whaapy_assignment?: string
+          whaapy_contact_id?: string | null
+          whaapy_conversation_id?: string | null
+          zone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_cases_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
             referencedColumns: ["id"]
           },
         ]
