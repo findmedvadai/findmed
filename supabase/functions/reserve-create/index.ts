@@ -1,6 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { checkAvailability } from "../_shared/availability-check.ts";
+import { validateSlotAvailable } from "../_shared/slot-validation.ts";
+import { isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,7 +26,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   let body: { session_id: string; slot_start: string; date: string };
@@ -42,6 +46,19 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  if (!isValidLocalDate(date) || !isValidLocalTime(slot_start)) {
+    return new Response(JSON.stringify({ error: "Fecha u hora inválida" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const json = (status: number, payload: unknown) =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  const SLOT_TAKEN = "Ese horario ya no está disponible. Por favor elige otro.";
 
   // Get session — includes office_id chosen at triage time so the appointment
   // and the external calendar event both go to the right place.
@@ -99,13 +116,36 @@ Deno.serve(async (req) => {
 
   const durationMinutes = office.appointment_duration_minutes ?? 30;
 
-  // Calculate start_at and end_at with explicit Mexico City offset (-06:00).
-  const startAt = `${date}T${slot_start}:00-06:00`;
-  const slotParts = slot_start.split(":").map(Number);
-  const totalMinutes = slotParts[0] * 60 + slotParts[1] + durationMinutes;
-  const endHH = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-  const endMM = String(totalMinutes % 60).padStart(2, "0");
-  const endAt = `${date}T${endHH}:${endMM}:00-06:00`;
+  // CDMX wall clock -> absolute instants (handles end times past midnight).
+  const startMs = mxLocalToMs(date, slot_start);
+  const endMs = startMs + durationMinutes * 60 * 1000;
+  const startAt = msToMxIso(startMs);
+  const endAt = msToMxIso(endMs);
+
+  // Defense in depth: the slot list shown to the patient is advisory. The
+  // slot is re-validated here because another patient (or the doctor) may
+  // have taken it since, and because this endpoint is public by token.
+  if (startMs < Date.now()) return json(409, { error: SLOT_TAKEN });
+
+  const { data: override } = await supabase
+    .from("doctor_date_overrides")
+    .select("is_available")
+    .eq("doctor_id", session.doctor_id)
+    .eq("override_date", date)
+    .maybeSingle();
+  if (override && !override.is_available) return json(409, { error: SLOT_TAKEN });
+
+  const availability = await checkAvailability(supabase, session.office_id, startAt, endAt);
+  if (!availability.withinAvailability) return json(409, { error: SLOT_TAKEN });
+
+  const slotCheck = await validateSlotAvailable({
+    supabase,
+    doctorId: session.doctor_id,
+    officeId: session.office_id,
+    startAt,
+    endAt,
+  });
+  if (!slotCheck.available) return json(409, { error: SLOT_TAKEN });
 
   const { data: patient } = await supabase
     .from("patients")
@@ -125,6 +165,18 @@ Deno.serve(async (req) => {
   const autoConfirmed = hoursUntilAppt < 48;
   const appointmentStatus = autoConfirmed ? "confirmed" : "scheduled";
 
+  // Claim the session atomically BEFORE inserting, so a double-click or two
+  // tabs can't create two appointments from one link (used_at was previously
+  // only set after the insert, without a conditional).
+  const { data: claimed } = await supabase
+    .from("reservation_sessions")
+    .update({ used_at: new Date().toISOString() })
+    .eq("id", session.id)
+    .is("used_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return json(410, { error: "Este enlace ya fue utilizado" });
+
   // Create appointment, scoped to the assigned office.
   const { data: appointment, error: apptError } = await supabase
     .from("appointments")
@@ -142,10 +194,13 @@ Deno.serve(async (req) => {
     .single();
 
   if (apptError || !appointment) {
-    return new Response(
-      JSON.stringify({ error: "Error al crear la cita", details: apptError?.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    // Release the claim so the patient can retry with another slot.
+    await supabase.from("reservation_sessions").update({ used_at: null }).eq("id", session.id);
+    // 23P01 = exclusion constraint (appointments_no_overlap_per_office): lost
+    // the race against a concurrent booking. Don't leak DB details publicly.
+    if (apptError?.code === "23P01") return json(409, { error: SLOT_TAKEN });
+    console.error("[reserve-create] insert failed:", apptError);
+    return json(500, { error: "Error al crear la cita" });
   }
 
   // Create calendar event (Google or Outlook)
@@ -226,12 +281,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Mark session as used
-  await supabase
-    .from("reservation_sessions")
-    .update({ used_at: new Date().toISOString() })
-    .eq("id", session.id);
-
   // Insert notification for doctor
   const formattedDate = startAt.split("T")[0];
   const formattedTime = slot_start;
@@ -253,7 +302,7 @@ Deno.serve(async (req) => {
   });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
 
   // Dispatch webhooks (fire-and-forget)
   try {
