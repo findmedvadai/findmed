@@ -10,6 +10,23 @@ export interface AuthedAdmin {
   userId: string;
 }
 
+/**
+ * Verifies a user JWT (signature + expiry) and returns its claims, or null.
+ * Replaces the old `decodeJwtPayload`, which only base64-decoded the token and
+ * therefore accepted forged tokens on functions with verify_jwt = false.
+ */
+export async function verifyJwtClaims(token: string): Promise<Record<string, unknown> | null> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+  const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data, error } = await anon.auth.getClaims(token);
+  if (error || !data?.claims?.sub) return null;
+  return data.claims as Record<string, unknown>;
+}
+
 export async function requireAdmin(
   req: Request,
   supabase: SupabaseClient
