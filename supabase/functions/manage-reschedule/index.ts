@@ -1,6 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkAvailability } from "../_shared/availability-check.ts";
+import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,7 +25,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   let body: { token: string; slot_start: string; date: string };
@@ -41,6 +44,15 @@ Deno.serve(async (req) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+  const json = (status: number, payload: unknown) =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  const SLOT_TAKEN = "Ese horario ya no está disponible. Por favor elige otro.";
+  if (!isValidLocalDate(date) || !isValidLocalTime(slot_start)) {
+    return json(400, { error: "Fecha u hora inválida" });
   }
 
   // Validate manage token
@@ -79,6 +91,16 @@ Deno.serve(async (req) => {
     });
   }
 
+  // A completed consultation (or one whose time already passed) can't be
+  // rescheduled from the patient link; cancelled ones can (the /gestionar
+  // page offers "reagendar" after a cancellation on purpose).
+  if (oldAppt.status === "completed") {
+    return json(409, { error: "Esta consulta ya fue realizada y no se puede reagendar." });
+  }
+  if (oldAppt.status !== "cancelled" && new Date(oldAppt.start_at).getTime() < Date.now()) {
+    return json(409, { error: "Esta cita ya pasó y no se puede reagendar." });
+  }
+
   // Doctor display name only — calendar and duration come from the office.
   const { data: doctor } = await supabase
     .from("doctors")
@@ -105,28 +127,71 @@ Deno.serve(async (req) => {
 
   const durationMinutes = office?.appointment_duration_minutes ?? 30;
 
-  // Calculate new times with explicit Mexico City offset (-06:00)
-  const startAt = `${date}T${slot_start}:00-06:00`;
-  const slotParts = slot_start.split(":").map(Number);
-  const totalMinutes = slotParts[0] * 60 + slotParts[1] + durationMinutes;
-  const endHH = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-  const endMM = String(totalMinutes % 60).padStart(2, "0");
-  const endAt = `${date}T${endHH}:${endMM}:00-06:00`;
+  // CDMX wall clock -> absolute instants (handles end times past midnight).
+  const startMs = mxLocalToMs(date, slot_start);
+  const endMs = startMs + durationMinutes * 60 * 1000;
+  const startAt = msToMxIso(startMs);
+  const endAt = msToMxIso(endMs);
+  if (startMs < Date.now()) return json(409, { error: SLOT_TAKEN });
 
   // Hard-block: patients can't reschedule outside the office's configured
-  // availability. The reserve-slots endpoint already filters slots, so this
-  // is defensive against direct API misuse.
+  // availability, onto a blocked day, or onto a slot that is already taken
+  // (other appointments or the doctor's external calendar). reserve-slots
+  // already filters, but this endpoint is public by token.
   if (oldAppt.office_id) {
+    const { data: override } = await supabase
+      .from("doctor_date_overrides")
+      .select("is_available")
+      .eq("doctor_id", oldAppt.doctor_id)
+      .eq("override_date", date)
+      .maybeSingle();
+    if (override && !override.is_available) return json(409, { error: SLOT_TAKEN });
+
     const av = await checkAvailability(supabase, oldAppt.office_id, startAt, endAt);
     if (!av.withinAvailability) {
-      return new Response(
-        JSON.stringify({ error: "Este horario no está disponible en el consultorio." }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return json(409, { error: "Este horario no está disponible en el consultorio." });
     }
+    const slotCheck = await validateSlotAvailable({
+      supabase,
+      doctorId: oldAppt.doctor_id,
+      officeId: oldAppt.office_id,
+      startAt,
+      endAt,
+      excludeAppointmentId: oldAppt.id,
+    });
+    if (!slotCheck.available) return json(409, { error: SLOT_TAKEN });
   }
 
-  // 1. Cancel old appointment + delete calendar events if not already cancelled.
+  // Determine if within 48h → auto-confirm
+  const hoursUntilAppt = (startMs - Date.now()) / (1000 * 60 * 60);
+  const autoConfirmed = hoursUntilAppt < 48;
+  const newStatus = autoConfirmed ? "confirmed" : "scheduled";
+
+  // 1. Create the NEW appointment first. Previously the old one was cancelled
+  // (and its calendar events deleted) before the insert, so an insert failure
+  // left the patient with nothing. If this fails, nothing has changed yet.
+  // The DB exclusion constraint also guarantees no overlap even under races.
+  const { data: newAppt, error: apptError } = await supabase
+    .from("appointments")
+    .insert({
+      doctor_id: oldAppt.doctor_id,
+      office_id: oldAppt.office_id,
+      patient_id: oldAppt.patient_id,
+      start_at: startAt,
+      end_at: endAt,
+      status: newStatus,
+      symptoms: oldAppt.symptoms,
+    })
+    .select("id")
+    .single();
+
+  if (apptError || !newAppt) {
+    if (apptError?.code === "23P01") return json(409, { error: SLOT_TAKEN });
+    console.error("[manage-reschedule] insert failed:", apptError);
+    return json(500, { error: "Error al crear la nueva cita" });
+  }
+
+  // 2. Cancel old appointment + delete calendar events if not already cancelled.
   // Shared helper handles refresh token rotation (Microsoft) and auto-disconnects
   // the office when the refresh token is permanently invalid (invalid_grant).
   const tokenArgs = office ? { supabase, office } : null;
@@ -160,41 +225,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    await supabase
+    const { error: cancelErr } = await supabase
       .from("appointments")
       .update({ status: "cancelled", cancel_reason: "patient" })
       .eq("id", oldAppt.id);
+    if (cancelErr) console.error("[manage-reschedule] cancel old failed:", cancelErr);
   }
 
-  // 2. Determine if within 48h → auto-confirm
-  const newStartDate = new Date(startAt);
-  const hoursUntilAppt = (newStartDate.getTime() - Date.now()) / (1000 * 60 * 60);
-  const autoConfirmed = hoursUntilAppt < 48;
-  const newStatus = autoConfirmed ? "confirmed" : "scheduled";
-
-  // 3. Create new appointment, keeping the same office assignment.
-  const { data: newAppt, error: apptError } = await supabase
-    .from("appointments")
-    .insert({
-      doctor_id: oldAppt.doctor_id,
-      office_id: oldAppt.office_id,
-      patient_id: oldAppt.patient_id,
-      start_at: startAt,
-      end_at: endAt,
-      status: newStatus,
-      symptoms: oldAppt.symptoms,
-    })
-    .select("id")
-    .single();
-
-  if (apptError || !newAppt) {
-    return new Response(
-      JSON.stringify({ error: "Error al crear la nueva cita", details: apptError?.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
-
-  // 4. Create new calendar event (Google or Outlook)
+  // 3. Create new calendar event (Google or Outlook)
   let newGoogleEventId: string | null = null;
   let newOutlookEventId: string | null = null;
 
@@ -274,13 +312,15 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 5. Update manage token to point to new appointment
+  // 4. Repoint the manage token to the new appointment and extend its expiry
+  // to the new end time (it used to keep the OLD end time, so links died
+  // early after rescheduling to a later date).
   await supabase
     .from("appointment_manage_tokens")
-    .update({ appointment_id: newAppt.id })
+    .update({ appointment_id: newAppt.id, expires_at: endAt })
     .eq("id", manageToken.id);
 
-  // 6. Insert notifications for doctor
+  // 5. Insert notifications for doctor
   const rescheduleDate = startAt.split("T")[0];
   await supabase.from("notifications").insert([
     {
@@ -302,7 +342,10 @@ Deno.serve(async (req) => {
   ]);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
+  // The token string comes from the request (`token`); the row was selected
+  // without it, so `manageToken.token` used to be undefined in the URL.
+  const manageUrl = `${Deno.env.get("APP_URL") || "https://findmed.lovable.app"}/gestionar?token=${token}`;
 
   // Dispatch webhooks (fire-and-forget)
   try {
@@ -321,7 +364,7 @@ Deno.serve(async (req) => {
             new_start_at: startAt,
             old_start_at: oldAppt.start_at ?? null,
             end_at: endAt,
-            manage_url: `${Deno.env.get("APP_URL") || "https://findmed.lovable.app"}/gestionar?token=${manageToken.token}`,
+            manage_url: manageUrl,
           },
         }),
       }),
@@ -334,11 +377,11 @@ Deno.serve(async (req) => {
             appointment_id: newAppt.id,
             patient_phone: manageToken.patient_phone ?? null,
             patient_name: patient?.full_name ?? null,
-            previous_status: "scheduled",
-            new_status: "scheduled",
+            previous_status: oldAppt.status,
+            new_status: newStatus,
             start_at: startAt,
             timestamp: new Date().toISOString(),
-            manage_url: `${Deno.env.get("APP_URL") || "https://findmed.lovable.app"}/gestionar?token=${token}`,
+            manage_url: manageUrl,
           },
         }),
       }),
