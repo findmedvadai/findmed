@@ -521,3 +521,58 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** Borrar los scripts y `seed-admin` del repo. Helpers nuevos `_shared/service-auth.ts` (`isServiceRequest`, compara en tiempo constante contra la key legacy y las `sb_secret_`), `_shared/api-key.ts` (`verifyApiKey`) y `verifyJwtClaims` en `_shared/auth.ts`. `dispatch-webhook`: service key, o JWT de usuario solo para `postconsultation.*` con ownership de la cita y teléfono tomado de la BD. `generate-manage-link`: API key `fm_` o service key. `confirm-appointment`: sin API key solo acepta `manage_token`. Los 4 crons: solo service key. Calendarios: `verifyJwtClaims`. Tokens/secretos con `crypto.getRandomValues`. **Pendiente operativo (no se resuelve con código):** revocar la key filtrada (migrar a llaves `sb_secret_` y revocar el JWT secret legacy), forzar reset de las contraseñas expuestas, `supabase functions delete seed-admin` y redeploy de las funciones tocadas, agregar el header `Authorization: Bearer fm_…` en los nodos de n8n que llaman a `generate-manage-link` / `confirm-appointment`.
 
 **Lección aprendida:** Un secreto que tocó un repo público está comprometido para siempre — borrarlo del árbol (o incluso del historial) no lo des-filtra; lo único que lo neutraliza es rotarlo. Nunca hardcodear llaves ni contraseñas en scripts: leerlas de variables de entorno (`.env.local`, gitignored). Toda función con `verify_jwt = false` debe tener auth explícita en código, y "verificar" un JWT significa verificar su firma, nunca solo decodificarlo. Credenciales y tokens de acceso siempre con CSPRNG.
+---
+
+## 2026-10-12 — Doble reserva posible: ninguna barrera en la BD y `reserve-create` sin validar el slot
+
+**Categoría:** backend / schema
+
+**Síntoma:** Dos pacientes (o un paciente con doble clic) podían quedar en el mismo horario del mismo consultorio. `reserve-create` aceptaba cualquier `date`/`slot_start` (pasado, fuera de horario, traslapado) sin validar nada: confiaba en que `reserve-slots` ya había filtrado. `manage-reschedule` solo revisaba disponibilidad semanal, no choques con otras citas ni con el calendario externo.
+
+**Causa raíz:** Toda la protección era check-then-insert en Edge Functions (racy por diseño) y el flujo del paciente ni siquiera hacía el check. `reservation_sessions.used_at` se marcaba *después* del insert y sin condición, así que un doble clic creaba dos citas.
+
+**Solución aplicada:** Migración `20261012120000`: `btree_gist` + `EXCLUDE USING gist (office_id WITH =, tstzrange(start_at,end_at,'[)') WITH &&) WHERE status IN ('scheduled','confirmed')` + `CHECK (end_at > start_at)`. Las EFs mapean SQLSTATE `23P01` → HTTP 409 con mensaje amable. `reserve-create` ahora valida fecha/hora, pasado, `doctor_date_overrides`, `checkAvailability` y `validateSlotAvailable`, y reclama la sesión atómicamente (`UPDATE … WHERE used_at IS NULL RETURNING`) *antes* del insert, liberándola si el insert falla. `manage-reschedule` valida igual, inserta la cita nueva **antes** de cancelar la vieja (antes borraba eventos y cancelaba primero: si el insert fallaba el paciente se quedaba sin cita) y extiende `expires_at` del token.
+
+**Lección aprendida:** Las invariantes de negocio que no pueden romperse (no doble reserva) viven en la BD como constraint, no en código de aplicación. Cada endpoint público valida su propia entrada aunque "el frontend ya filtró". Las operaciones "marcar como usado" se hacen con UPDATE condicional y RETURNING, nunca select-then-update.
+
+---
+
+## 2026-10-12 — Outlook nunca bloqueaba horarios para pacientes: variable inexistente dentro de un try/catch silencioso
+
+**Categoría:** backend
+
+**Síntoma:** Consultorios con Outlook conectado ofrecían a pacientes horarios ya ocupados en su calendario de Outlook.
+
+**Causa raíz:** `reserve-slots` usaba `tokenData.access_token` (variable que no existía; la correcta era `accessToken`). El `ReferenceError` caía en un `catch` que solo hacía `console.error`, y el flujo seguía como si no hubiera eventos. Además la ventana del día se construía sin offset (`${date}T00:00:00`, leída como UTC por Postgres), por lo que las citas de 18:00–23:59 CDMX quedaban fuera de la consulta y las de la noche anterior entraban comparadas por minuto-del-día.
+
+**Solución aplicada:** Reescritura del cálculo en `reserve-slots` sobre instantes absolutos (`_shared/mx-time.ts`: `mxDayBoundsMs`, `mxLocalToMs`), misma lista `busy[]` para citas internas y eventos externos, `Prefer: outlook.timezone="UTC"` en Graph.
+
+**Lección aprendida:** Un `catch` que solo loguea convierte bugs de programación en comportamiento silencioso incorrecto. Deno `check` lo habría detectado (TS2304) — correr el type-check de las Edge Functions en CI. Nunca comparar horarios por "minutos del día"; convertir siempre a instantes.
+
+---
+
+## 2026-10-12 — Paciente reagendaba con horarios del consultorio equivocado
+
+**Categoría:** frontend
+
+**Síntoma:** Con doctores de varios consultorios, `/gestionar` mostraba horarios de un consultorio distinto al de la cita original; `manage-reschedule` luego rechazaba o aceptaba contra el consultorio correcto, generando confusión.
+
+**Causa raíz:** `Gestionar.tsx` enviaba `doctor_id` a `reserve-slots` aunque `manage-validate` ya devolvía `office_id`. `reserve-slots` resolvía `doctor_id` al consultorio más antiguo (rama legacy).
+
+**Solución aplicada:** Enviar `office_id`; mostrar nombre y dirección del consultorio; ocultar "Reagendar" en citas completadas o ya pasadas (en sincronía con el rechazo del backend).
+
+**Lección aprendida:** Cuando una EF agrega un campo para multi-consultorio, revisar *todos* los consumidores (buscar `doctor_id:` en el frontend). Las ramas "legacy" de compatibilidad esconden consumidores no migrados; registrar quién las usa y eliminarlas.
+
+---
+
+## 2026-10-12 — Recordatorios de WhatsApp duplicados y crons sin guarda de estado
+
+**Categoría:** backend
+
+**Síntoma:** Pacientes recibían dos recordatorios de 48 h; una segunda ejecución de `send-day-of-reminders` reenviaba a todos los del día; `auto-cancel-unconfirmed` podía cancelar una cita confirmada segundos antes.
+
+**Causa raíz:** Ventana de 47–49 h (2 h) con cron cada hora y sin marcador de "ya enviado". Updates de estado sin `.eq("status", previo)`: lo que el cron seleccionó ya pudo haber cambiado.
+
+**Solución aplicada:** Columnas `reminder_48h_sent_at` / `reminder_day_of_sent_at`; cada cron reclama la fila con `UPDATE … WHERE marker IS NULL RETURNING` antes de enviar; `auto-cancel` y `auto-complete` condicionan el update al estado previo y saltan si no afectó filas. Schedules de pg_cron ahora versionados en la migración (`cron.schedule` con jobname existente lo actualiza in-place) vía `public.invoke_edge_function(slug)`.
+
+**Lección aprendida:** Todo cron debe ser idempotente por construcción: marcador persistente + claim atómico. Toda transición de estado va con guarda del estado previo. Lo que viva solo en la BD de producción (cron jobs) se pierde; va en una migración.
