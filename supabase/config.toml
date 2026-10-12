@@ -3,9 +3,6 @@ project_id = "jyzvdowflblxmlahlupo"
 [functions.triage-webhook]
 verify_jwt = false
 
-[functions.seed-admin]
-verify_jwt = false
-
 [functions.google-calendar-auth]
 verify_jwt = false
 
