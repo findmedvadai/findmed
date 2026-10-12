@@ -7,6 +7,7 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 interface Body {
   appointment_id: string;
@@ -18,7 +19,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   const auth = await requireAdmin(req, supabase);
@@ -119,7 +120,7 @@ Deno.serve(async (req) => {
 
   // WhatsApp dispatch — both doctor and patient.
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
   const dispatchHeaders = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${serviceKey}`,

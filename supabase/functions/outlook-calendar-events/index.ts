@@ -18,6 +18,7 @@ import {
 } from "../_shared/office-resolver.ts";
 import { getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 function toUtcIso(raw: string): string {
   const trimmed = raw.replace(/\.\d+$/, "");
@@ -96,7 +97,7 @@ serve(async (req) => {
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return jsonResponse({ error: "No autorizado" }, 401);

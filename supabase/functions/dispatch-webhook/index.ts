@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isServiceRequest } from "../_shared/service-auth.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 // Events the browser may dispatch directly (post-consultation flows in
 // PorCompletar.tsx and SendReportModal.tsx). Everything else must come from
@@ -45,7 +46,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   let body: { event_type: string; payload: Record<string, unknown> };

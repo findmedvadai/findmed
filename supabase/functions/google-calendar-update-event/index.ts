@@ -5,13 +5,14 @@ import { resolveOfficeForCaller } from "../_shared/office-resolver.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken } from "../_shared/calendar-tokens.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return jsonResponse({ error: "No autorizado" }, 401);

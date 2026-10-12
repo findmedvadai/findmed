@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,7 +33,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   const encoded = new TextEncoder().encode(rawKey);
@@ -190,7 +191,7 @@ Deno.serve(async (req) => {
 
   // --- Dispatch webhooks ---
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
   const baseUrl = Deno.env.get("APP_URL") || "https://findmed.lovable.app";
 
   // Look up manage token for this appointment

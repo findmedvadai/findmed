@@ -3,6 +3,7 @@ import { createManageToken } from "../_shared/manage-token.ts";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 import { verifyApiKey } from "../_shared/api-key.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,7 +25,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   // A manage link grants view/cancel/reschedule over a patient's appointment,

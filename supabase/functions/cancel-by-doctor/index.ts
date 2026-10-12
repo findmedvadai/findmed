@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { getServiceKey, getPublishableKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,14 +32,14 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   // Verify token and get user
   const token = authHeader.replace("Bearer ", "");
   const anonSupabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_ANON_KEY")!,
+    getPublishableKey(),
     { global: { headers: { Authorization: authHeader } } }
   );
   const { data: claimsData, error: claimsError } = await anonSupabase.auth.getClaims(token);
@@ -205,7 +206,7 @@ Deno.serve(async (req) => {
 
   // Dispatch webhooks (fire-and-forget)
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
   const dispatchHeaders = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${serviceKey}`,

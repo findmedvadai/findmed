@@ -10,6 +10,7 @@ import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { dispatchStaffRescheduleWebhook } from "../_shared/staff-reschedule-webhook.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 interface Body {
   appointment_id: string;
@@ -24,7 +25,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   let body: Body;

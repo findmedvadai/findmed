@@ -18,6 +18,7 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 interface Body {
   office_id: string;
@@ -31,7 +32,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    getServiceKey()
   );
 
   let body: Body;
@@ -91,7 +92,7 @@ Deno.serve(async (req) => {
 
   // Cancel each appointment.
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
   const dispatchHeaders = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${serviceKey}`,

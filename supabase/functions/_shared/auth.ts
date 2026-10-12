@@ -5,6 +5,7 @@
 // the anon client's `auth.getClaims`, and check the role with the existing
 // `is_admin_or_superadmin` Postgres function.
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getPublishableKey } from "../_shared/supabase-keys.ts";
 
 export interface AuthedAdmin {
   userId: string;
@@ -17,7 +18,7 @@ export interface AuthedAdmin {
  */
 export async function verifyJwtClaims(token: string): Promise<Record<string, unknown> | null> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const SUPABASE_ANON_KEY = getPublishableKey();
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
   const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -38,7 +39,7 @@ export async function requireAdmin(
   const token = authHeader.slice("Bearer ".length);
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const SUPABASE_ANON_KEY = getPublishableKey();
 
   // We need to verify the JWT belongs to a real authenticated user. Using the
   // anon client with the user's bearer token validates the signature/expiry
@@ -80,7 +81,7 @@ export async function requireAdminOrDoctor(
   const token = authHeader.slice("Bearer ".length);
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const SUPABASE_ANON_KEY = getPublishableKey();
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
   const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: authHeader } },

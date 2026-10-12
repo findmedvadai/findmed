@@ -4,6 +4,7 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { resolveOfficeForCaller, parseTargetParams } from "../_shared/office-resolver.ts";
 import { getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -12,7 +13,7 @@ serve(async (req) => {
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {

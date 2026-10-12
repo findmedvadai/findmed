@@ -18,6 +18,7 @@ import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
 import { createManageToken } from "../_shared/manage-token.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 interface CreateBody {
   doctor_id: string;
@@ -35,7 +36,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   let body: CreateBody;
@@ -281,7 +282,7 @@ Deno.serve(async (req) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
   const dispatchHeaders = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${serviceKey}`,

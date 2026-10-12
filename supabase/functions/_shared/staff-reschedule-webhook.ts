@@ -14,6 +14,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOrCreateManageUrl } from "./manage-token.ts";
 import { normalizeMxPhone } from "./phone.ts";
+import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 export interface StaffRescheduleInput {
   supabase: SupabaseClient;
@@ -36,7 +37,7 @@ export async function dispatchStaffRescheduleWebhook(
   input: StaffRescheduleInput
 ): Promise<void> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = getServiceKey();
   if (!supabaseUrl || !serviceKey) {
     console.error("[staff-reschedule-webhook] SUPABASE_URL/SERVICE_ROLE_KEY missing");
     return;
