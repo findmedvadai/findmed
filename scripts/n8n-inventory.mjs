@@ -129,7 +129,7 @@ function classify(n, isReachable) {
   }
   if (t === "httpRequest" && h.includes("whaapy")) {
     if (/apoyo_asesor|urgencia/.test(name)) return ["reemplazar", "MCP `open_case` + `request_handoff` (caso, asignación y pausa verificables); etiqueta solo como proyección.", "M09, M10, F05"];
-    if (/ambulancia/.test(name)) return ["pendiente", "Solicitud de ambulancia: abrir caso con responsable. Alcance del servicio de ambulancias por confirmar con FindMed.", "M09, §12"];
+    if (/ambulancia/.test(name)) return ["retirar", "Servicio de ambulancias fuera de esta etapa (D5); sin reemplazo.", "D5"];
     if (/reservada/.test(name)) return ["reemplazar", "Etapa/etiqueta derivada de cita persistida (evento appointment.created), no del enlace enviado.", "F08, R13"];
     return ["consolidar", "Acción nativa WHAAPY de etiqueta/embudo, proyectada desde estado de dominio con un solo dueño.", "§7.3"];
   }
@@ -154,9 +154,9 @@ function classify(n, isReachable) {
     if (p.resource === "contact" && op === "get") return ["consolidar", "Lectura de contacto: contexto fijo de WHAAPY / API por teléfono en el worker.", "N21, B7"];
     if (p.resource === "contact" && op === "update") return ["reemplazar", "Etapa de embudo proyectada desde estado persistido (cita/caso), no optimista.", "F08, §7.3"];
     if (/Ambulancia|Emergencia|Evento|Traslado|Info General/.test(name))
-      return ["pendiente", "Mensaje estático del servicio de ambulancias: conservar como automatización/knowledge WHAAPY si FindMed lo confirma.", "§12, R08"];
+      return ["retirar", "Mensaje del servicio de ambulancias, fuera de esta etapa (D5).", "D5"];
     if (/Mensaje Inicial|Volver al Inicio/.test(name))
-      return ["pendiente", "Menú de bienvenida (Ambulancia / Cita Médica): decidir si lo da el agente o una automatización con 'Omitir IA'.", "B8"];
+      return ["reemplazar", "Menú de bienvenida Ambulancia/Cita: sin ambulancias (D5) el saludo y la apertura los hace el agente nativo.", "B8, D5"];
     if (/No Match|Match Parcial|Match Doctor/.test(name)) return ["reemplazar", "Respuesta del agente según resultado none/one/many de `search_care_options`.", "F01, M01, M04"];
     return ["retirar", "Envío de texto del agente n8n; el agente nativo responde directamente.", "B8"];
   }

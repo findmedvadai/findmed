@@ -7,7 +7,7 @@
 
 **Por tipo:** agent 2 · postgresTool 2 · if 2 · switch 7 · code 1 · lmChatOpenRouter 2 · memoryPostgresChat 2 · httpRequestTool 11 · stickyNote 13 · httpRequest 18 · webhook 8 · set 6 · whaapy 40 · whaapyTrigger 1 · wait 2.
 
-**Por decisión:** conservar 0 · reemplazar 44 · consolidar 31 · retirar 25 · pendiente 17.
+**Por decisión:** conservar 0 · reemplazar 49 · consolidar 31 · retirar 34 · pendiente 3.
 
 Estado de ejecución de cada fila: ver la columna de requisito en `cobertura.md`. Una fila "reemplazar" solo se cierra cuando su requisito queda **validado**.
 
@@ -70,8 +70,8 @@ Estado de ejecución de cada fila: ver la columna de requisito en `cobertura.md`
 | N055 | Add Tag match_doctor | httpRequest | principal | main[0]→Funnel Match Doctor | host https://api.whaapy.com | consolidar | Acción nativa WHAAPY de etiqueta/embudo, proyectada desde estado de dominio con un solo dueño. | §7.3 |
 | N056 | Add Tag agendamiento | httpRequest | principal | main[0]→Funnel Agendamiento | host https://api.whaapy.com | consolidar | Acción nativa WHAAPY de etiqueta/embudo, proyectada desde estado de dominio con un solo dueño. | §7.3 |
 | N057 | Trigger | whaapyTrigger | principal | main[0]→Get - Contacto | — | reemplazar | El agente nativo pasa a ser el único dueño de la conversación al corte. | B10, R38 |
-| N058 | Add Tag ambulancia_evento | httpRequest | principal | main[0]→POST - Evento | host https://api.whaapy.com | pendiente | Solicitud de ambulancia: abrir caso con responsable. Alcance del servicio de ambulancias por confirmar con FindMed. | M09, §12 |
-| N059 | Add Tag ambulancia_emergencia | httpRequest | principal | main[0]→POST - Emergencia recibida | host https://api.whaapy.com | pendiente | Solicitud de ambulancia: abrir caso con responsable. Alcance del servicio de ambulancias por confirmar con FindMed. | M09, §12 |
+| N058 | Add Tag ambulancia_evento | httpRequest | principal | main[0]→POST - Evento | host https://api.whaapy.com | retirar | Servicio de ambulancias fuera de esta etapa (D5); sin reemplazo. | D5 |
+| N059 | Add Tag ambulancia_emergencia | httpRequest | principal | main[0]→POST - Emergencia recibida | host https://api.whaapy.com | retirar | Servicio de ambulancias fuera de esta etapa (D5); sin reemplazo. | D5 |
 | N060 | Switch Valor Botón | switch | principal | main[0]→POST - Mensaje Ambulancias; main[1]→Add Tag triaje; main[2]→Quitar Tags2; main[4]→Add Tag ambulancia_emergencia; main[5]→Add Tag ambulancia_evento; main[6]→Add Tag ambulancia_traslado; main[7]→Add Tag ambulancia_info_general; main[8]→Cancelar Cita; main[9]→Confirmar Cita | — | consolidar | Payloads de botón (confirmar/cancelar/menú) manejados por `whaapy-inbound` y automatizaciones WHAAPY. | N24, B7 |
 | N061 | Switch2 | switch | principal | main[0]→TextOrId1; main[1]→TextOrId1; main[2]→TextOrId1; main[3]→TextOrId1; main[6]→TextOrId; main[7]→TextOrId | — | consolidar | Ruteo absorbido por agente nativo / estados de dominio. | B8 |
 | N062 | TextOrId | set | principal | main[0]→Switch Valor Botón | — | consolidar | Adaptación de contexto; la identidad viene de `{{contact.phoneNumber}}` mapeado, no de texto libre. | N21, B5 |
@@ -91,19 +91,19 @@ Estado de ejecución de cada fila: ver la columna de requisito en `cobertura.md`
 | N076 | Funnel Agendamiento | whaapy | principal | main[0]→Set Link Agendamiento | — | reemplazar | Etapa de embudo proyectada desde estado persistido (cita/caso), no optimista. | F08, §7.3 |
 | N077 | POST - Message | whaapy | principal | — | — | retirar | Envío de texto del agente n8n; el agente nativo responde directamente. | B8 |
 | N078 | POST - Match Doctor | whaapy | principal | main[0]→Wait1 | — | reemplazar | Respuesta del agente según resultado none/one/many de `search_care_options`. | F01, M01, M04 |
-| N079 | POST - Mensaje Inicial | whaapy | principal | main[0]→Add Tag bienvenida_enviada | — | pendiente | Menú de bienvenida (Ambulancia / Cita Médica): decidir si lo da el agente o una automatización con 'Omitir IA'. | B8 |
-| N080 | POST - Mensaje Inicial1 | whaapy | principal | — | — | pendiente | Menú de bienvenida (Ambulancia / Cita Médica): decidir si lo da el agente o una automatización con 'Omitir IA'. | B8 |
-| N081 | POST - Mensaje Ambulancias | whaapy | principal | — | — | pendiente | Mensaje estático del servicio de ambulancias: conservar como automatización/knowledge WHAAPY si FindMed lo confirma. | §12, R08 |
-| N082 | POST - Volver al Inicio | whaapy | principal | — | — | pendiente | Menú de bienvenida (Ambulancia / Cita Médica): decidir si lo da el agente o una automatización con 'Omitir IA'. | B8 |
-| N083 | POST - Emergencia recibida | whaapy | principal | main[0]→Wait | — | pendiente | Mensaje estático del servicio de ambulancias: conservar como automatización/knowledge WHAAPY si FindMed lo confirma. | §12, R08 |
-| N084 | POST - Evento | whaapy | principal | main[0]→Wait | — | pendiente | Mensaje estático del servicio de ambulancias: conservar como automatización/knowledge WHAAPY si FindMed lo confirma. | §12, R08 |
+| N079 | POST - Mensaje Inicial | whaapy | principal | main[0]→Add Tag bienvenida_enviada | — | reemplazar | Menú de bienvenida Ambulancia/Cita: sin ambulancias (D5) el saludo y la apertura los hace el agente nativo. | B8, D5 |
+| N080 | POST - Mensaje Inicial1 | whaapy | principal | — | — | reemplazar | Menú de bienvenida Ambulancia/Cita: sin ambulancias (D5) el saludo y la apertura los hace el agente nativo. | B8, D5 |
+| N081 | POST - Mensaje Ambulancias | whaapy | principal | — | — | retirar | Mensaje del servicio de ambulancias, fuera de esta etapa (D5). | D5 |
+| N082 | POST - Volver al Inicio | whaapy | principal | — | — | reemplazar | Menú de bienvenida Ambulancia/Cita: sin ambulancias (D5) el saludo y la apertura los hace el agente nativo. | B8, D5 |
+| N083 | POST - Emergencia recibida | whaapy | principal | main[0]→Wait | — | retirar | Mensaje del servicio de ambulancias, fuera de esta etapa (D5). | D5 |
+| N084 | POST - Evento | whaapy | principal | main[0]→Wait | — | retirar | Mensaje del servicio de ambulancias, fuera de esta etapa (D5). | D5 |
 | N085 | Wait | wait | principal | main[0]→POST - Volver al Inicio | — | retirar | Espera artificial; seguimiento durable solo con regla aprobada. | B7 |
-| N086 | POST - Volver al Inicio1 | whaapy | principal | main[0]→Add Tag reservada | — | pendiente | Menú de bienvenida (Ambulancia / Cita Médica): decidir si lo da el agente o una automatización con 'Omitir IA'. | B8 |
+| N086 | POST - Volver al Inicio1 | whaapy | principal | main[0]→Add Tag reservada | — | reemplazar | Menú de bienvenida Ambulancia/Cita: sin ambulancias (D5) el saludo y la apertura los hace el agente nativo. | B8, D5 |
 | N087 | Wait1 | wait | principal | main[0]→POST - Volver al Inicio1 | — | retirar | Espera artificial; seguimiento durable solo con regla aprobada. | B7 |
 | N088 | POST - Mensaje No Match | whaapy | principal | main[0]→Add Tag apoyo_asesor1 | — | reemplazar | Respuesta del agente según resultado none/one/many de `search_care_options`. | F01, M01, M04 |
 | N089 | POST - Message1 | whaapy | principal | — | — | retirar | Envío de texto del agente n8n; el agente nativo responde directamente. | B8 |
 | N090 | POST - Match Parcial | whaapy | principal | main[0]→POST - Volver al Inicio2 | — | reemplazar | Respuesta del agente según resultado none/one/many de `search_care_options`. | F01, M01, M04 |
-| N091 | POST - Volver al Inicio2 | whaapy | principal | main[0]→Add Tag apoyo_asesor2 | — | pendiente | Menú de bienvenida (Ambulancia / Cita Médica): decidir si lo da el agente o una automatización con 'Omitir IA'. | B8 |
+| N091 | POST - Volver al Inicio2 | whaapy | principal | main[0]→Add Tag apoyo_asesor2 | — | reemplazar | Menú de bienvenida Ambulancia/Cita: sin ambulancias (D5) el saludo y la apertura los hace el agente nativo. | B8, D5 |
 | N092 | Get a contact | whaapy | principal | main[0]→Funnel Cita Agendada | — | consolidar | Lectura de contacto: contexto fijo de WHAAPY / API por teléfono en el worker. | N21, B7 |
 | N093 | Funnel Cita Agendada | whaapy | principal | main[0]→Pide Documentos | — | reemplazar | Etapa de embudo proyectada desde estado persistido (cita/caso), no optimista. | F08, §7.3 |
 | N094 | Get a contact1 | whaapy | principal | main[0]→Funnel Cita Confirmada | — | consolidar | Lectura de contacto: contexto fijo de WHAAPY / API por teléfono en el worker. | N21, B7 |
@@ -114,10 +114,10 @@ Estado de ejecución de cada fila: ver la columna de requisito en `cobertura.md`
 | N099 | POST - Boton Cancelar cita1 | whaapy | principal | main[0]→POST - Boton Confirmar Cita | template boton_cancelar_cita | reemplazar | Template `boton_cancelar_cita`: botón con payload ligado a appointment_id (allowButtonIdOverride). | N24, F14, B7 |
 | N100 | POST - Boton Confirmar Cita | whaapy | principal | — | template boton_confirmar_cita | reemplazar | Template `boton_confirmar_cita`: botón con payload ligado a appointment_id (allowButtonIdOverride). | N24, F14, B7 |
 | N101 | POST - Boton Cancelar cita2 | whaapy | principal | — | template boton_cancelar_cita | reemplazar | Template `boton_cancelar_cita`: botón con payload ligado a appointment_id (allowButtonIdOverride). | N24, F14, B7 |
-| N102 | Add Tag ambulancia_traslado | httpRequest | principal | main[0]→POST - Traslado | host https://api.whaapy.com | pendiente | Solicitud de ambulancia: abrir caso con responsable. Alcance del servicio de ambulancias por confirmar con FindMed. | M09, §12 |
-| N103 | Add Tag ambulancia_info_general | httpRequest | principal | main[0]→POST - Info General | host https://api.whaapy.com | pendiente | Solicitud de ambulancia: abrir caso con responsable. Alcance del servicio de ambulancias por confirmar con FindMed. | M09, §12 |
-| N104 | POST - Info General | whaapy | principal | main[0]→Wait | — | pendiente | Mensaje estático del servicio de ambulancias: conservar como automatización/knowledge WHAAPY si FindMed lo confirma. | §12, R08 |
-| N105 | POST - Traslado | whaapy | principal | main[0]→Wait | — | pendiente | Mensaje estático del servicio de ambulancias: conservar como automatización/knowledge WHAAPY si FindMed lo confirma. | §12, R08 |
+| N102 | Add Tag ambulancia_traslado | httpRequest | principal | main[0]→POST - Traslado | host https://api.whaapy.com | retirar | Servicio de ambulancias fuera de esta etapa (D5); sin reemplazo. | D5 |
+| N103 | Add Tag ambulancia_info_general | httpRequest | principal | main[0]→POST - Info General | host https://api.whaapy.com | retirar | Servicio de ambulancias fuera de esta etapa (D5); sin reemplazo. | D5 |
+| N104 | POST - Info General | whaapy | principal | main[0]→Wait | — | retirar | Mensaje del servicio de ambulancias, fuera de esta etapa (D5). | D5 |
+| N105 | POST - Traslado | whaapy | principal | main[0]→Wait | — | retirar | Mensaje del servicio de ambulancias, fuera de esta etapa (D5). | D5 |
 | N106 | If hay mensaje | if | principal | main[0]→Set Campos bot; main[1]→POST - Message2 | — | retirar | Parser de <<<METADATA>>> y bifurcación invertida; los resultados de tools son estructurados. | F06, R12 |
 | N107 | POST - Message2 | whaapy | principal | main[0]→Set Campos bot | — | retirar | Envío de texto del agente n8n; el agente nativo responde directamente. | B8 |
 | N108 | Add Tag apoyo_asesor2 | httpRequest | principal | — | host https://api.whaapy.com | reemplazar | MCP `open_case` + `request_handoff` (caso, asignación y pausa verificables); etiqueta solo como proyección. | M09, M10, F05 |

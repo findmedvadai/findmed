@@ -38,7 +38,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R04 | Una opción: confirmar sede y propagar doctor_id/office_id hasta la reserva | IR | B1, B5 | — | not_run |
 | R05 | Cero opciones: explicar límite y abrir caso/handoff | OP | B6, B8 | B5 | not_run |
 | R06 | Zona/ciudad ambigua: aclarar, no inventar | U+OP | B1, B8 | — | U passed (`ambiguous_city`/`unknown_zone`); OP not_run |
-| R07 | Solicitud fuera de CDMX/QRO: consultar catálogo vigente, no regla vieja | OP | B8 | cobertura FindMed | blocked |
+| R07 | Solicitud en cualquier ciudad del catálogo (D6), no la regla vieja CDMX/QRO | OP | B8 | — | not_run |
 | R08 | Señal de urgencia según protocolo aprobado | OP | B8 | texto clínico aprobado | blocked |
 | R09 | Estudio/laboratorio sin agenda: caso rastreable, sin cita inventada | IR | B6 | — | not_run |
 | R10 | Seguimiento: solo datos del propio paciente | IR | B6 | — | not_run |
