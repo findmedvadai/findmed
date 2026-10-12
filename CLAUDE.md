@@ -226,12 +226,11 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 
 | Función | Qué hace |
 |---|---|
-| `confirm-appointment` | Marca cita como `confirmed` (admite `appointment_id`, `patient_phone` o `manage_token`). |
+| `confirm-appointment` | Marca cita como `confirmed`. Con API key `fm_` (n8n) o service key admite `appointment_id`, `patient_phone` o `manage_token`; sin ellas **solo** `manage_token`. |
 | `cancel-by-doctor` | Doctor autenticado cancela con `cancel_reason = 'doctor'`. |
 | `update-appointment-status` | Endpoint con API key para cambiar estado (p. ej. confirmaciones/cancelaciones por WhatsApp). |
-| `generate-manage-link` | Genera/reusa un token para enviar al paciente el link `/gestionar`. |
+| `generate-manage-link` | Genera/reusa un token para enviar al paciente el link `/gestionar`. Requiere API key `fm_` o service key. |
 | `create-doctor` | Admin crea usuario auth + fila en `doctors` + `users` + `doctor_schedule_settings`. |
-| `seed-admin` | Bootstrap de usuario admin o doctor de prueba. |
 | `search-doctors` | Endpoint público con API key para buscar doctores (usado por el triaje externo). |
 
 ### Gestión de citas por admin (Mejora 1)
@@ -263,7 +262,9 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | Archivo | Para qué sirve |
 |---|---|
 | `cors.ts` | `corsHeaders` y helper `jsonResponse(data, status)`. |
-| `auth.ts` | `requireAdmin`, `requireAdminOrDoctor` — validan JWT y rol antes de operar. |
+| `auth.ts` | `requireAdmin`, `requireAdminOrDoctor` — validan JWT y rol antes de operar. `verifyJwtClaims(token)` — verifica firma + expiración y devuelve los claims (nunca decodificar el JWT a mano). |
+| `service-auth.ts` | `isServiceRequest(req)` — `true` solo si el caller trae la service key (legacy `SUPABASE_SERVICE_ROLE_KEY` o cualquier `sb_secret_` de `SUPABASE_SECRET_KEYS`) en `Authorization: Bearer` o `apikey`. Comparación en tiempo constante. Para crons y llamadas EF→EF. |
+| `api-key.ts` | `verifyApiKey(req, supabase)` — valida `Authorization: Bearer fm_…` contra `api_keys.key_hash`. |
 | `phone.ts` | `normalizeMxPhone` (canonicaliza `+52XXXXXXXXXX`) y `mxPhoneLookupVariants` (variantes para lookup). |
 | `manage-token.ts` | `createManageToken` — genera token + URL `/gestionar` e inserta en `appointment_manage_tokens`. |
 | `slot-validation.ts` | `validateSlotAvailable` — verifica que un slot no colisione con citas existentes en el mismo office. |
@@ -277,7 +278,8 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | Función | Qué hace |
 |---|---|
 | `triage-webhook` | Endpoint con API key. Upsert de paciente por teléfono, crea `reservation_sessions` (72 h) y devuelve `reserve_url`. Punto de entrada desde el bot de WhatsApp. |
-| `dispatch-webhook` | Dispara eventos a todos los `webhooks` activos suscritos, firmando con HMAC‑SHA‑256. Llamada internamente por otras funciones. |
+| `dispatch-webhook` | Dispara eventos a todos los `webhooks` activos suscritos, firmando con HMAC‑SHA‑256. Llamada internamente por otras funciones (con service key). Desde el navegador solo acepta JWT de usuario válido y los eventos de `USER_DISPATCHABLE_EVENTS` (`postconsultation.*`), verifica que la cita sea del doctor y toma `patient_phone`/`patient_name` de la BD, no del payload. |
+| _(los 4 crons)_ | `send-appointment-reminders`, `send-day-of-reminders`, `auto-cancel-unconfirmed`, `auto-complete-appointments` rechazan con 401 todo caller sin service key (`isServiceRequest`). pg_cron debe enviar la key guardada en Vault (`service_role_key`); si se rota la key, actualizar Vault. |
 | `send-appointment-reminders` | Cron: busca citas `scheduled` en ventana 47–49 h y emite `appointment.reminder_48h`. |
 | `send-day-of-reminders` | Cron: busca citas `confirmed` del día (timezone México) y emite recordatorio del día. |
 | `auto-cancel-unconfirmed` | Cron: cancela citas no confirmadas cuando el umbral `min_confirm_hours_before` ha pasado, con `cancel_reason = 'no_confirmation'`. |
@@ -375,6 +377,9 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
   - **Usuario autenticado**: verificar el JWT con `auth.getClaims` o cliente anon con el header `Authorization`.
   - **API Key externa**: header `Authorization: Bearer fm_…`, validar contra `api_keys.key_hash` (SHA‑256 hex).
 - El CORS header `Access-Control-Allow-Headers` incluye los propios de supabase‑js v2 (`x-supabase-client-*`); mantenerlos al copiar a funciones nuevas.
+- **Ninguna función con `verify_jwt = false` puede quedar sin auth en código.** Elegir explícitamente: token de paciente, `verifyApiKey`, `isServiceRequest` o `verifyJwtClaims`/`requireAdmin*`. Nunca decodificar un JWT con `atob` sin verificar firma.
+- Tokens y secretos se generan con `crypto.getRandomValues` (`generateSecureToken` en `_shared/manage-token.ts`, `secureRandomString` en `src/lib/secure-random.ts`). Nunca `Math.random`.
+- **Nunca commitear llaves, passwords ni scripts con credenciales** (el repo es público). Scripts operativos que necesiten la service key la reciben por variable de entorno desde `.env.local` (gitignored por `*.local`).
 
 ### Notificaciones
 
@@ -461,4 +466,4 @@ No commitear claves nuevas al repo. El `.env` actual sólo contiene las variable
 
 ---
 
-_Última actualización: 2026-06-04._
+_Última actualización: 2026-10-12._
