@@ -100,7 +100,7 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | X06 | Idempotencia y recuperación tras timeout | B4 (`operation_requests`), M08, R19 | pendiente |
 | X07 | Propiedad de cada cita y caso | A2, R28 | pendiente |
 | X08 | Confirmación auténtica antes de acciones | A4, A6 | pendiente |
-| X09 | Cancelar/reagendar coherente en BD, calendario y mensajes | B4 `appointment-actions`, R27 | pendiente |
+| X09 | Cancelar/reagendar coherente en BD, calendario y mensajes | B4 `appointment-actions`, R27 | en implementación (confirm/cancel de paciente unificados; staff y reagenda pendientes) |
 | X10 | Canalización humana verificable | A7, R31, R32 | pendiente |
 | X11 | Un dueño por conversación y evento durante la migración | A5 `event_owner`, R38 | pendiente |
 | X12 | Enlace ≠ cita; etiqueta ≠ asignación; HTTP 200 ≠ entrega | Contratos MCP, outbox, R13, R31, R34 | pendiente |

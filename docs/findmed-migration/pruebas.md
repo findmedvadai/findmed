@@ -57,7 +57,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R23 | >50 eventos y bloqueo de día completo | IS+IR | B4 | calendario de prueba | not_run |
 | R24 | Sede en otra zona horaria y cruce de medianoche | U | B4 | IANA por sede (pendiente) | not_run |
 | R25 | Mismo doctor en dos consultorios (regla D2) | IS (PGlite) / IR | B2-bis | prod: migración aplicada | IS passed; IR not_run |
-| R26 | Paciente con varias citas: elección explícita de appointment_id | IR | B4, B5 | — | not_run |
+| R26 | Paciente con varias citas: elección explícita de appointment_id | U+IR | B4, B5 | — | U passed (`appointment-actions_test.ts`); IR not_run |
 | R27 | Cancelar/reagendar desde paciente, doctor, staff y botón: misma transición | IR | B4, B7 | — | not_run |
 | R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | IR | B4, B5 | — | not_run |
 | R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | not_run |
@@ -66,7 +66,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R32 | Handoff sin personal o error del proveedor → `awaiting_assignment` | IS+IR | B6 | — | not_run |
 | R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | not_run |
 | R34 | 429/5xx, respuesta perdida, reinicio del worker | IS | B7 | — | not_run |
-| R35 | Recordatorio vs confirmación vs autocancelación en carrera | IR | B7 | migración | not_run |
+| R35 | Recordatorio vs confirmación vs autocancelación en carrera | U+IR | B7 | migración | U passed (guarda de estado previo en confirm/cancel); IR not_run |
 | R36 | Firma inválida o evento repetido rechazado (WHAAPY firma JSON re-serializado, N20) | U+IR | B7 | webhook de prueba | not_run |
 | R37 | Postconsulta y envío de informe con recorrido definido | OP | B7 | decisión EV06/EV07 | blocked |
 | R38 | Corte de agente y eventos en momentos distintos: un solo dueño | OP | B10 | — | not_run |
