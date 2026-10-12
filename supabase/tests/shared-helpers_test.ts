@@ -55,6 +55,21 @@ Deno.test("P-002 isServiceRequest accepts only server keys", () => {
   );
 });
 
+Deno.test("P-002b isServiceRequest accepts the dedicated cron secret (Vault service_role_key)", () => {
+  withEnv(
+    { FINDMED_CRON_SECRET: "cron-secret-xyz", SUPABASE_SERVICE_ROLE_KEY: undefined, SUPABASE_SECRET_KEYS: undefined },
+    () => {
+      const r = (h: Record<string, string>) => isServiceRequest(new Request("http://x", { headers: h }));
+      assertEquals(r({ Authorization: "Bearer cron-secret-xyz" }), true);
+      assertEquals(r({ Authorization: "Bearer cron-secret-xy" }), false);
+    },
+  );
+  withEnv({ FINDMED_CRON_SECRET: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined, SUPABASE_SECRET_KEYS: undefined }, () => {
+    // Nothing configured → nothing is accepted (no empty-string match).
+    assertEquals(isServiceRequest(new Request("http://x", { headers: { Authorization: "Bearer " } })), false);
+  });
+});
+
 Deno.test("P-003 mx-time conversions", () => {
   assertEquals(msToMxIso(mxLocalToMs("2026-10-12", "09:30")), "2026-10-12T09:30:00-06:00");
   assertEquals(new Date(mxLocalToMs("2026-10-12", "09:30")).toISOString(), "2026-10-12T15:30:00.000Z");

@@ -83,3 +83,15 @@ verify_jwt = false
 # Webhooks from WHAAPY. Auth: HMAC signature with WHAAPY_WEBHOOK_SECRET (not a JWT).
 [functions.whaapy-inbound]
 verify_jwt = false
+
+# Cron-only: auth in code (FINDMED_CRON_SECRET / service key), not a JWT.
+[functions.auto-cancel-unconfirmed]
+verify_jwt = false
+
+# Cron-only: auth in code (FINDMED_CRON_SECRET / service key), not a JWT.
+[functions.auto-complete-appointments]
+verify_jwt = false
+
+# Cron-only: auth in code (FINDMED_CRON_SECRET / service key), not a JWT.
+[functions.send-appointment-reminders]
+verify_jwt = false

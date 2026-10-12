@@ -9,6 +9,11 @@
 
 function serviceKeys(): string[] {
   const keys: string[] = [];
+  // Dedicated credential for pg_cron → Edge Function calls (Vault secret
+  // `service_role_key` holds this value since 2026-10-12). It is independent
+  // of Supabase API keys, so rotating/revoking those never breaks the crons.
+  const cron = Deno.env.get("FINDMED_CRON_SECRET");
+  if (cron) keys.push(cron);
   const legacy = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (legacy) keys.push(legacy);
 
