@@ -19,7 +19,7 @@ import { requireAdmin } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
-import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
+import { normalizeMxPhone, mxPhoneLookupVariants, isValidNormalizedPhone } from "../_shared/phone.ts";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 
@@ -139,6 +139,9 @@ Deno.serve(async (req) => {
   // Telcel `1`. If anything matches, we reuse the existing patient_id; only
   // when no variant matches do we insert a new row.
   const normalizedPhone = normalizeMxPhone(patient.phone);
+  if (!isValidNormalizedPhone(normalizedPhone)) {
+    return jsonResponse({ error: "Teléfono inválido. Usa 10 dígitos (México) o el formato internacional con +." }, 400);
+  }
   const lookupVariants = mxPhoneLookupVariants(normalizedPhone);
   const fullName = patient.full_name.trim();
 

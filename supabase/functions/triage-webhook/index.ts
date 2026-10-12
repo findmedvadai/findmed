@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
+import { normalizeMxPhone, mxPhoneLookupVariants, isValidNormalizedPhone } from "../_shared/phone.ts";
 import { generateSecureToken } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 
@@ -99,6 +99,7 @@ Deno.serve(async (req) => {
     .select("id, full_name")
     .eq("id", doctor_id)
     .eq("is_active", true)
+    .eq("is_deleted", false)
     .maybeSingle();
   if (doctorError || !doctor) {
     return new Response(
@@ -125,6 +126,12 @@ Deno.serve(async (req) => {
   // for inserts but look up by both Mexican variants (`+52` / `+521`) so we
   // don't create duplicates against rows from older flows.
   const phone = normalizeMxPhone(patient_phone);
+  if (!isValidNormalizedPhone(phone)) {
+    return new Response(JSON.stringify({ error: "invalid_phone" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   const phoneVariants = mxPhoneLookupVariants(phone);
 
   const { data: existingMatches } = await supabase

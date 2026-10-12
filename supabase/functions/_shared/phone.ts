@@ -30,6 +30,18 @@ export function normalizeMxPhone(raw: string): string {
 }
 
 /**
+ * Validates the OUTPUT of normalizeMxPhone. normalizeMxPhone never fails: "abc"
+ * becomes "+" — and since patients.phone is UNIQUE, every malformed input would
+ * land on (and rename) the same patient row. Accepts E.164 (8–15 digits) and,
+ * for Mexico, exactly +52 + 10 digits. Foreign numbers are kept as typed.
+ */
+export function isValidNormalizedPhone(canonical: string): boolean {
+  if (!/^\+[1-9]\d{7,14}$/.test(canonical)) return false;
+  if (canonical.startsWith("+52") && canonical.length !== 13) return false;
+  return true;
+}
+
+/**
  * Returns the set of E.164 strings to look up when checking whether a phone
  * is already on file. Always includes the canonical `+52XXXXXXXXXX` form and,
  * when applicable, the `+521XXXXXXXXXX` legacy form.
