@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:edge": "npx -y deno test --no-lock --node-modules-dir=none --allow-read --allow-env supabase/tests/"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
