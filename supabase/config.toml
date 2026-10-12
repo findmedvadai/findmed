@@ -79,3 +79,7 @@ verify_jwt = false
 # MCP for the WHAAPY agent. Auth: FINDMED_MCP_TOKEN bearer checked in code (not a JWT).
 [functions.findmed-mcp]
 verify_jwt = false
+
+# Webhooks from WHAAPY. Auth: HMAC signature with WHAAPY_WEBHOOK_SECRET (not a JWT).
+[functions.whaapy-inbound]
+verify_jwt = false
