@@ -17,16 +17,7 @@ import {
   type OfficeRow,
 } from "../_shared/office-resolver.ts";
 import { getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    return JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-  } catch {
-    return null;
-  }
-}
+import { verifyJwtClaims } from "../_shared/auth.ts";
 
 function toUtcIso(raw: string): string {
   const trimmed = raw.replace(/\.\d+$/, "");
@@ -110,7 +101,7 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return jsonResponse({ error: "No autorizado" }, 401);
     const token = authHeader.replace("Bearer ", "");
-    const payload = decodeJwtPayload(token);
+    const payload = await verifyJwtClaims(token);
     if (!payload?.sub || !payload?.exp || (payload.exp as number) < Math.floor(Date.now() / 1000)) {
       return jsonResponse({ error: "Token inválido" }, 401);
     }

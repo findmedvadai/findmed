@@ -3,16 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { resolveOfficeForCaller, parseTargetParams } from "../_shared/office-resolver.ts";
 import { getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    return JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-  } catch {
-    return null;
-  }
-}
+import { verifyJwtClaims } from "../_shared/auth.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -28,7 +19,7 @@ serve(async (req) => {
       return jsonResponse({ error: "No autorizado" }, 401);
     }
     const token = authHeader.replace("Bearer ", "");
-    const payload = decodeJwtPayload(token);
+    const payload = await verifyJwtClaims(token);
     if (!payload?.sub || !payload?.exp || (payload.exp as number) < Math.floor(Date.now() / 1000)) {
       return jsonResponse({ error: "Token inválido" }, 401);
     }

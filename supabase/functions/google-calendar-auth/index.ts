@@ -1,22 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleCalendarRedirectUri } from "../_shared/oauth-redirect.ts";
+import { verifyJwtClaims } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    return JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-  } catch {
-    return null;
-  }
-}
 
 // State format: `${doctor_id}:${office_id}` plus an optional URL-safe base64
 // origin tail (`:b64(origin)`). The origin is the frontend URL that initiated
@@ -51,7 +42,7 @@ serve(async (req) => {
     }
 
     const token = authHeader.replace("Bearer ", "");
-    const payload = decodeJwtPayload(token);
+    const payload = await verifyJwtClaims(token);
     if (!payload?.sub || !payload?.exp) {
       return new Response(JSON.stringify({ error: "Token inválido" }), {
         status: 401,
