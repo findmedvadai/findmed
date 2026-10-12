@@ -25,6 +25,7 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | P-005 | `seed-admin` eliminada en producción responde 404 | IR | passed | `curl` 12-oct |
 | P-006 | `dispatch-webhook` (versión vieja en prod) acepta llamadas anónimas | IR | passed (confirma el defecto) | evento falso sin suscriptores → 200 |
 | P-007 | Vault `service_role_key` = key legacy filtrada | IR | passed (confirma N01) | comparación de hashes, sin imprimir valores |
+| P-008 | Sondeos sin credenciales tras deploy completo: dispatch-webhook, generate-manage-link, confirm-appointment, send-day-of-reminders, auto-complete, update-appointment-status, google/outlook con JWT falso, findmed-mcp, whaapy-inbound → 401; reserve-slots → 200 vacío; seed-admin → 404 | IR | passed | 12-oct 23:10 UTC |
 
 > P-001–P-004 versionados en `supabase/tests/shared-helpers_test.ts`. Correr todo con `npm run test:edge` (6 tests, 8 pasos, passed el 12-oct).
 
@@ -60,14 +61,14 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R26 | Paciente con varias citas: elección explícita de appointment_id | U+IR | B4, B5 | — | U passed (`appointment-actions_test.ts`); IR not_run |
 | R27 | Cancelar/reagendar desde paciente, doctor, staff y botón: misma transición | IR | B4, B7 | — | not_run |
 | R28 | Cita ajena, identidad sustituida o botón reenviado → denegado | U+IR | B4, B5 | — | U passed (otra cita/otro teléfono = not_found); botón reenviado pendiente de B7 |
-| R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | U passed (`findmed-mcp_test.ts`); IR blocked |
-| R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | U passed (401 sin token, token erróneo y secret ausente); timeout por revisar en IR |
+| R29 | Protocolo MCP (initialize/list/call, 202, errores JSON-RPC, additionalProperties) | U+IR | B5 | cliente WHAAPY para la parte IR | U passed; IR parcial passed en prod 12-oct (initialize, tools/list, search_care_options con CDMX/Qro/acentos); falta "Probar conexión" desde WHAAPY |
+| R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | U passed; IR passed (401 en prod sin token) |
 | R31 | Handoff con agente disponible: caso, asignación, pausa, sin doble respuesta | IR+OP | B6 | número de prueba | blocked |
 | R32 | Handoff sin personal o error del proveedor → `awaiting_assignment` | IS+IR | B6 | — | not_run |
 | R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | not_run |
 | R34 | 429/5xx, respuesta perdida, reinicio del worker | IS | B7 | — | not_run |
 | R35 | Recordatorio vs confirmación vs autocancelación en carrera | U+IR | B7 | migración | U passed (guarda de estado previo en confirm/cancel); IR not_run |
-| R36 | Firma inválida o evento repetido rechazado (WHAAPY firma JSON re-serializado, N20) | U+IR | B7 | webhook de prueba | U passed (`whaapy-inbound_test.ts`); IR not_run |
+| R36 | Firma inválida o evento repetido rechazado (WHAAPY firma JSON re-serializado, N20) | U+IR | B7 | webhook de prueba | U passed; IR passed en prod (sin firma 401, firmado 200, repetido = duplicado); falta primer evento real de WHAAPY (N26) |
 | R37 | Postconsulta y envío de informe con recorrido definido | OP | B7 | decisión EV06/EV07 | blocked |
 | R38 | Corte de agente y eventos en momentos distintos: un solo dueño | OP | B10 | — | not_run |
 | R39 | Reversión con operaciones en vuelo | OP | B10 | — | not_run |

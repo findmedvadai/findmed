@@ -4,7 +4,7 @@
 > y los hallazgos del bloque en curso; no depender de un resumen de conversación.
 
 **Rama**: `feat/whaapy-mcp-migration` (desde `main` = `9ed5aa5`).
-**Último bloque cerrado**: B4 parte 2 — `operation_requests` + prepare/commit/estado en el MCP (12-oct-2026).
+**Último bloque cerrado**: Despliegue a producción del 12-oct (migraciones hasta `20261013120000`, 44 funciones, secrets, webhook WHAAPY) + `whaapy-inbound` fase 1.
 **Bloque en curso**: B6 — casos y canalización humana; en paralelo, conexión de la API de WHAAPY (B7/B7b) cuando esté `WHAAPY_API_KEY`.
 
 ## Siguiente acción concreta
@@ -39,6 +39,7 @@
 | 12-oct | B2-bis | Exclusión por doctor (D2), 23P01→409 en 6 funciones, URL de crons en Vault | `bf5b437`, pruebas PGlite |
 | 12-oct | B1 | `_shared/care-search.ts`, alias de ciudad, none/one/many, validación de teléfono | `7ffe2f6`, `da12774` |
 | 12-oct | B4 (parte 1) | `appointment-actions`, `calendar-sync`, `events`, `day-slots`, `booking-session` | `23562f1`, `70fa716`, `8849952` |
+| 12-oct | Deploy prod | 4 migraciones, 44 funciones, `FINDMED_MCP_TOKEN` y `WHAAPY_WEBHOOK_SECRET`, sondeos 401 OK | P-008, R29/R30/R36 IR |
 | 12-oct | B4 (parte 2) | `operation_requests` (migración `20261013100000`), `_shared/operations.ts`, tools prepare/commit/estado; commit por chat detrás de flag | ver commit de B4-2 |
 | 12-oct | B5 (fase lectura) | `findmed-mcp` con 4 tools + guía WHAAPY | ver commit de B5 |
 | 12-oct | B0 | Lectura completa del plan (1,407 líneas) y del export (117 nodos); diagnóstico, D1–D4, A1–A9, cobertura, inventario de nodos, suite de pruebas | archivos de `docs/findmed-migration/` |

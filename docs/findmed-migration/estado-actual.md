@@ -29,10 +29,12 @@ Fecha de revisión: 12-oct-2026. Sin secretos ni datos de pacientes.
 | Componente | En `main` | En producción |
 |---|---|---|
 | Frontend | `9ed5aa5` (incluye Gestionar con office_id y CSPRNG en API keys/secrets) | Vercel despliega desde `main` (no verificado en esta sesión). |
-| Edge Functions | Rama `feat/whaapy-mcp-migration` | Mixto (N25): 7 funciones del 12-oct, el resto del 1-jul; `findmed-mcp` y `whaapy-inbound` nunca desplegadas; `seed-admin` eliminada. |
-| Migraciones | hasta `20261013110000` | hasta `20261012120000` (versión original: exclusión por consultorio). Pendientes: `20261013000000`, `20261013100000`, `20261013110000`. |
+| Edge Functions | Rama `feat/whaapy-mcp-migration` | **44 funciones desplegadas desde la rama** (12-oct ~23:08 UTC), incluidas `findmed-mcp` y `whaapy-inbound`; `seed-admin` eliminada. |
+| Migraciones | hasta `20261013120000` | **hasta `20261013120000`** (12-oct): exclusión por doctor, URL de crons en Vault, `operation_requests`, `whaapy_events`, purga a 12 meses. |
 | Cron jobs | `20261012120000` + `20261013000000` (URL en Vault) | 4 jobs vía `invoke_edge_function` (URL literal); 27×200 en 3 h (12-oct 22:45 UTC). |
-| Vault | — | `service_role_key` = key legacy filtrada (N01). |
+| Vault | — | `service_role_key` = key legacy filtrada (N01); `edge_functions_base_url`. |
+| Secrets de funciones | — | `FINDMED_MCP_TOKEN`, `WHAAPY_WEBHOOK_SECRET` (12-oct) + los previos. |
+| WHAAPY | — | Webhook "FindMed - Plataforma VADAI" → `whaapy-inbound` (10 eventos, incluye `message.received`); webhook de n8n sigue activo. |
 
 ## Bloqueos de entorno
 
