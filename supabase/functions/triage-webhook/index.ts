@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeMxPhone, mxPhoneLookupVariants } from "../_shared/phone.ts";
+import { generateSecureToken } from "../_shared/manage-token.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,12 +12,7 @@ const corsHeaders = {
 // distinct from the patient-facing /gestionar manage token (which lives in
 // _shared/manage-token.ts and writes to a different table).
 function generateSessionToken(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let token = "";
-  for (let i = 0; i < 32; i++) {
-    token += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return token;
+  return generateSecureToken();
 }
 
 Deno.serve(async (req) => {

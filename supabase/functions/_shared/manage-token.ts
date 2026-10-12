@@ -11,12 +11,25 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 const TOKEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
 const TOKEN_LENGTH = 32;
 
-export function generateManageToken(): string {
+// Cryptographically secure token over TOKEN_ALPHABET. Math.random is not a
+// CSPRNG (its state can be recovered from outputs), so tokens that grant
+// access to a patient's appointment must use crypto.getRandomValues. Bytes
+// >= the largest multiple of the alphabet size are rejected to avoid modulo bias.
+export function generateSecureToken(alphabet = TOKEN_ALPHABET, length = TOKEN_LENGTH): string {
+  const limit = 256 - (256 % alphabet.length);
   let token = "";
-  for (let i = 0; i < TOKEN_LENGTH; i++) {
-    token += TOKEN_ALPHABET[Math.floor(Math.random() * TOKEN_ALPHABET.length)];
+  while (token.length < length) {
+    const bytes = crypto.getRandomValues(new Uint8Array(length * 2));
+    for (const b of bytes) {
+      if (b < limit) token += alphabet[b % alphabet.length];
+      if (token.length === length) break;
+    }
   }
   return token;
+}
+
+export function generateManageToken(): string {
+  return generateSecureToken();
 }
 
 interface CreateManageTokenInput {

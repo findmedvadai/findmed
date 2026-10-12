@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Trash2, Copy, Webhook, Info, Pencil, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
 import PasswordGate from "@/components/admin/PasswordGate";
+import { secureRandomString } from "@/lib/secure-random";
 
 const EVENT_GROUPS = [
   {
@@ -300,9 +301,7 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
 
 function generateSecret(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let s = "";
-  for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
+  return secureRandomString(chars, 32);
 }
 
 export default function Webhooks() {

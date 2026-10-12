@@ -30,12 +30,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Trash2, Copy, Key } from "lucide-react";
 import PasswordGate from "@/components/admin/PasswordGate";
+import { secureRandomString } from "@/lib/secure-random";
 
 function generateApiKey(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789";
-  let key = "fm_";
-  for (let i = 0; i < 40; i++) key += chars[Math.floor(Math.random() * chars.length)];
-  return key;
+  return "fm_" + secureRandomString(chars, 40);
 }
 
 async function hashKey(key: string): Promise<string> {
