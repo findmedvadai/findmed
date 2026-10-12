@@ -27,7 +27,7 @@ function serviceKeys(): string[] {
 }
 
 // Constant-time string comparison so the key can't be guessed byte by byte.
-function timingSafeEqual(a: string, b: string): boolean {
+export function timingSafeEqual(a: string, b: string): boolean {
   const enc = new TextEncoder();
   const aBytes = enc.encode(a);
   const bBytes = enc.encode(b);

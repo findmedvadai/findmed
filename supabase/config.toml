@@ -75,3 +75,7 @@ verify_jwt = false
 # Auth in code: fm_ API key or service key (not a JWT, so the gateway check must be off).
 [functions.update-appointment-status]
 verify_jwt = false
+
+# MCP for the WHAAPY agent. Auth: FINDMED_MCP_TOKEN bearer checked in code (not a JWT).
+[functions.findmed-mcp]
+verify_jwt = false
