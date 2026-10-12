@@ -90,11 +90,10 @@ Deno.serve(async (req) => {
   // Office: duration, calendar config.
   const { data: office } = await supabase
     .from("doctor_offices")
+    // Single string literal (not concatenated) so supabase-js can infer the row
+    // type; a concatenated select degrades `office` to GenericStringError.
     .select(
-      "id, doctor_id, appointment_duration_minutes, " +
-        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, " +
-        "is_active, is_deleted"
+      "id, doctor_id, appointment_duration_minutes, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, is_active, is_deleted"
     )
     .eq("id", office_id)
     .maybeSingle();
@@ -173,11 +172,12 @@ Deno.serve(async (req) => {
   const dayStartIso = new Date(dayStartMs).toISOString();
   const dayEndIso = new Date(dayEndMs).toISOString();
 
-  // Existing appointments for this office that overlap this CDMX day.
+  // Existing appointments of this DOCTOR (any office) that overlap this CDMX
+  // day: a doctor can't be in two offices at once (decision D2).
   const { data: existingAppts } = await supabase
     .from("appointments")
     .select("start_at, end_at")
-    .eq("office_id", office_id)
+    .eq("doctor_id", office.doctor_id)
     .in("status", ["scheduled", "confirmed"])
     .lt("start_at", dayEndIso)
     .gt("end_at", dayStartIso);

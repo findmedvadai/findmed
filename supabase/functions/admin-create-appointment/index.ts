@@ -186,6 +186,13 @@ Deno.serve(async (req) => {
     .select("id")
     .single();
 
+  // 23P01 = appointments_no_overlap_per_doctor (exclusion constraint): a
+  // concurrent booking took the slot between validation and write. Same
+  // contract as the pre-check above so the UI shows the conflict dialog.
+  if (apptErr?.code === "23P01") {
+    return jsonResponse({ error: "slot_conflict", conflicts: [] }, 409);
+  }
+
   if (apptErr || !appointment) {
     console.error("[admin-create-appointment] appointment insert failed:", apptErr);
     return jsonResponse({ error: "No se pudo crear la cita", details: apptErr?.message }, 500);

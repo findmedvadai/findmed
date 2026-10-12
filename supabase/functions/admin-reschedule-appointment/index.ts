@@ -106,6 +106,13 @@ Deno.serve(async (req) => {
     .update({ start_at, end_at })
     .eq("id", appointment_id);
 
+  // 23P01 = appointments_no_overlap_per_doctor (exclusion constraint): a
+  // concurrent booking took the slot between validation and write. Same
+  // contract as the pre-check above so the UI shows the conflict dialog.
+  if (updateErr?.code === "23P01") {
+    return jsonResponse({ error: "slot_conflict", conflicts: [] }, 409);
+  }
+
   if (updateErr) {
     return jsonResponse({ error: "No se pudo reagendar la cita", details: updateErr.message }, 500);
   }

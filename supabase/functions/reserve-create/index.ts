@@ -196,7 +196,7 @@ Deno.serve(async (req) => {
   if (apptError || !appointment) {
     // Release the claim so the patient can retry with another slot.
     await supabase.from("reservation_sessions").update({ used_at: null }).eq("id", session.id);
-    // 23P01 = exclusion constraint (appointments_no_overlap_per_office): lost
+    // 23P01 = exclusion constraint (appointments_no_overlap_per_doctor): lost
     // the race against a concurrent booking. Don't leak DB details publicly.
     if (apptError?.code === "23P01") return json(409, { error: SLOT_TAKEN });
     console.error("[reserve-create] insert failed:", apptError);

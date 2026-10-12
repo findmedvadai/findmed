@@ -34,11 +34,9 @@ interface ValidateSlotInput {
   supabase: SupabaseClient;
   doctorId: string;
   /**
-   * Office to validate against. When provided we conflict-check ONLY against
-   * that office's appointments and external calendars. When omitted we fall
-   * back to the doctor-wide check (kept for backward compat with paths that
-   * haven't been migrated to multi-office yet — should be removed once they
-   * all pass office_id).
+   * Office whose external calendar (Google/Outlook) is checked. Internal
+   * appointment conflicts are always checked doctor-wide (D2). When omitted
+   * the legacy doctors-row calendar is used (backward compat).
    */
   officeId?: string;
   startAt: string; // ISO 8601 with offset, e.g. "2026-04-27T08:00:00-06:00" or with Z
@@ -60,10 +58,10 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
 
   const conflicts: SlotConflict[] = [];
 
-  // 1. Internal appointments. Scope to the office when provided — different
-  // offices of the same doctor can have overlapping appointments only because
-  // of human error elsewhere; we still want to allow concurrent slots in
-  // different offices (different physical locations).
+  // 1. Internal appointments, scoped to the DOCTOR across all their offices:
+  // a doctor can't be in two places at once (decision D2, 2026-10-12; enforced
+  // in the DB by the appointments_no_overlap_per_doctor exclusion constraint).
+  // officeId only selects which external calendar to check below.
   let q = supabase
     .from("appointments")
     .select("id, start_at, end_at, status, office_id")
@@ -71,7 +69,6 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
     .in("status", ["scheduled", "confirmed", "completed"])
     .lt("start_at", new Date(endMs).toISOString())
     .gt("end_at", new Date(startMs).toISOString());
-  if (officeId) q = q.eq("office_id", officeId);
   if (excludeAppointmentId) q = q.neq("id", excludeAppointmentId);
 
   const { data: overlaps } = await q;
