@@ -32,8 +32,8 @@ Fecha de revisión: 12-oct-2026. Sin secretos ni datos de pacientes.
 | Edge Functions | Rama `feat/whaapy-mcp-migration` | **44 funciones desplegadas desde la rama** (12-oct ~23:08 UTC), incluidas `findmed-mcp` y `whaapy-inbound`; `seed-admin` eliminada. |
 | Migraciones | hasta `20261013120000` | **hasta `20261013120000`** (12-oct): exclusión por doctor, URL de crons en Vault, `operation_requests`, `whaapy_events`, purga a 12 meses. |
 | Cron jobs | `20261012120000` + `20261013000000` (URL en Vault) | 4 jobs vía `invoke_edge_function` (URL literal); 27×200 en 3 h (12-oct 22:45 UTC). |
-| Vault | — | `service_role_key` = key legacy filtrada (N01); `edge_functions_base_url`. |
-| Secrets de funciones | — | `FINDMED_MCP_TOKEN`, `WHAAPY_WEBHOOK_SECRET` (12-oct) + los previos. |
+| Vault | — | `service_role_key` = **`FINDMED_CRON_SECRET`** desde 12-oct 23:17 (la llave legacy filtrada ya no está en Vault); `edge_functions_base_url`. |
+| Secrets de funciones | — | `FINDMED_MCP_TOKEN`, `WHAAPY_WEBHOOK_SECRET`, `FINDMED_CRON_SECRET` (12-oct) + los previos. |
 | WHAAPY | — | Webhook "FindMed - Plataforma VADAI" → `whaapy-inbound` (10 eventos, incluye `message.received`); webhook de n8n sigue activo. |
 
 ## Bloqueos de entorno

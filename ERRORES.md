@@ -602,3 +602,16 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** Restaurar `20261012120000` byte a byte a la versión aplicada (commit original) y mover D2 + URL en Vault a una migración nueva `20261013000000`, probada en PGlite reproduciendo el orden real (por consultorio → por doctor; crons en prod siguen llamando al mismo proyecto, en ambientes nuevos quedan inertes).
 
 **Lección aprendida:** Una migración commiteada se considera aplicada en algún ambiente: nunca se edita, se agrega otra. Antes de tocar migraciones, consultar `schema_migrations` del ambiente real (`bash scripts/sb.sh db query "select max(version) from supabase_migrations.schema_migrations"`).
+---
+
+## 2026-10-12 — Crons en 401 tras desplegar la guarda de service key
+
+**Categoría:** deploy / backend
+
+**Síntoma:** Tras el despliegue completo (~23:08 UTC), la corrida de pg_cron de las 23:15 (auto-cancel y auto-complete) recibió `401 {"error":"Unauthorized"}` de la propia guarda (`isServiceRequest`), no del gateway.
+
+**Causa raíz:** La guarda compara el Bearer contra `SUPABASE_SERVICE_ROLE_KEY` del runtime de las Edge Functions. El cron manda el valor de Vault `service_role_key`, que se había comparado contra la llave que muestra el dashboard/API, **no** contra el env del runtime: no son el mismo valor. Además, la `sb_secret_` obtenida por API venía enmascarada (inservible como credencial: "Invalid API key"). Las pruebas unitarias simulaban el env, así que no podían detectarlo; faltó una prueba real con la credencial del cron antes de desplegar la guarda.
+
+**Solución aplicada:** Credencial dedicada `FINDMED_CRON_SECRET` (secret de funciones + valor de Vault `service_role_key`, aceptada por `isServiceRequest`), `verify_jwt = false` en los 4 crons (validan en código). Verificado con llamada directa (200) antes de cambiar Vault. Efecto colateral bueno: la llave legacy filtrada ya no vive en Vault y los crons no dependen de la rotación de llaves de Supabase.
+
+**Lección aprendida:** Toda guarda nueva sobre un caller automático (cron, webhook) se prueba en el ambiente real con la credencial exacta que ese caller enviará, antes de desplegarla. No asumir que "la service key" del dashboard es igual al env del runtime. Las llaves que una API lista suelen venir enmascaradas.
