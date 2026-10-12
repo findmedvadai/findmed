@@ -32,6 +32,9 @@ const STATUS_LABELS: Record<string, string> = {
 interface AppointmentData {
   appointment_id: string;
   doctor_id: string;
+  office_id: string | null;
+  office_name: string | null;
+  office_address: string | null;
   doctor_name: string;
   doctor_address: string | null;
   patient_name: string;
@@ -93,7 +96,14 @@ export default function Gestionar() {
     fetch(`${SUPABASE_URL}/functions/v1/reserve-slots`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
-      body: JSON.stringify({ doctor_id: appointment.doctor_id, date: dateStr }),
+      // Slots must come from the appointment's own office: manage-reschedule
+      // keeps the office, and a doctor with several offices has different
+      // hours in each. Sending only doctor_id resolved to the oldest office.
+      body: JSON.stringify(
+        appointment.office_id
+          ? { office_id: appointment.office_id, date: dateStr }
+          : { doctor_id: appointment.doctor_id, date: dateStr }
+      ),
     })
       .then((res) => res.json())
       .then((data) => setSlots(data.slots || []))
@@ -190,6 +200,13 @@ export default function Gestionar() {
 
   if (!appointment) return null;
 
+  // Mirrors manage-reschedule: completed consultations and past appointments
+  // can't be rescheduled; cancelled ones can (the page invites it).
+  const isCancelled = cancelled || appointment.status === "cancelled";
+  const canReschedule =
+    appointment.status !== "completed" &&
+    (isCancelled || new Date(appointment.start_at).getTime() > Date.now());
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -211,10 +228,18 @@ export default function Gestionar() {
                 <span className="font-medium text-muted-foreground">Doctor:</span>{" "}
                 <span className="text-foreground">{appointment.doctor_name}</span>
               </div>
-              {appointment.doctor_address && (
+              {appointment.office_name && (
+                <div>
+                  <span className="font-medium text-muted-foreground">Consultorio:</span>{" "}
+                  <span className="text-foreground">{appointment.office_name}</span>
+                </div>
+              )}
+              {(appointment.office_address || appointment.doctor_address) && (
                 <div>
                   <span className="font-medium text-muted-foreground">Dirección:</span>{" "}
-                  <span className="text-foreground">{appointment.doctor_address}</span>
+                  <span className="text-foreground">
+                    {appointment.office_address ?? appointment.doctor_address}
+                  </span>
                 </div>
               )}
               <div>
@@ -292,15 +317,18 @@ export default function Gestionar() {
                 </>
               )}
 
-              {/* Reschedule button — always visible */}
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => setShowReschedule(!showReschedule)}
-              >
-                <CalendarDays className="h-4 w-4 mr-2" />
-                Reagendar cita
-              </Button>
+              {/* Reschedule — not for completed consultations or appointments
+                  whose time already passed (manage-reschedule rejects those). */}
+              {canReschedule && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShowReschedule(!showReschedule)}
+                >
+                  <CalendarDays className="h-4 w-4 mr-2" />
+                  Reagendar cita
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
