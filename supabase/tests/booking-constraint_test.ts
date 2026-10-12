@@ -1,7 +1,9 @@
 // R18 / R25: the appointments exclusion constraint (decision D2).
 //
-// Runs the REAL "Integrity" section of the migration (read from disk, not
-// copied) against an in-process Postgres (PGlite + btree_gist), on a minimal
+// Replays the REAL migration SQL (read from disk, not copied) in production
+// order against an in-process Postgres (PGlite + btree_gist): the integrity
+// section of 20261012120000 (per-office constraint, already applied in prod)
+// and then the [D2] section of 20261013000000 (per-doctor). Minimal
 // appointments table with the same column types. No Docker, no network.
 //
 // Limitation: PGlite is single-connection, so this proves the constraint's
@@ -14,13 +16,17 @@ import { PGlite } from "npm:@electric-sql/pglite@0.3.15";
 import { btree_gist } from "npm:@electric-sql/pglite@0.3.15/contrib/btree_gist";
 import { assertEquals, assertRejects } from "jsr:@std/assert@1";
 
-const migration = await Deno.readTextFile(
+const applied = await Deno.readTextFile(
   new URL("../migrations/20261012120000_booking_integrity_and_cron.sql", import.meta.url),
 );
-const integrity = migration.slice(
-  migration.indexOf("CREATE EXTENSION IF NOT EXISTS btree_gist"),
-  migration.indexOf("-- 2. Cron idempotency"),
+const followUp = await Deno.readTextFile(
+  new URL("../migrations/20261013000000_doctor_overlap_and_cron_vault_url.sql", import.meta.url),
 );
+const integrity = applied.slice(
+  applied.indexOf("CREATE EXTENSION IF NOT EXISTS btree_gist"),
+  applied.indexOf("-- 2. Cron idempotency"),
+);
+const d2 = followUp.slice(followUp.indexOf("-- [D2] ----"), followUp.indexOf("-- [/D2]"));
 
 const SCHEMA = `
   CREATE TYPE appointment_status AS ENUM ('scheduled','confirmed','cancelled','completed');
@@ -47,9 +53,10 @@ async function rejectsWith(db: PGlite, sql: string, code: string) {
 
 Deno.test("pre-check aborts the migration when a doctor already has overlapping live appointments", async () => {
   const db = await freshDb();
+  await db.exec(integrity); // per-office rule (prod today) allows this pair:
   await db.exec(ins(1, 1, "10:00", "10:30"));
   await db.exec(ins(1, 2, "10:15", "10:45")); // same doctor, other office
-  const err = await assertRejects(() => db.exec(integrity)) as Error;
+  const err = await assertRejects(() => db.exec(d2)) as Error;
   assertEquals(String(err.message).includes("appointments_no_overlap_per_doctor"), true);
   await db.close();
 });
@@ -59,6 +66,7 @@ Deno.test("constraint semantics (R18, R25)", async (t) => {
   await db.exec(ins(9, 9, "08:00", "08:30", "cancelled"));
   await db.exec(ins(9, 9, "08:00", "08:30", "completed")); // inactive rows don't block the migration
   await db.exec(integrity);
+  await db.exec(d2);
   await db.exec(ins(1, 1, "10:00", "10:30"));
 
   await t.step("R25: same doctor, other office, overlapping → 23P01", () =>
