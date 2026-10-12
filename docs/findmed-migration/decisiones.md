@@ -13,6 +13,7 @@ Cada decisión registra: quién decide, evidencia, alternativas, desventajas que
 | D6 | Se atiende en **todas las ciudades del catálogo** `cities`, no solo CDMX y Querétaro. | El prompt nuevo no restringe ciudades; la cobertura la decide `search_care_options` sobre el catálogo. R07 deja de estar bloqueada. |
 | D7 | Urgencias: se puede avanzar (Alex, 12-oct). **Interpretación**: se reutiliza como base la sección SEGURIDAD del prompt FINDI vigente (señales, mensajes sin emojis, handoff inmediato). | B8 usa ese texto; queda marcado para confirmación final de FindMed antes de producción. |
 | D8 | FindMed debe operar todo desde su propia plataforma: plantillas de WhatsApp, cuándo y a quién se envían, y su estado, sin entrar a WHAAPY ni a otras herramientas. | Nuevo requisito X13 y bloque B7b (centro de mensajería en el admin, alimentado por la API de WHAAPY). |
+| D9 | FindMed recibe también `message.received` (y eventos de conversación) desde ya, en paralelo a n8n (Alex, 12-oct). | `whaapy-inbound` solo guarda en `whaapy_events` y no responde al paciente: n8n sigue siendo el único respondedor hasta el corte (R38). Base para ver conversaciones en FindMed (D8) y para los botones (A6). Pendiente: política de retención (propuesta 12 meses). |
 | D4 | n8n desaparecerá por completo del flujo. | Ningún componente nuevo depende de n8n ni de API keys `fm_` para el agente. Las funciones de n8n que no llama el export (`generate-manage-link`, `confirm-appointment`) pueden desplegarse cerradas. |
 
 ## Decisiones técnicas
