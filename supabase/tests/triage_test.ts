@@ -136,6 +136,7 @@ Deno.test("triage migration: columns, GIN overlap query, semaforo check, map see
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
     CREATE FUNCTION public.is_admin_or_superadmin(_user_id uuid) RETURNS boolean LANGUAGE sql AS 'SELECT false';`);
   await db.exec(sql);
+  await db.exec(await Deno.readTextFile(new URL("../migrations/20261013170000_triage_catalog_v2.sql", import.meta.url)));
   await db.exec(`INSERT INTO triage_findmed (especialidad, semaforo, keywords) VALUES ('Ortopedia', 'AMARILLO', ARRAY['rodilla','dolor'])`);
   const hit = await db.query<{ especialidad: string }>(`SELECT especialidad FROM triage_findmed WHERE keywords && ARRAY['rodilla']`);
   assertEquals(hit.rows[0].especialidad, "Ortopedia");
