@@ -42,6 +42,8 @@ function fakeWhaapy(over: Partial<WhaapyClient> = {}) {
       return Promise.resolve(ok({}));
     },
     sendMessage: () => Promise.resolve(ok({ message_id: "m1", wamid: null })),
+    listTemplates: () => Promise.resolve({ ok: true, status: 200, data: [] }),
+    syncTemplates: () => Promise.resolve({ ok: true, status: 200, data: {} }),
     ...over,
   };
   return { client, calls };

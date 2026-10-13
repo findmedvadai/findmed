@@ -1,5 +1,5 @@
 // Minimal in-memory stand-in for the supabase-js query builder, covering only
-// what the shared domain modules use: from/select/insert/update, filters
+// what the shared domain modules use: from/select/insert/update/delete, filters
 // eq/neq/in/gt/lt/is/ilike, order/limit, single/maybeSingle, and awaiting a
 // builder directly. Column lists and embeds in select() are ignored (rows are
 // returned whole). Good enough to test control flow and guards; it does NOT
@@ -36,7 +36,7 @@ export class FakeDb {
 
 class Query implements PromiseLike<{ data: unknown; error: null }> {
   private filters: Filter[] = [];
-  private op: "select" | "insert" | "update" | "upsert" = "select";
+  private op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
   private conflictCol: string | null = null;
   private payload: Row | Row[] | null = null;
   private orderBy: { col: string; asc: boolean } | null = null;
@@ -63,6 +63,10 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   update(values: Row) {
     this.op = "update";
     this.payload = values;
+    return this;
+  }
+  delete() {
+    this.op = "delete";
     return this;
   }
   eq(col: string, v: unknown) {
@@ -127,6 +131,7 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       if (this.op === "update") this.db.beforeUpdate?.(this.table);
       affected = all.filter((r) => this.filters.every((f) => f(r)));
       if (this.op === "update") for (const r of affected) Object.assign(r, this.payload);
+      if (this.op === "delete") this.db.tables[this.table] = all.filter((r) => !affected.includes(r));
     }
     let out = affected.map((r) => ({ ...r }));
     if (this.orderBy) {

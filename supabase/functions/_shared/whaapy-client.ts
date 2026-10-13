@@ -1,9 +1,11 @@
-// Minimal WHAAPY REST client for the conversation operations FindMed owns
-// (handoff, AI pause/resume, agent assignment, tag projection). Docs:
+// Minimal WHAAPY REST client for what FindMed owns: handoff (AI pause/resume,
+// agent assignment, tag projection) and transactional messaging. Docs:
 //   GET   /conversations/v1/by-phone/:phone   → conversation + contact
 //   PATCH /conversations/v1/:id/ai            { aiEnabled }  (until changed again)
 //   GET   /team/v1                            → agents (id, email, is_available)
 //   PATCH /contacts/v1/:id                    { assigned_agent_id | null, add_tags }
+//   POST  /messages/v1                        template or text message
+//   GET   /templates/v1, POST /templates/v1/sync
 //
 // Every call returns a result object (never throws), with a per-call timeout
 // so a slow provider can't eat the MCP tool budget (15 s). Errors carry the
@@ -40,6 +42,10 @@ export interface WhaapyClient {
   ): Promise<WhaapyResult<unknown>>;
   /** POST /messages/v1 with any body (template or text). Returns WHAAPY's ids. */
   sendMessage(body: Record<string, unknown>): Promise<WhaapyResult<WhaapySent>>;
+  /** GET /templates/v1 (raw WHAAPY objects; messaging-admin normalizes them). */
+  listTemplates(): Promise<WhaapyResult<Record<string, unknown>[]>>;
+  /** POST /templates/v1/sync — pulls changes made in Meta right away. */
+  syncTemplates(): Promise<WhaapyResult<unknown>>;
 }
 
 export interface WhaapySent {
@@ -134,6 +140,16 @@ export function createWhaapyClient(
       if (!r.ok) return r;
       const m = r.data?.messages?.[0];
       return { ok: true, status: r.status, data: { message_id: r.data?.data?.id ?? m?.id ?? null, wamid: m?.wamid ?? null } };
+    },
+
+    async listTemplates() {
+      const r = await call<{ data?: Record<string, unknown>[] }>("GET", "/templates/v1");
+      if (!r.ok) return r;
+      return { ok: true, status: r.status, data: r.data?.data ?? [] };
+    },
+
+    syncTemplates() {
+      return call("POST", "/templates/v1/sync");
     },
   };
 }

@@ -86,6 +86,8 @@ function scriptedWhaapy(script: WhaapyResult<WhaapySent>[] = []) {
     setAiEnabled: () => Promise.resolve({ ok: true, status: 200, data: {} }),
     listAgents: () => Promise.resolve({ ok: true, status: 200, data: [] }),
     updateContact: () => Promise.resolve({ ok: true, status: 200, data: {} }),
+    listTemplates: () => Promise.resolve({ ok: true, status: 200, data: [] }),
+    syncTemplates: () => Promise.resolve({ ok: true, status: 200, data: {} }),
     sendMessage: (body) => {
       sent.push(body);
       const r = script[n++] ?? { ok: true, status: 200, data: { message_id: `msg-${n}`, wamid: `wamid-${n}` } };

@@ -88,6 +88,10 @@ verify_jwt = false
 [functions.case-actions]
 verify_jwt = false
 
+# Admin messaging center. Auth: admin JWT verified in code (requireAdmin).
+[functions.messaging-admin]
+verify_jwt = false
+
 # Messaging worker, called by pg_cron. Auth: FINDMED_CRON_SECRET / service key in code.
 [functions.findmed-events-worker]
 verify_jwt = false
