@@ -24,7 +24,7 @@ los llena la IA. Ver detalle en `../whaapy-mcp-config.md`.
 
 ## 3. Instrucciones del agente
 
-Pegar el bloque de `prompt-findi-v2.md` que está entre las dos líneas `=====` (v2.1).
+Pegar el contenido completo de `FINDI-prompt-v2.1.txt` (Ctrl+A, Ctrl+C).
 Motor recomendado: `colme-2` (herramientas, MCPs y handoff).
 
 ## 4. Automatizaciones de WHAAPY
