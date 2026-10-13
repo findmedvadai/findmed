@@ -2,6 +2,8 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyWhaapySignature } from "../_shared/whaapy-signature.ts";
+import { processAndMark } from "../_shared/whaapy-events.ts";
+import type { WhaapyClient } from "../_shared/whaapy-client.ts";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -24,7 +26,10 @@ interface WhaapyEnvelope {
   };
 }
 
-export async function handleWhaapyInbound(req: Request, deps: { supabase: SupabaseClient; secret: string }): Promise<Response> {
+export async function handleWhaapyInbound(
+  req: Request,
+  deps: { supabase: SupabaseClient; secret: string; whaapy?: WhaapyClient },
+): Promise<Response> {
   if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
   // Fail closed: without the secret nothing can be verified.
   if (!deps.secret) return json(503, { error: "not_configured" });
@@ -71,6 +76,13 @@ export async function handleWhaapyInbound(req: Request, deps: { supabase: Supaba
     return json(500, { error: "store_failed" });
   }
   const duplicate = !inserted || inserted.length === 0;
-  console.log(JSON.stringify({ event: "whaapy_inbound", type: event, duplicate }));
+  // Process right away (receipts, FindMed buttons). The event is already
+  // stored, so a processing failure is retried by findmed-events-worker.
+  let outcome: string | undefined;
+  if (!duplicate && deps.whaapy) {
+    const id = (inserted as { id: string }[])[0].id;
+    outcome = (await processAndMark(deps.supabase, deps.whaapy, { id, event_type: event, payload: body as never })).outcome;
+  }
+  console.log(JSON.stringify({ event: "whaapy_inbound", type: event, duplicate, outcome }));
   return json(200, { received: true, duplicate });
 }

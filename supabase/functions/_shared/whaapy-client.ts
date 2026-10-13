@@ -38,6 +38,13 @@ export interface WhaapyClient {
     contactId: string,
     patch: { assigned_agent_id?: string | null; add_tags?: string[] },
   ): Promise<WhaapyResult<unknown>>;
+  /** POST /messages/v1 with any body (template or text). Returns WHAAPY's ids. */
+  sendMessage(body: Record<string, unknown>): Promise<WhaapyResult<WhaapySent>>;
+}
+
+export interface WhaapySent {
+  message_id: string | null;
+  wamid: string | null;
 }
 
 const TIMEOUT_MS = 5000;
@@ -116,6 +123,17 @@ export function createWhaapyClient(
 
     updateContact(contactId, patch) {
       return call("PATCH", `/contacts/v1/${encodeURIComponent(contactId)}`, patch);
+    },
+
+    async sendMessage(body) {
+      const r = await call<{ data?: { id?: string }; messages?: { id?: string; wamid?: string }[] }>(
+        "POST",
+        "/messages/v1",
+        body,
+      );
+      if (!r.ok) return r;
+      const m = r.data?.messages?.[0];
+      return { ok: true, status: r.status, data: { message_id: r.data?.data?.id ?? m?.id ?? null, wamid: m?.wamid ?? null } };
     },
   };
 }

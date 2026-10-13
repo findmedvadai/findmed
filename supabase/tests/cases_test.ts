@@ -41,6 +41,7 @@ function fakeWhaapy(over: Partial<WhaapyClient> = {}) {
       calls.push(`contact ${id} ${JSON.stringify(patch)}`);
       return Promise.resolve(ok({}));
     },
+    sendMessage: () => Promise.resolve(ok({ message_id: "m1", wamid: null })),
     ...over,
   };
   return { client, calls };

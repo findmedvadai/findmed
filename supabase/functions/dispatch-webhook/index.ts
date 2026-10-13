@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isServiceRequest } from "../_shared/service-auth.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { enqueueEvent, routeOwner } from "../_shared/messaging.ts";
 
 // Events the browser may dispatch directly (post-consultation flows in
 // PorCompletar.tsx and SendReportModal.tsx). Everything else must come from
@@ -110,6 +111,26 @@ Deno.serve(async (req) => {
     const patient = (appt as { patients?: { full_name?: string; phone?: string } }).patients;
     payload.patient_name = patient?.full_name ?? null;
     payload.patient_phone = patient?.phone ?? null;
+  }
+
+  // --- Single owner per event type (B7, R38) ---
+  // message_routes decides who turns this event into WhatsApp messages:
+  // "n8n" (default) → the subscribed webhooks below, as always; "findmed" →
+  // durable outbox + findmed-events-worker, and the webhooks are NOT called
+  // (otherwise the patient would get the message twice); "none" → nothing.
+  const owner = await routeOwner(supabase, event_type);
+  if (owner === "findmed") {
+    const q = await enqueueEvent(supabase, event_type, payload);
+    return new Response(
+      JSON.stringify({ dispatched: 0, routed: "findmed", queued: q.ok, duplicate: q.duplicate }),
+      { status: q.ok ? 200 : 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  if (owner === "none") {
+    return new Response(
+      JSON.stringify({ dispatched: 0, routed: "none" }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   // Find active webhooks subscribed to this event

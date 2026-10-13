@@ -24,6 +24,14 @@ export class FakeDb {
   from(table: string) {
     return new Query(this, table);
   }
+
+  /** RPCs a test wants to emulate: name → handler(args) returning `data`. */
+  rpcHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {};
+
+  rpc(name: string, args: Record<string, unknown> = {}) {
+    const h = this.rpcHandlers[name];
+    return Promise.resolve(h ? { data: h(args), error: null } : { data: null, error: { message: `rpc ${name} not stubbed` } });
+  }
 }
 
 class Query implements PromiseLike<{ data: unknown; error: null }> {
