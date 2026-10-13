@@ -222,3 +222,31 @@ Deno.test("N28: replies are JSON even when the client also accepts text/event-st
   assertEquals(res.headers.get("Content-Type"), "application/json");
   assertEquals((await res.json()).result, {});
 });
+
+Deno.test("AI dashboard: every request is recorded (auth failures, connection tests, tool calls)", async () => {
+  const { toRow } = await import("../functions/findmed-mcp/recorder.ts");
+  const rows: Record<string, unknown>[] = [];
+  const d = { ...deps(clinicDb(), TOOLS), record: (e: Parameters<typeof toRow>[0]) => void rows.push(toRow(e)) };
+
+  await call(d, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { token: "wrong" });
+  await call(d, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  await call(d, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+  await call(d, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_my_appointments", arguments: { phone: "+52 1 55 1234 5678" } } });
+  await call(d, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "list_my_appointments", arguments: {} } });
+
+  assertEquals(rows.map((r) => [r.kind, r.ok, r.error_code]), [
+    ["auth_failed", false, "wrong_token"],
+    ["initialize", true, null],
+    ["tools/list", true, null],
+    ["tools/call", true, null],
+    ["tools/call", false, "invalid_arguments"],
+  ]);
+  assertEquals(rows[3].subject_phone, "+525512345678"); // canonical, for the per-patient timeline
+  assertEquals(rows[3].tool_name, "list_my_appointments");
+  assert((rows[3].result as { toolName: string }).toolName === "list_my_appointments");
+
+  // A failing recorder never breaks the agent's answer.
+  const broken = { ...deps(clinicDb(), TOOLS), record: () => Promise.reject(new Error("db down")) };
+  const r = await call(broken, { jsonrpc: "2.0", id: 5, method: "tools/list" });
+  assertEquals(r.status, 200);
+});

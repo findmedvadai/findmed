@@ -12,4 +12,19 @@ import { handleMessagingAdmin } from "./handler.ts";
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getServiceKey());
 const whaapy = createWhaapyClient({ timeoutMs: 10_000 });
 
-Deno.serve((req) => handleMessagingAdmin(req, { supabase, whaapy, authorize: (r) => requireAdmin(r, supabase) }));
+const base = Deno.env.get("SUPABASE_URL")!.replace(/\/+$/, "");
+const has = (name: string) => !!Deno.env.get(name);
+const integration = {
+  mcpUrl: `${base}/functions/v1/findmed-mcp`,
+  webhookUrl: `${base}/functions/v1/whaapy-inbound`,
+  secrets: {
+    FINDMED_MCP_TOKEN: has("FINDMED_MCP_TOKEN"),
+    WHAAPY_API_KEY: has("WHAAPY_API_KEY"),
+    WHAAPY_WEBHOOK_SECRET: has("WHAAPY_WEBHOOK_SECRET"),
+    FINDMED_CRON_SECRET: has("FINDMED_CRON_SECRET"),
+  },
+};
+
+Deno.serve((req) =>
+  handleMessagingAdmin(req, { supabase, whaapy, integration, authorize: (r) => requireAdmin(r, supabase) })
+);

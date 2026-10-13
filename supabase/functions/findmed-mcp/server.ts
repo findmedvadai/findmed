@@ -22,6 +22,36 @@ export interface ServerDeps {
   supabase: SupabaseClient;
   tools: ToolDef[];
   log?: (entry: Record<string, unknown>) => void;
+  /**
+   * Persists one row per request for the admin AI dashboard (mcp_requests).
+   * Must never throw or slow the reply; index.ts hands the insert to
+   * EdgeRuntime.waitUntil.
+   */
+  record?: (entry: McpRecord) => Promise<void> | void;
+}
+
+export interface McpRecord {
+  kind: "auth_failed" | "initialize" | "tools/list" | "tools/call" | "protocol_error" | "other";
+  method?: string | null;
+  tool_name?: string | null;
+  arguments?: Record<string, unknown> | null;
+  ok: boolean;
+  status?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  duration_ms?: number | null;
+  trace_id?: string | null;
+  result?: unknown;
+  client?: string | null;
+}
+
+async function record(deps: ServerDeps, entry: McpRecord): Promise<void> {
+  if (!deps.record) return;
+  try {
+    await deps.record(entry);
+  } catch (e) {
+    console.error("[findmed-mcp] record failed", e);
+  }
 }
 
 type JsonRpcId = string | number | null;
@@ -56,6 +86,13 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
   const auth = req.headers.get("Authorization") ?? "";
   const presented = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!deps.token || !presented || !timingSafeEqual(presented, deps.token)) {
+    // Visible in the dashboard: the usual cause of a failed "Probar conexión".
+    await record(deps, {
+      kind: "auth_failed",
+      ok: false,
+      error_code: !deps.token ? "server_token_missing" : !presented ? "no_bearer" : "wrong_token",
+      client: req.headers.get("User-Agent"),
+    });
     return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
   }
 
@@ -73,6 +110,7 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
   try {
     msg = await req.json();
   } catch {
+    await record(deps, { kind: "protocol_error", ok: false, error_code: "parse_error" });
     return reply.error(null, -32700, "Parse error", undefined, 400);
   }
   if (Array.isArray(msg)) return reply.error(null, -32600, "Batching is not supported", undefined, 400);
@@ -88,6 +126,7 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
 
   switch (m.method) {
     case "initialize": {
+      await record(deps, { kind: "initialize", method: "initialize", ok: true, client: req.headers.get("User-Agent") });
       const requested = (m.params as { protocolVersion?: string } | undefined)?.protocolVersion;
       return reply.result(id, {
         protocolVersion: requested && SUPPORTED_VERSIONS.has(requested) ? requested : PROTOCOL_VERSION,
@@ -100,12 +139,14 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
     case "ping":
       return reply.result(id, {});
     case "tools/list":
+      await record(deps, { kind: "tools/list", method: "tools/list", ok: true });
       return reply.result(id, {
         tools: deps.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });
     case "tools/call":
       return await callTool(id, m.params, deps, reply);
     default:
+      await record(deps, { kind: "other", method: m.method, ok: false, error_code: "method_not_found" });
       return reply.error(id, -32601, "Method not found", { method: m.method });
   }
 }
@@ -113,11 +154,24 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
 async function callTool(id: JsonRpcId, params: unknown, deps: ServerDeps, reply: Reply): Promise<Response> {
   const p = params as { name?: unknown; arguments?: unknown } | undefined;
   const tool = deps.tools.find((t) => t.name === p?.name);
-  if (!tool) return reply.error(id, -32602, "Unknown tool", { name: p?.name ?? null });
+  if (!tool) {
+    await record(deps, { kind: "tools/call", tool_name: String(p?.name ?? ""), ok: false, error_code: "unknown_tool" });
+    return reply.error(id, -32602, "Unknown tool", { name: p?.name ?? null });
+  }
 
   const args = (p?.arguments ?? {}) as Record<string, unknown>;
   const invalid = validate(tool.inputSchema, args);
-  if (invalid) return reply.error(id, -32602, "Invalid arguments", invalid);
+  if (invalid) {
+    await record(deps, {
+      kind: "tools/call",
+      tool_name: tool.name,
+      arguments: args,
+      ok: false,
+      error_code: "invalid_arguments",
+      error_message: `${invalid.field}: ${invalid.reason}`,
+    });
+    return reply.error(id, -32602, "Invalid arguments", invalid);
+  }
 
   const traceId = crypto.randomUUID();
   const started = performance.now();
@@ -156,5 +210,18 @@ async function callTool(id: JsonRpcId, params: unknown, deps: ServerDeps, reply:
   });
 
   const envelope = { ...outcome, toolName: tool.name, safety: tool.safety, durationMs, trace_id: traceId };
+  await record(deps, {
+    kind: "tools/call",
+    method: "tools/call",
+    tool_name: tool.name,
+    arguments: args,
+    ok: outcome.ok,
+    status: outcome.status,
+    error_code: outcome.errors?.[0]?.code ?? null,
+    error_message: outcome.errors?.[0]?.message_es ?? null,
+    duration_ms: durationMs,
+    trace_id: traceId,
+    result: envelope,
+  });
   return reply.result(id, { content: [{ type: "text", text: JSON.stringify(envelope) }], isError: !outcome.ok });
 }

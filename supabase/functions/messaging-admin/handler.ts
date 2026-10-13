@@ -25,6 +25,12 @@ const STATUSES = ["scheduled", "confirmed", "cancelled", "completed"];
 export interface MessagingAdminDeps {
   supabase: SupabaseClient;
   whaapy: WhaapyClient;
+  /** Integration facts for the "health" action (URLs and which secrets exist — never their values). */
+  integration?: {
+    mcpUrl: string;
+    webhookUrl: string;
+    secrets: Record<string, boolean>;
+  };
   authorize: (req: Request) => Promise<{ ok: true; userId: string } | { ok: false; status: number; error: string }>;
 }
 
@@ -55,6 +61,25 @@ export async function handleMessagingAdmin(req: Request, deps: MessagingAdminDep
   const { supabase, whaapy } = deps;
 
   switch (b.action) {
+    case "health": {
+      // Live check of the WHAAPY API plus what FindMed has configured.
+      let whaapyApi: Record<string, unknown> = { configured: whaapy.configured, ok: false };
+      if (whaapy.configured) {
+        const started = Date.now();
+        const r = await whaapy.listTemplates();
+        whaapyApi = r.ok
+          ? { configured: true, ok: true, latency_ms: Date.now() - started, templates: r.data.length, approved: r.data.filter((t) => String(t.status).toUpperCase() === "APPROVED").length }
+          : { configured: true, ok: false, http_status: r.status, error: r.error };
+      }
+      return jsonResponse({
+        whaapy_api: whaapyApi,
+        mcp_url: deps.integration?.mcpUrl ?? null,
+        webhook_url: deps.integration?.webhookUrl ?? null,
+        secrets: deps.integration?.secrets ?? {},
+        checked_at: new Date().toISOString(),
+      });
+    }
+
     case "templates": {
       const c = await catalog(whaapy);
       if (!c.ok) return bad("whaapy_unavailable", c.error, c.status);

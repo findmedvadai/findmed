@@ -168,3 +168,20 @@ Deno.test("retry_outbox only re-queues failed events", async () => {
   assertEquals([d.rows("domain_outbox")[0].status, d.rows("domain_outbox")[0].attempts], ["pending", 0]);
   assertEquals((await post(d, w.client, { action: "retry_outbox", outbox_id: "bbbbbbbb-0000-4000-8000-000000000002" })).status, 409);
 });
+
+Deno.test("health: live WHAAPY check + URLs + which secrets exist (never their values)", async () => {
+  const w = whaapy();
+  const res = await handleMessagingAdmin(new Request("https://x", { method: "POST", body: JSON.stringify({ action: "health" }) }), {
+    supabase: db() as unknown as SupabaseClient,
+    whaapy: w.client,
+    integration: { mcpUrl: "https://p.supabase.co/functions/v1/findmed-mcp", webhookUrl: "https://p.supabase.co/functions/v1/whaapy-inbound", secrets: { FINDMED_MCP_TOKEN: true, WHAAPY_API_KEY: true } },
+    authorize: () => Promise.resolve({ ok: true as const, userId: ADMIN }),
+  });
+  const body = await res.json();
+  assertEquals([body.whaapy_api.ok, body.whaapy_api.templates, body.whaapy_api.approved], [true, 3, 2]);
+  assertEquals(body.mcp_url, "https://p.supabase.co/functions/v1/findmed-mcp");
+  assertEquals(body.secrets, { FINDMED_MCP_TOKEN: true, WHAAPY_API_KEY: true });
+
+  const down = await post(db(), { ...w.client, listTemplates: () => Promise.resolve({ ok: false as const, status: 401, error: "Invalid API key" }) }, { action: "health" });
+  assertEquals((await down.json()).whaapy_api, { configured: true, ok: false, http_status: 401, error: "Invalid API key" });
+});

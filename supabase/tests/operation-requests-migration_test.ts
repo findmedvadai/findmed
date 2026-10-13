@@ -60,3 +60,19 @@ Deno.test("whaapy_events migration applies; dedupe_key is unique; RLS on", async
   assertEquals(rls.rows[0].relrowsecurity, true);
   await db.close();
 });
+
+Deno.test("mcp_requests migration applies; kind is checked; RLS on; retention scheduled", async () => {
+  const sql = await Deno.readTextFile(new URL("../migrations/20261013150000_mcp_requests.sql", import.meta.url));
+  const db = await PGlite.create();
+  await db.exec(STUBS);
+  await db.exec(`CREATE SCHEMA cron; CREATE TABLE cron.job (jobname text);
+    CREATE FUNCTION cron.schedule(j text, s text, c text) RETURNS bigint LANGUAGE sql AS 'INSERT INTO cron.job VALUES (j) RETURNING 1::bigint';`);
+  await db.exec(sql);
+  await db.exec(`INSERT INTO mcp_requests (kind, tool_name, ok) VALUES ('tools/call', 'open_case', true)`);
+  const bad = await assertRejects(() => db.exec(`INSERT INTO mcp_requests (kind, ok) VALUES ('nope', true)`)) as { code?: string };
+  assertEquals(bad.code, "23514");
+  const rls = await db.query<{ relrowsecurity: boolean }>("SELECT relrowsecurity FROM pg_class WHERE relname = 'mcp_requests'");
+  assertEquals(rls.rows[0].relrowsecurity, true);
+  assertEquals((await db.query<{ jobname: string }>("SELECT jobname FROM cron.job")).rows[0].jobname, "purge-mcp-requests");
+  await db.close();
+});
