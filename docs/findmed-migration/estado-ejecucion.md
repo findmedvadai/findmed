@@ -9,7 +9,7 @@
 
 ## Siguiente acción concreta
 1. Verificado tras el deploy: 8 rutas (todas n8n), 14 pasos, 7 crons activos, worker respondió 200 y procesó 7 eventos de WHAAPY sin error, sondeos sin credencial = 401, MCP lista 9 tools, `types.ts` regenerado desde producción.
-2. B8 hecho: `agente/prompt-findi-v2.md` + `agente/README.md`. Falta: aprobación de FindMed del texto de urgencias (D7) y el catálogo `triage_findmed` (F10) para `suggest_specialty`; mientras tanto, orientación por síntomas = caso + persona.
+2. B8 hecho: `agente/prompt-findi-v2.md` + `agente/README.md`. Catálogo de triaje recibido y reconstruido como v2 (N31, D12); prompt v2.3 corrige la primera parada (N32). Falta: aprobación de urgencias (D7), revisión médica del catálogo, aplicar migración `20261013160000` + importar, re-sincronizar herramientas y pegar v2.3 en WHAAPY.
 3. Corte gradual (B10): eventos sin botones primero (EV02, EV04, EV08, EV01 reservada/completada), luego los de botones junto con el agente y la automatización "Omitir IA" (A6).
 
 ## Pendientes de prueba
@@ -24,7 +24,7 @@
 | Permisos | El clasificador de Claude Code bloquea `db push` a producción aunque pase por `sb.sh`: Alex lo ejecuta o agrega una regla explícita | Alex | Migración B6 |
 | Seguridad | Rotar key legacy (Vault → `sb_secret_`, desactivar legacy, revocar JWT secret) | Alex + Claude | N01 |
 | Seguridad | Reset de las ~52 contraseñas expuestas | Alex/FindMed | N02 |
-| Acceso | Host y permisos del Postgres Vadai (`triage_findmed`) | Alex | M02, F10 |
+| Clínico | Revisión del catálogo de triaje v2 (115 condiciones, 0 validadas) y respaldo de Medicina Interna para especialidades sin médicos (D12) | Responsable clínico FindMed | Uso de `suggest_specialty` en producción |
 | WHAAPY | Número/contactos de prueba, token API, acceso a configurar agente/automatizaciones | Alex | B5 (IR), B6, B7, B8 |
 | Negocio | Cobertura real de ciudades (prompt: CDMX+QRO; catálogo: 9) | FindMed | R07, prompt B8 |
 | Negocio | Texto y reglas de urgencia aprobados | Responsable clínico FindMed | R08, B8 |

@@ -70,3 +70,11 @@ Cada decisión registra: quién decide, evidencia, alternativas, desventajas que
 
 ### A9 · Flujo de ramas y producción
 - Trabajo en `feat/whaapy-mcp-migration`, commits atómicos. Producción (migraciones, funciones, Vault, WHAAPY) solo con indicación explícita de Alex y con el runbook de B10.
+
+### D12 · Catálogo de triaje v2 (12-oct-2026)
+- **Qué**: el catálogo pasa de filas por frase a filas por condición (115) con `primera_parada`, compuertas (`requiere_todos` / `requiere_alguno`), `pregunta_diferencial` y alarmas en lenguaje del paciente. Se conservaron semáforo, primera parada y acción operativa de las 75 condiciones originales; los cambios son de keywords, compuertas, especialidad (se separó "Cirugia+Gastro+Coloprocto") y redacción de alarmas. 40 condiciones nuevas cubren motivos comunes de consulta.
+- **Dónde**: fuente `triage.local/catalogo-v2.json` (fuera de git; el repo es público); se carga con `scripts/import-triage.mjs`. Escenarios en `supabase/tests/triage_catalog_test.ts` (corren solo donde exista el archivo).
+- **Pendiente de FindMed (bloquea uso en producción)**: revisión del responsable clínico fila por fila; marcar `validado: true`. El importador tiene `--solo-validados`.
+- **Pendiente de FindMed**: sin Cardiología, Neurología, Neumología ni Nefrología en el catálogo de médicos → hoy esas recomendaciones pasan a una persona. Alternativa propuesta: usar Medicina Interna como respaldo para las condiciones de consulta (no urgentes) de esas áreas. Plástico Reconstructor no tiene condiciones aún.
+- **Cambiaría si**: FindMed prefiere otra fuente clínica (p. ej. un protocolo de triaje formal); el formato v2 permite reemplazar filas sin tocar código.
+

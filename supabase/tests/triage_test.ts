@@ -1,4 +1,4 @@
-// M02 suggest_specialty — ranking equal to the n8n SQL, ties, broadening,
+// M02 suggest_specialty — weighted ranking, urgency gates, routing, ties, broadening,
 // mapping to FindMed specialties, schema guard and the migration (F10).
 // Rows below are synthetic fixtures for the algorithm, not clinical content.
 //
@@ -7,7 +7,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { PGlite } from "npm:@electric-sql/pglite@0.3.15";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { attempts, rank, suggestSpecialty } from "../functions/_shared/triage.ts";
+import { attempts, rank, routingOf, suggestSpecialty } from "../functions/_shared/triage.ts";
 import { handleMcpRequest } from "../functions/findmed-mcp/server.ts";
 import { TOOLS } from "../functions/findmed-mcp/tools.ts";
 import { FakeDb } from "./fake-supabase.ts";
@@ -15,7 +15,7 @@ import { FakeDb } from "./fake-supabase.ts";
 const row = (especialidad: string, semaforo: string, keywords: string[], alarm: string | null = null) =>
   ({ id: crypto.randomUUID(), especialidad, semaforo, keywords, si_esto_aparece_subir_a_urgencias: alarm });
 
-function catalog(rows = [
+function catalog(rows: Record<string, unknown>[] = [
   row("Ortopedia", "AMARILLO", ["rodilla", "dolor", "inflamacion"]),
   row("Ortopedia", "NARANJA", ["rodilla", "dolor", "deformidad", "caida"], "No puede apoyar la pierna"),
   row("Ginecologia", "VERDE", ["pelvis", "dolor", "menstruacion"]),
@@ -36,13 +36,13 @@ function catalog(rows = [
 }
 const sb = (db: FakeDb) => db as unknown as SupabaseClient;
 
-Deno.test("rank = n8n SQL: match_count desc, then ROJO > NARANJA > AMARILLO > VERDE", () => {
+Deno.test("rank: weighted score desc (generic terms count half), then ROJO > NARANJA > AMARILLO > VERDE", () => {
   const r = rank([
     { especialidad: "A", semaforo: "VERDE", si_esto_aparece_subir_a_urgencias: null, keywords: ["dolor", "rodilla"] },
     { especialidad: "B", semaforo: "ROJO", si_esto_aparece_subir_a_urgencias: null, keywords: ["dolor", "rodilla"] },
     { especialidad: "C", semaforo: "ROJO", si_esto_aparece_subir_a_urgencias: null, keywords: ["dolor"] },
   ], ["dolor", "rodilla"]);
-  assertEquals(r.map((x) => [x.especialidad, x.match_count]), [["B", 2], ["A", 2], ["C", 1]]);
+  assertEquals(r.map((x) => [x.especialidad, x.score]), [["B", 1.5], ["A", 1.5], ["C", 0.5]]);
 });
 
 Deno.test("one specialty: label for the patient, FindMed specialties to search, alarm signals", async () => {
@@ -50,7 +50,33 @@ Deno.test("one specialty: label for the patient, FindMed specialties to search, 
   assert(r.ok && r.result === "one");
   assertEquals([r.best.patient_label, r.best.semaforo, r.best.alarm_signals], ["Ortopedista", "NARANJA", "No puede apoyar la pierna"]);
   assertEquals(r.best.search_specialties, ["Ortopedia"]);
-  assertEquals(r.broadened, false);
+  assertEquals([r.broadened, r.best.routing], [false, "urgencias_hoy"]);
+});
+
+Deno.test("gates: an urgent condition needs its discriminating terms; otherwise the benign one wins", () => {
+  const rows = [
+    { especialidad: "Neurologia", semaforo: "ROJO", primera_parada: "urgencias_inmediato", si_esto_aparece_subir_a_urgencias: null, keywords: ["cabeza", "dolor", "subito"], requiere_todos: ["cabeza"], requiere_alguno: ["subito", "rigidez"] },
+    { especialidad: "MedicinaInterna", semaforo: "VERDE", primera_parada: "consulta", si_esto_aparece_subir_a_urgencias: "empezó de golpe", keywords: ["cabeza", "dolor"], requiere_todos: ["cabeza"], requiere_alguno: [] },
+  ];
+  assertEquals(rank(rows, ["cabeza", "dolor"]).map((r) => r.especialidad), ["MedicinaInterna"]);
+  assertEquals(rank(rows, ["cabeza", "dolor", "subito"])[0].especialidad, "Neurologia");
+  assertEquals(routingOf(rank(rows, ["cabeza", "dolor", "subito"])[0]), "urgencias_inmediato");
+});
+
+Deno.test("routing falls back to the traffic light for v1 rows without primera_parada", () => {
+  const base = { especialidad: "X", si_esto_aparece_subir_a_urgencias: null, keywords: [] };
+  assertEquals([routingOf({ ...base, semaforo: "ROJO" }), routingOf({ ...base, semaforo: "VERDE" }), routingOf({ ...base, semaforo: "VERDE", primera_parada: "urgencias_hoy" })],
+    ["urgencias_inmediato", "consulta", "urgencias_hoy"]);
+});
+
+Deno.test("same specialty but different first stop is a tie (the agent must ask)", async () => {
+  const db = catalog([
+    { ...row("Ortopedia", "AMARILLO", ["rodilla", "dolor"]), primera_parada: "consulta" },
+    { ...row("Ortopedia", "AMARILLO", ["rodilla", "dolor"]), primera_parada: "consulta_mismo_dia", pregunta_diferencial: "¿Te caíste?" },
+  ]);
+  const r = await suggestSpecialty(sb(db), ["rodilla", "dolor"]);
+  assert(r.ok && r.result === "tie");
+  assertEquals(r.candidates.some((c) => c.pregunta_diferencial === "¿Te caíste?"), true);
 });
 
 Deno.test("tie between specialties is reported (agent asks one question)", async () => {
@@ -119,7 +145,12 @@ Deno.test("triage migration: columns, GIN overlap query, semaforo check, map see
   } catch { rejected = true; }
   assert(rejected);
   const map = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM triage_specialty_map");
-  assertEquals(map.rows[0].n, 13);
+  assertEquals(map.rows[0].n, 18);
+  let badStop = false;
+  try {
+    await db.exec(`INSERT INTO triage_findmed (especialidad, primera_parada) VALUES ('X', 'farmacia')`);
+  } catch { badStop = true; }
+  assert(badStop);
   const rls = await db.query<{ relrowsecurity: boolean }>("SELECT relrowsecurity FROM pg_class WHERE relname IN ('triage_findmed','triage_specialty_map')");
   assertEquals(rls.rows.every((r) => r.relrowsecurity), true);
   await db.close();
