@@ -7,6 +7,8 @@
 **Último bloque cerrado**: B6 + B7 + B7b en producción (12-oct, ejecutado por Alex): migraciones hasta `20261013140000`, funciones `case-actions`, `messaging-admin`, `findmed-events-worker`, `findmed-mcp` (9 tools), `whaapy-inbound`, `dispatch-webhook`; secret `WHAAPY_API_KEY`. Los 8 eventos siguen con dueño n8n.
 **Bloque en curso**: B9 — pruebas con el número de prueba de Alex (en `.env.local`, no versionado) siguiendo `pruebas.md`; observabilidad en `/admin/agente-ia`.
 
+**13-oct — Corte de mensajería (B10, decidido por Alex)**: migración `20261013180000` pone todos los eventos con dueño FindMed (envío directo por la API de WHAAPY) y pausa los 8 webhooks de n8n. WHAAPY ya manda sus eventos a `whaapy-inbound` (botones y recibos llegando el 13-oct). Falta: aplicar la migración (`db push`), desactivar los workflows de n8n y quitar en WHAAPY el webhook que apunta a n8n; crear la plantilla de "cancelada por FindMed" (hoy no se avisa al paciente, igual que con n8n). Panel reorganizado en módulos (Inicio, Agenda, Doctores, Casos, WhatsApp, Automatización + Configuración en el engrane).
+
 ## Siguiente acción concreta
 1. Verificado tras el deploy: 8 rutas (todas n8n), 14 pasos, 7 crons activos, worker respondió 200 y procesó 7 eventos de WHAAPY sin error, sondeos sin credencial = 401, MCP lista 9 tools, `types.ts` regenerado desde producción.
 2. B8 hecho: `agente/prompt-findi-v2.md` + `agente/README.md`. Catálogo de triaje recibido y reconstruido como v2 (N31, D12); prompt v2.3 corrige la primera parada (N32). Falta: aprobación de urgencias (D7), revisión médica del catálogo, aplicar migración `20261013170000` (columnas v2) + importar, re-sincronizar herramientas y pegar v2.3 en WHAAPY.

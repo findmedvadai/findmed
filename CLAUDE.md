@@ -98,8 +98,8 @@ Alias de import: `@/*` → `./src/*` (definido en [tsconfig.json](tsconfig.json)
 - El cliente Supabase se instancia una sola vez en [src/integrations/supabase/client.ts](src/integrations/supabase/client.ts) y se importa en todo el frontend como `import { supabase } from "@/integrations/supabase/client"`.
 - La sesión se gestiona con [useAuth](src/hooks/useAuth.tsx): escucha `supabase.auth.onAuthStateChange`, persiste en `localStorage`, y al login consulta la tabla `public.users` para resolver `role` y `doctor_id`.
 - La protección de rutas es por rol en [App.tsx](src/App.tsx) usando [ProtectedRoute](src/components/ProtectedRoute.tsx), que redirige según el rol:
-  - `admin` / `superadmin` → `/admin/calendario`
-  - `doctor` → `/doctor/agenda`
+  - `admin` / `superadmin` → `/admin/inicio`
+  - `doctor` → `/doctor/inicio`
 
 ### Tipos de acceso a datos
 
@@ -126,26 +126,25 @@ Enum `app_role` (SQL): `superadmin | admin | doctor`. El rol se lee de `public.u
 
 ### admin / superadmin
 
-- **Layout**: [AdminLayout](src/components/layouts/AdminLayout.tsx) (sidebar “Panel Administrativo”).
-- **Rutas** (todas bajo `/admin/…`, definidas en [App.tsx](src/App.tsx)):
-  - `/admin/calendario` → vista de calendario semanal con todas las citas, filtrable por doctor.
-  - `/admin/reservas` → tabla/listado de citas con búsqueda y filtros.
-  - `/admin/doctores` → CRUD de doctores (alta crea usuario auth + fila en `doctors` + `users`).
-  - `/admin/catalogos` → CRUD de especialidades, ciudades, zonas, hospitales y laboratorios.
-  - `/admin/inbox` → notificaciones (citas nuevas, canceladas, completadas, post‑consultas).
+- **Layout**: [AdminLayout](src/components/layouts/AdminLayout.tsx) sobre [AppShell](src/components/layouts/AppShell.tsx): barra lateral con **módulos** y, abajo, el perfil con un **engrane** que abre la Configuración y "Cerrar sesión". Regla de navegación: pocos módulos, los submódulos viven dentro (pestañas o vistas). Tema del panel en `.app-shell` ([src/index.css](src/index.css)); componentes compartidos en `src/components/app/` (PageHeader, FilterBar/SearchInput, StatCard, EmptyState, SoftBadge/AppointmentStatusBadge).
+- **Módulos** (todas bajo `/admin/…`, definidas en [App.tsx](src/App.tsx)):
+  - `/admin/inicio` → indicadores del día, "Por resolver" de todos los módulos, conexiones (WHAAPY, agente IA, mensajes, calendarios) y notificaciones (el antiguo Inbox, embebido).
+  - `/admin/agenda` → calendario (vista por defecto) y lista de citas (`?vista=lista`) con búsqueda y filtros.
+  - `/admin/doctores` → CRUD de doctores (alta crea usuario auth + fila en `doctors` + `users`), consultorios, horarios y calendarios.
   - `/admin/casos` → cola de casos y canalización humana (B6): tomar, seguimiento, notas, cierre con motivo. Escrituras vía Edge Function `case-actions`.
-  - `/admin/mensajeria` → centro de mensajería de WhatsApp (B7b): mensaje por evento y quién lo envía (n8n/FindMed), historial de envíos con recibos y reenvío, catálogo de plantillas WHAAPY. Escrituras vía `messaging-admin`.
-  - `/admin/webhooks` → gestión de webhooks salientes (protegido por [PasswordGate](src/components/admin/PasswordGate.tsx)).
-  - `/admin/api-keys` → gestión de API keys para sistemas externos (protegido por PasswordGate).
+  - `/admin/whatsapp` → bandeja de WHAAPY (`https://app.whaapy.com/inbox`) embebida en iframe al 75 % de zoom.
+  - `/admin/automatizacion` → mensajes de WhatsApp por evento (los envía FindMed por la API de WHAAPY; activo/pausado por evento), historial de envíos con recibos y reenvío, catálogo de plantillas (`?tab=envios|plantillas`). Escrituras vía `messaging-admin`.
+- **Configuración** (desde el engrane, `/admin/configuracion/:tab`): `agente-ia` (conexión, actividad, errores, catálogo de triaje), `catalogos` (especialidades, ciudades, zonas, hospitales, laboratorios), `webhooks` y `api-keys` (estos dos protegidos por [PasswordGate](src/components/admin/PasswordGate.tsx)).
+- Las rutas anteriores (`/admin/calendario`, `/admin/reservas`, `/admin/inbox`, `/admin/mensajeria`, `/admin/agente-ia`, `/admin/catalogos`, `/admin/webhooks`, `/admin/api-keys`) redirigen a las nuevas.
 
 ### doctor
 
-- **Layout**: [DoctorLayout](src/components/layouts/DoctorLayout.tsx) (sidebar con el nombre del doctor).
-- **Rutas** (bajo `/doctor/…`):
+- **Layout**: [DoctorLayout](src/components/layouts/DoctorLayout.tsx) sobre el mismo AppShell (nombre del doctor arriba, engrane con "Mi configuración").
+- **Módulos** (bajo `/doctor/…`):
+  - `/doctor/inicio` → citas de hoy, pendientes (notas post-consulta, consultorios sin horarios o sin calendario) y notificaciones (el antiguo Inbox).
   - `/doctor/agenda` → calendario semanal propio (incluye citas FindMed + eventos del Google/Outlook Calendar vinculado).
-  - `/doctor/configuracion` → disponibilidad semanal, duración de cita, `min_confirm_hours_before`, overrides por día, vinculación de Google/Outlook Calendar y selección del calendario destino.
   - `/doctor/por-completar` → citas `completed` cuyo post‑consultation form aún no se llena (o está `pending`), con toggles para medicamentos, estudios, laboratorio, referencia, hospitalización.
-  - `/doctor/inbox` → notificaciones dirigidas al doctor.
+- **Mi configuración** (engrane, `/doctor/configuracion`): disponibilidad semanal, duración de cita, `min_confirm_hours_before`, overrides por día, vinculación de Google/Outlook Calendar y selección del calendario destino. `/doctor/inbox` redirige a `/doctor/inicio`.
 
 ### paciente (sin login)
 
