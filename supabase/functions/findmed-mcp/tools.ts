@@ -13,6 +13,7 @@ import { createReservationSession } from "../_shared/booking-session.ts";
 import { findUpcomingAppointmentsByPhone } from "../_shared/appointment-actions.ts";
 import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "../_shared/phone.ts";
 import { msToMxIso } from "../_shared/mx-time.ts";
+import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { commitAction, getOperation, prepareAction } from "../_shared/operations.ts";
 import { getMyCases, openCase, PRIORITIES, REQUEST_TYPES, requestHandoff, type Priority, type RequestType } from "../_shared/cases.ts";
 import { createWhaapyClient, type WhaapyClient } from "../_shared/whaapy-client.ts";
@@ -236,7 +237,7 @@ const listMyAppointmentsTool: ToolDef = {
     "Lista las citas próximas (agendadas o confirmadas) del contacto que está escribiendo.",
     "When to use: cuando el paciente pregunta por su cita, quiere confirmarla, cancelarla o reagendarla, o antes de cualquier acción sobre una cita.",
     "Identity: phone mapeado a {{contact.phoneNumber}}. Solo devuelve citas de ese teléfono.",
-    "Result: data.appointments[] con appointment_id, status, fecha/hora local, médico y consultorio. Si hay más de una, pregunta a cuál se refiere antes de actuar. Lista vacía = no hay citas próximas con ese número.",
+    "Result: data.appointments[] con appointment_id, status, fecha/hora local, médico, consultorio y manage_url (enlace seguro donde el paciente ve, confirma, cancela o reagenda esa cita). Si hay más de una, pregunta a cuál se refiere antes de actuar. Lista vacía = no hay citas próximas con ese número.",
     "Side effects: ninguno.",
   ].join("\n"),
   inputSchema: {
@@ -262,29 +263,34 @@ const listMyAppointmentsTool: ToolDef = {
     ]);
     const doctorName = Object.fromEntries((doctors ?? []).map((d) => [d.id, d.full_name]));
     const office = Object.fromEntries((offices ?? []).map((o) => [o.id, o]));
+    const canonical = normalizeMxPhone(String(args.phone));
 
-    return {
-      ok: true,
-      status: "success",
-      data: {
-        timezone: "America/Mexico_City",
-        appointments: found.appointments.map((a) => {
-          const s = localParts(a.start_at);
-          const e = localParts(a.end_at);
-          const o = a.office_id ? office[a.office_id] : undefined;
-          return {
-            appointment_id: a.appointment_id,
-            status: a.status,
-            date: s.date,
-            start_time: s.time,
-            end_time: e.time,
-            doctor_name: doctorName[a.doctor_id] ?? null,
-            office_name: o?.name ?? null,
-            office_address: o?.address ?? null,
-          };
-        }),
-      },
-    };
+    // Secure /gestionar link per appointment (view, confirm, cancel or
+    // reschedule there). A token problem leaves it null, never fails the list.
+    const appointments = await Promise.all(found.appointments.map(async (a) => {
+      const s = localParts(a.start_at);
+      const e = localParts(a.end_at);
+      const o = a.office_id ? office[a.office_id] : undefined;
+      let manageUrl: string | null = null;
+      try {
+        manageUrl = await getOrCreateManageUrl({ supabase, appointmentId: a.appointment_id, endAt: a.end_at, patientPhone: canonical });
+      } catch (err) {
+        console.error("[findmed-mcp] manage url failed", err);
+      }
+      return {
+        appointment_id: a.appointment_id,
+        status: a.status,
+        date: s.date,
+        start_time: s.time,
+        end_time: e.time,
+        doctor_name: doctorName[a.doctor_id] ?? null,
+        office_name: o?.name ?? null,
+        office_address: o?.address ?? null,
+        manage_url: manageUrl,
+      };
+    }));
+
+    return { ok: true, status: "success", data: { timezone: "America/Mexico_City", appointments } };
   },
 };
 

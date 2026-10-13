@@ -178,6 +178,7 @@ Deno.test("list_my_appointments returns only the caller's upcoming appointments"
   assertEquals(envelope.data.appointments.length, 1);
   assertEquals(envelope.data.appointments[0].appointment_id, "a1");
   assertEquals(envelope.data.appointments[0].office_name, "Consultorio Polanco");
+  assert(String(envelope.data.appointments[0].manage_url).startsWith("https://app.example.test/gestionar?token="));
   const other = await callTool(clinicDb(), "list_my_appointments", { phone: "5599999999" });
   assertEquals(other.envelope.data.appointments, []);
 });
