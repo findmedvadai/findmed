@@ -54,8 +54,8 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | B4 | Dominio de citas: acciones comunes, idempotencia, calendario honesto | B1, B2 | R17–R28 | implementado sin validar (partes 1 y 2) |
 | B5 | `findmed-mcp` | Lectura: B1+B2; escritura: B4 | R29, R30 | implementado sin validar (fase lectura + enlace; U passed; IR bloqueado sin WHAAPY de prueba) |
 | B6 | Casos y handoff | B2, B5; token API WHAAPY | R31, R32, R10 | implementado sin validar (código + U; migración y deploy pendientes de OK; IR con número de prueba) |
-| B7 | Outbox, worker, `whaapy-inbound`, templates | B2, B4; token y webhook WHAAPY de prueba | R33–R37 | en implementación (`whaapy-inbound` fase 1: verificar, deduplicar y guardar) |
-| B7b | Centro de mensajería en el admin (D8): templates desde API WHAAPY, mapeo evento→template, historial de envíos/entregas | B7; `WHAAPY_API_KEY` | X13; R33, R34 | pendiente |
+| B7 | Outbox, worker, `whaapy-inbound`, templates | B2, B4; token y webhook WHAAPY de prueba | R33–R37 | implementado sin validar (U 89 passed; migración/deploy pendientes de OK; todos los eventos siguen en n8n) |
+| B7b | Centro de mensajería en el admin (D8): templates desde API WHAAPY, mapeo evento→template, historial de envíos/entregas | B7; `WHAAPY_API_KEY` | X13; R33, R34 | implementado sin validar (`/admin/mensajeria` + `messaging-admin`) |
 | B8 | Agente WHAAPY (prompt, tools, campos, embudo) | B5, B6; reglas clínicas aprobadas | R01–R13 | pendiente |
 | B9 | Validación conjunta | B3–B8; número de prueba | R40 + T01–T30 si existen | pendiente |
 | B10 | Deploy, corte, reversión | B9; acceso Owner; indicación de Alex | R38, R39; manifiesto | pendiente |
@@ -108,5 +108,5 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | X09 | Cancelar/reagendar coherente en BD, calendario y mensajes | B4 `appointment-actions`, R27 | en implementación (confirm/cancel de paciente unificados; staff y reagenda pendientes) |
 | X10 | Canalización humana verificable | A7, R31, R32 | implementado sin validar (U passed; IR bloqueada por número de prueba) |
 | X11 | Un dueño por conversación y evento durante la migración | A5 `event_owner`, R38 | pendiente |
-| X13 | FindMed gestiona plantillas, envíos y su estado desde su frontend, sin entrar a WHAAPY (D8) | B7b: catálogo de templates vía API WHAAPY, mapeo evento→template editable, bitácora de envíos y entregas, reenvío | pendiente |
+| X13 | FindMed gestiona plantillas, envíos y su estado desde su frontend, sin entrar a WHAAPY (D8) | B7b: catálogo vía API WHAAPY (crear plantillas sigue siendo en Meta: la API solo lista/sincroniza), mapeo evento→plantilla editable y validado, dueño por evento, historial con recibos, reenvío | implementado sin validar |
 | X12 | Enlace ≠ cita; etiqueta ≠ asignación; HTTP 200 ≠ entrega | Contratos MCP, outbox, R13, R31, R34 | en implementación (`link_created`/`appointment_created:false` en MCP) |

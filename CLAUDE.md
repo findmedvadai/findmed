@@ -134,6 +134,7 @@ Enum `app_role` (SQL): `superadmin | admin | doctor`. El rol se lee de `public.u
   - `/admin/catalogos` → CRUD de especialidades, ciudades, zonas, hospitales y laboratorios.
   - `/admin/inbox` → notificaciones (citas nuevas, canceladas, completadas, post‑consultas).
   - `/admin/casos` → cola de casos y canalización humana (B6): tomar, seguimiento, notas, cierre con motivo. Escrituras vía Edge Function `case-actions`.
+  - `/admin/mensajeria` → centro de mensajería de WhatsApp (B7b): mensaje por evento y quién lo envía (n8n/FindMed), historial de envíos con recibos y reenvío, catálogo de plantillas WHAAPY. Escrituras vía `messaging-admin`.
   - `/admin/webhooks` → gestión de webhooks salientes (protegido por [PasswordGate](src/components/admin/PasswordGate.tsx)).
   - `/admin/api-keys` → gestión de API keys para sistemas externos (protegido por PasswordGate).
 
@@ -195,6 +196,8 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 | `patient_cases` | **B6.** Solicitudes que necesitan a una persona (hospital, estudios, urgencia, seguimiento, sin opciones). `status` open → awaiting_assignment → assigned → awaiting_patient/awaiting_provider → resolved/closed (cierre exige `resolution_reason`). Un caso activo por `(subject_phone, request_type)`. Proyección WHAAPY: `ai_state`, `whaapy_assignment`, ids de conversación/contacto. RLS: SELECT admins; escrituras solo Edge Functions. |
 | `case_events` | **B6.** Historial interno append-only de cada caso (quién, qué, resultado del proveedor). Nunca se muestra al paciente. |
 | `operation_requests` / `whaapy_events` | Acciones preparadas idempotentes (confirmar/cancelar) y eventos recibidos de WHAAPY (retención 12 meses). Ver `docs/findmed-migration/`. |
+| `message_routes` / `message_route_steps` | **B7.** Dueño de cada evento (`n8n` default, `findmed`, `none`) y plantillas que envía cada evento, en orden, con sus variables y botones. Editables desde `/admin/mensajeria`. |
+| `domain_outbox` / `message_deliveries` | **B7.** Cola durable de eventos que envía FindMed (dedupe, claim `claim_outbox` con SKIP LOCKED) y cada envío a WHAAPY con su estado (accepted → sent → delivered → read / failed / uncertain). Retención 12 meses. |
 
 ### Funciones SQL helper (`SECURITY DEFINER`, `search_path = public`)
 
@@ -279,20 +282,25 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `calendar-tokens.ts` | `getGoogleAccessToken`, `getOutlookAccessToken` — intercambian refresh token por access token vía el secret del office. En `invalid_grant` auto-desconecta el office **y** registra el evento durable vía `recordAutoDisconnect`. |
 | `connection-events.ts` | `recordAutoDisconnect` / `recordManualDisconnect` — insertan en `calendar_connection_events` (bitácora durable). Best-effort: nunca lanzan ni bloquean el flujo de conexión/desconexión. Único lugar que escribe esa tabla. |
 | `cases.ts` | **B6.** `openCase`, `requestHandoff`, `getMyCases`, `applyStaffAction`. Persistir, apagar la IA y asignar son pasos separados registrados en `case_events`; nunca se reporta `assigned` sin que una persona tome el caso. |
-| `whaapy-client.ts` | Cliente REST de WHAAPY (by-phone, IA por conversación, equipo, contactos) con timeout; nunca lanza ni expone la API key. |
+| `whaapy-client.ts` | Cliente REST de WHAAPY (by-phone, IA por conversación, equipo, contactos, envío de mensajes, plantillas) con timeout; nunca lanza ni expone la API key. |
+| `messaging.ts` | **B7.** `routeOwner`, `enqueueEvent`, `processOutboxRow` (relee la BD, omite eventos viejos, un envío por paso, incierto sin reenvío), `applyReceipt`. |
+| `whaapy-events.ts` | **B7.** Procesa `whaapy_events`: recibos y botones `confirmar_cita:<id>`/`cancelar_cita:<id>` (prepare+commit sobre esa cita). |
+| `template-catalog.ts` | **B7b.** Normaliza plantillas de WHAAPY y valida que un paso del mapeo encaje con su plantilla. |
 
 ### Triaje / recordatorios / webhooks
 
 | Función | Qué hace |
 |---|---|
 | `findmed-mcp` | Servidor MCP (JSON-RPC) para el agente nativo de WHAAPY. Auth: bearer `FINDMED_MCP_TOKEN`. Tools de búsqueda, horarios, enlace de reserva, citas, acciones preparadas y casos. |
-| `whaapy-inbound` | Webhook de WHAAPY firmado (HMAC con `WHAAPY_WEBHOOK_SECRET`); guarda en `whaapy_events` deduplicado. |
+| `whaapy-inbound` | Webhook de WHAAPY firmado (HMAC con `WHAAPY_WEBHOOK_SECRET`); guarda en `whaapy_events` deduplicado y procesa recibos y botones. |
+| `findmed-events-worker` | **B7.** Cron (cada minuto, solo si hay trabajo): envía las plantillas de `domain_outbox` y reprocesa `whaapy_events` pendientes. Auth: `FINDMED_CRON_SECRET`. |
+| `messaging-admin` | **B7b.** Acciones del centro de mensajería (catálogo, dueño por evento, mapeo, reenvío). Auth: JWT admin. |
 | `case-actions` | Acciones del equipo sobre casos (`/admin/casos`). Auth: JWT admin (`requireAdmin`). |
 
 | Función | Qué hace |
 |---|---|
 | `triage-webhook` | Endpoint con API key. Upsert de paciente por teléfono, crea `reservation_sessions` (72 h) y devuelve `reserve_url`. Punto de entrada desde el bot de WhatsApp. |
-| `dispatch-webhook` | Dispara eventos a todos los `webhooks` activos suscritos, firmando con HMAC‑SHA‑256. Llamada internamente por otras funciones (con service key). Desde el navegador solo acepta JWT de usuario válido y los eventos de `USER_DISPATCHABLE_EVENTS` (`postconsultation.*`), verifica que la cita sea del doctor y toma `patient_phone`/`patient_name` de la BD, no del payload. |
+| `dispatch-webhook` | Dispara eventos a todos los `webhooks` activos suscritos, firmando con HMAC‑SHA‑256. **Desde B7** consulta `message_routes`: si el evento es de FindMed lo encola en `domain_outbox` y no llama a los webhooks (un solo dueño). Llamada internamente por otras funciones (con service key). Desde el navegador solo acepta JWT de usuario válido y los eventos de `USER_DISPATCHABLE_EVENTS` (`postconsultation.*`), verifica que la cita sea del doctor y toma `patient_phone`/`patient_name` de la BD, no del payload. |
 | _(los 4 crons)_ | `send-appointment-reminders`, `send-day-of-reminders`, `auto-cancel-unconfirmed`, `auto-complete-appointments` rechazan con 401 todo caller sin service key (`isServiceRequest`). **Los schedules están versionados** en `supabase/migrations/20261012120000_booking_integrity_and_cron.sql` (`cron.schedule(jobname, …)` → `public.invoke_edge_function(slug)`, que lee la key de Vault `service_role_key`; el nombre es histórico, el valor es la secret key vigente). Son **idempotentes**: los recordatorios reclaman la fila con `UPDATE … SET reminder_*_sent_at WHERE … IS NULL RETURNING`; `auto-cancel`/`auto-complete` condicionan el UPDATE al estado previo. Si se rota la key, actualizar el secret en Vault. |
 | `send-appointment-reminders` | Cron: busca citas `scheduled` en ventana 47–49 h y emite `appointment.reminder_48h`. |
 | `send-day-of-reminders` | Cron: busca citas `confirmed` del día (timezone México) y emite recordatorio del día. |

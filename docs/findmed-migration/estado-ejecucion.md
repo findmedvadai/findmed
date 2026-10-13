@@ -4,16 +4,16 @@
 > y los hallazgos del bloque en curso; no depender de un resumen de conversación.
 
 **Rama**: `feat/whaapy-mcp-migration` (desde `main` = `9ed5aa5`).
-**Último bloque cerrado**: B6 — casos y canalización humana (código, pruebas y vista admin; migración y deploy pendientes de OK de Alex).
-**Bloque en curso**: B7 — outbox + worker de plantillas, procesamiento de `whaapy_events` y botones; después B7b (centro de mensajería).
+**Último bloque cerrado**: B7 + B7b — mensajería propia (outbox, worker, botones, recibos) y centro de mensajería `/admin/mensajeria` (código y pruebas; migraciones y deploy pendientes de OK de Alex).
+**Bloque en curso**: B8 — prompt versionado del agente WHAAPY y mapeo de tools; después B9 (suite) y B10 (corte por evento + agente).
 
 ## Siguiente acción concreta
-1. Alex: autorizar (o ejecutar) en producción la migración `20261013130000_patient_cases.sql`, el secret `WHAAPY_API_KEY`/`WHAAPY_API_BASE_URL` para funciones y el deploy de `case-actions` + `findmed-mcp`. Después: regenerar `types.ts`.
-2. B7: `domain_outbox` + `message_deliveries`, worker con plantillas reales, `emitEvent` → outbox, procesar `whaapy_events` (recibos, `conversation.assigned`, botones).
-3. B7b: centro de mensajería en el admin (plantillas por API, evento→plantilla, historial, reenvío).
+1. Alex (PowerShell, una línea a la vez con `& "C:\Program Files\Git\bin\bash.exe" scripts/sb.sh …`): `db push` (aplica `20261013130000` y `20261013140000`), secret `WHAAPY_API_KEY`/`WHAAPY_API_BASE_URL`, deploy de `case-actions`, `findmed-mcp`, `messaging-admin`, `findmed-events-worker`, `whaapy-inbound` y `dispatch-webhook`. Ningún evento cambia de dueño: todo sigue en n8n hasta que se cambie en `/admin/mensajeria`.
+2. B8: prompt versionado (`docs/findmed-migration/agente/`), tools y mapeos fijos, urgencias con texto D7, sin ambulancias (D5).
+3. Corte gradual (B10): eventos sin botones primero (EV02, EV04, EV08, EV01 reservada/completada), luego los de botones junto con el agente y la automatización "Omitir IA" (A6).
 
 ## Pendientes de prueba
-`npm run test:edge`: 65 passed (12-oct, incluye `cases_test.ts`). IR de R18/R25/R29/R30/R31 bloqueadas por número/contacto WHAAPY de prueba.
+`npm run test:edge`: 89 passed (12-oct). Mapeo sembrado validado 14/14 contra las 37 plantillas reales. IR de R18/R25/R29/R30/R31/R33 bloqueadas por número/contacto WHAAPY de prueba.
 
 ## Bloqueos y decisiones necesarias
 
@@ -47,3 +47,5 @@
 | 12-oct | B0 | Lectura completa del plan (1,407 líneas) y del export (117 nodos); diagnóstico, D1–D4, A1–A9, cobertura, inventario de nodos, suite de pruebas | archivos de `docs/findmed-migration/` |
 | 12-oct | N29 | Crons en 401 tras el deploy → credencial dedicada `FINDMED_CRON_SECRET`; corrida 23:30 UTC = 200 | `5c815cc`, `net._http_response` |
 | 12-oct | B6 | `patient_cases` + `case_events` (migración `20261013130000`), `_shared/cases.ts`, `_shared/whaapy-client.ts`, Edge Function `case-actions`, tools `open_case`/`request_handoff`/`get_my_case_status`, vista `/admin/casos` | `aa3c602`, `b150bc5`, `cases_test.ts` |
+| 12-oct | B7 | `message_routes`/`message_route_steps`/`domain_outbox`/`message_deliveries` (migración `20261013140000`), `dispatch-webhook` con dueño por evento, `_shared/messaging.ts`, `_shared/whaapy-events.ts`, `findmed-events-worker`, `whaapy-inbound` procesa recibos y botones | `46c4bbd`, `messaging_test.ts` |
+| 12-oct | B7b | `messaging-admin` + `/admin/mensajeria` (eventos, envíos, plantillas) | `994c1b2`, `2bbb259`, `messaging-admin_test.ts` |

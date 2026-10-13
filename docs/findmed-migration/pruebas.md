@@ -65,12 +65,12 @@ Datos siempre sintéticos. Nunca pacientes ni citas reales.
 | R30 | MCP sin token / scope insuficiente / timeout | U+IR | B5 | — | U passed; IR passed (401 en prod sin token) |
 | R31 | Handoff con agente disponible: caso, asignación, pausa, sin doble respuesta | IR+OP | B6 | número de prueba | U passed (`cases_test.ts`, WHAAPY simulado); IR blocked (número/contacto de prueba) |
 | R32 | Handoff sin personal o error del proveedor → `awaiting_assignment` | IS+IR | B6 | — | U passed (errores 503, sin conversación, sin configurar); IR not_run |
-| R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | not_run |
-| R34 | 429/5xx, respuesta perdida, reinicio del worker | IS | B7 | — | not_run |
+| R33 | Eventos repetidos/desordenados no duplican ni retroceden embudo (EV01–EV08) | U+IR | B7 | — | U passed (`messaging_test.ts`: dedupe, eventos viejos omitidos, recibos solo avanzan); IR not_run |
+| R34 | 429/5xx, respuesta perdida, reinicio del worker | IS | B7 | — | U passed (429 backoff, timeout → incierto sin reenvío, 4xx falla, lease vencido se retoma en PGlite) |
 | R35 | Recordatorio vs confirmación vs autocancelación en carrera | U+IR | B7 | migración | U passed (guarda de estado previo en confirm/cancel); IR not_run |
 | R36 | Firma inválida o evento repetido rechazado (WHAAPY firma JSON re-serializado, N20) | U+IR | B7 | webhook de prueba | U passed; IR passed en prod (sin firma 401, firmado 200, repetido = duplicado); falta primer evento real de WHAAPY (N26) |
 | R37 | Postconsulta y envío de informe con recorrido definido | OP | B7 | decisión EV06/EV07 | blocked |
-| R38 | Corte de agente y eventos en momentos distintos: un solo dueño | OP | B10 | — | not_run |
+| R38 | Corte de agente y eventos en momentos distintos: un solo dueño | OP | B10 | — | U passed (dueño por evento en `dispatch-webhook`/worker; cambio a FindMed validado contra plantillas); OP not_run |
 | R39 | Reversión con operaciones en vuelo | OP | B10 | — | not_run |
 | R40 | Recorrido completo (nuevo, recurrente, sin reserva automática) | OP | B9 | B3–B8 | not_run |
 
