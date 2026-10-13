@@ -10,6 +10,7 @@ export interface Schema {
   required?: string[];
   additionalProperties?: boolean;
   items?: Schema;
+  minItems?: number;
   maxItems?: number;
   enum?: (string | number)[];
   minLength?: number;
@@ -66,6 +67,7 @@ export function validate(schema: Schema, value: unknown, path = ""): SchemaError
       return typeof value === "boolean" ? null : { field, reason: "expected boolean" };
     case "array": {
       if (!Array.isArray(value)) return { field, reason: "expected array" };
+      if (schema.minItems !== undefined && value.length < schema.minItems) return { field, reason: `minItems ${schema.minItems}` };
       if (schema.maxItems !== undefined && value.length > schema.maxItems) return { field, reason: `maxItems ${schema.maxItems}` };
       if (schema.items) {
         for (let i = 0; i < value.length; i++) {

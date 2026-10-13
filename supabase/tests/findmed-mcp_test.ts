@@ -115,6 +115,7 @@ Deno.test("R29: tools/list exposes object-rooted schemas for every real tool", a
   const r = await call(deps(new FakeDb(), TOOLS), { jsonrpc: "2.0", id: 2, method: "tools/list" });
   const tools = (await rpc(r)).result.tools;
   assertEquals(tools.map((t: { name: string }) => t.name), [
+    "suggest_specialty",
     "search_care_options",
     "list_available_slots",
     "create_booking_link",

@@ -24,7 +24,7 @@ no coincide o el secret no está configurado (falla cerrado).
 | Autenticación | `bearer` → el valor de `FINDMED_MCP_TOKEN` |
 | Motor del agente | `colme-2` (tools, MCPs, batching, handoff) |
 
-Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 9 tools (10 con `MCP_CHAT_ACTIONS_ENABLED=true`).
+Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 10 tools (11 con `MCP_CHAT_ACTIONS_ENABLED=true`).
 
 ## 3. Tools habilitadas y mapeo de campos
 

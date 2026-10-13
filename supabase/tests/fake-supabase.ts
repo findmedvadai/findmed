@@ -42,10 +42,14 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   private orderBy: { col: string; asc: boolean } | null = null;
   private max: number | null = null;
   private mode: "many" | "single" | "maybe" = "many";
+  private wantCount = false;
+  private headOnly = false;
 
   constructor(private db: FakeDb, private table: string) {}
 
-  select(_cols?: string) {
+  select(_cols?: string, opts?: { count?: string; head?: boolean }) {
+    if (opts?.count) this.wantCount = true;
+    if (opts?.head) this.headOnly = true;
     return this;
   }
   insert(values: Row | Row[]) {
@@ -75,6 +79,10 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   }
   neq(col: string, v: unknown) {
     this.filters.push((r) => r[col] !== v);
+    return this;
+  }
+  overlaps(col: string, vs: unknown[]) {
+    this.filters.push((r) => Array.isArray(r[col]) && (r[col] as unknown[]).some((x) => vs.includes(x)));
     return this;
   }
   in(col: string, vs: unknown[]) {
@@ -115,7 +123,7 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
     return this;
   }
 
-  private run(): { data: unknown; error: null } {
+  private run(): { data: unknown; error: null; count?: number } {
     const all = this.db.rows(this.table);
     let affected: Row[];
     if (this.op === "upsert") {
@@ -138,8 +146,10 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       const { col, asc } = this.orderBy;
       out.sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
     }
+    const total = out.length;
     if (this.max !== null) out = out.slice(0, this.max);
-    if (this.mode === "many") return { data: out, error: null };
+    if (this.headOnly) return { data: null, error: null, ...(this.wantCount ? { count: total } : {}) };
+    if (this.mode === "many") return { data: out, error: null, ...(this.wantCount ? { count: total } : {}) };
     return { data: out[0] ?? null, error: null };
   }
 

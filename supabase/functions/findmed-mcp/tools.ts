@@ -17,6 +17,7 @@ import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { commitAction, getOperation, prepareAction } from "../_shared/operations.ts";
 import { getMyCases, openCase, PRIORITIES, REQUEST_TYPES, requestHandoff, type Priority, type RequestType } from "../_shared/cases.ts";
 import { createWhaapyClient, type WhaapyClient } from "../_shared/whaapy-client.ts";
+import { ALL_KEYWORDS, suggestSpecialty } from "../_shared/triage.ts";
 import { DATE_PATTERN, type Schema, UUID_PATTERN } from "./schema.ts";
 
 export type Safety = "read_only" | "read_private" | "mutation_limited";
@@ -403,6 +404,64 @@ const commitAppointmentActionTool: ToolDef = {
   },
 };
 
+// --- Specialty orientation (M02, F10) ---------------------------------------
+
+const suggestSpecialtyTool: ToolDef = {
+  name: "suggest_specialty",
+  safety: "read_only",
+  description: [
+    "Orienta con qué especialista debe consultar el paciente según sus síntomas, con el catálogo de triaje de FindMed. NO diagnostica.",
+    "When to use: el paciente tiene un malestar y no sabe con quién ir, y YA reuniste 2-3 características (síntoma principal + dónde + desde cuándo o algo asociado) y confirmó que no quiere agregar nada.",
+    "Never use for: el primer síntoma suelto, ni cuando el paciente ya sabe qué especialista quiere (usa search_care_options).",
+    "Input: keywords = términos estandarizados del catálogo (enum), 1 a 8. Prioriza síntoma principal + zona del cuerpo; agrega contexto clínico si lo dijo (embarazo, diabetes, cáncer, quimioterapia, caída, golpe...). NO conviertas intensidad ni duración en keywords.",
+    "Traducción del lenguaje del paciente: panza/estómago/barriga → abdomen · boca del estómago → abdomen_superior · bajo vientre → abdomen_inferior · lado derecho/izquierdo de la panza → abdomen_derecho/abdomen_izquierdo · espalda baja/cintura → columna_lumbar · calentura → fiebre · se ve chueco → deformidad · se me hinchó → inflamacion · me ahogo/falta de aire → dificultad_respirar · se me durmió/entumido → entumecimiento · no tengo fuerza → perdida_fuerza · me brinca el corazón → palpitaciones · sudo frío → sudoracion · veo borroso/lucecitas → vision_alterada · no me salen las palabras → dificultad_hablar · me sangra la nariz → nariz + sangrado · cólicos/regla → menstruacion (+ dolor, pelvis) · sangro entre periodos → intermenstrual + sangrado_uterino · orino sangre → hematuria · popó negra → heces_negras · sangro al ir al baño → sangrado_rectal · bolita → bulto · no puedo orinar → retencion_urinaria · me caí → caida · me pegué → golpe · ronco → ronquido · dejo de respirar dormido → apnea · silbidos en el pecho → sibilancias · flujo con mal olor → flujo_vaginal · me sale pus → pus + secrecion.",
+    "Result: data.result = 'one' | 'tie' | 'none'.",
+    "- 'one': data.best trae patient_label (cómo decírselo al paciente), semaforo, alarm_signals y search_specialties. Si alarm_signals tiene texto, ANTES de recomendar pregunta esas señales en UNA sola pregunta; si confirma alguna, es urgencia (ruta de seguridad). Si no, presenta la recomendación con patient_label.",
+    "- 'tie': varias especialidades empatan (data.candidates). NO le digas al paciente que hay duda: haz UNA pregunta que las distinga, agrega el término que resulte y vuelve a llamar.",
+    "- 'none': haz más preguntas sobre el síntoma y vuelve a llamar; nunca digas que no encontraste nada.",
+    "Para buscar médico usa search_care_options con el primer nombre de data.best.search_specialties (si no hay opciones, prueba el siguiente). Si search_specialties viene vacío, FindMed no tiene esa especialidad: abre un caso y pasa a una persona.",
+    "Si falla con catalog_unavailable: abre un caso (appointment_help) con el resumen de síntomas y pasa a una persona.",
+    "Side effects: ninguno.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["keywords"],
+    properties: {
+      keywords: {
+        type: "array",
+        minItems: 1,
+        maxItems: 8,
+        items: { type: "string", enum: [...ALL_KEYWORDS] },
+        description: "Términos estandarizados del catálogo (solo estos valores).",
+      },
+    },
+  },
+  async handler(supabase, args) {
+    const r = await suggestSpecialty(supabase, (args.keywords as string[]) ?? []);
+    if (!r.ok) return fail(r.code, r.message_es);
+    if (r.result === "none") {
+      return {
+        ok: true,
+        status: "needs_more_info",
+        data: { result: "none", keywords_used: r.keywords_used },
+        nextQuestion: "¿Me cuentas un poco más? ¿En qué parte del cuerpo lo sientes y qué otra molestia has notado?",
+      };
+    }
+    return {
+      ok: true,
+      status: r.result === "tie" ? "needs_more_info" : "success",
+      data: {
+        result: r.result,
+        best: r.best,
+        candidates: r.candidates,
+        keywords_used: r.keywords_used,
+        broadened: r.broadened,
+      },
+    };
+  },
+};
+
 // --- Cases and human handoff (B6: M09/M10/M11) -----------------------------
 
 const openCaseTool: ToolDef = {
@@ -520,6 +579,7 @@ const getMyCaseStatusTool: ToolDef = {
 export function buildTools(opts: { chatActions: boolean; whaapy?: WhaapyClient }): ToolDef[] {
   const whaapy = opts.whaapy ?? createWhaapyClient();
   return [
+    suggestSpecialtyTool,
     searchCareOptionsTool,
     listAvailableSlotsTool,
     createBookingLinkTool,

@@ -462,7 +462,7 @@ function SetupGuide() {
         <CardContent className="space-y-3 text-sm">
           <Field label="URL del servidor MCP" value={health?.mcp_url} />
           <p>Autenticación: <strong>Bearer</strong> con el token del MCP (secreto <code>FINDMED_MCP_TOKEN</code>; por seguridad no se muestra en la plataforma).</p>
-          <p>Después usa "Probar conexión" en WHAAPY: aquí debe aparecer "WHAAPY probó la conexión con el MCP" y las 9 herramientas.</p>
+          <p>Después usa "Probar conexión" en WHAAPY: aquí debe aparecer "WHAAPY probó la conexión con el MCP" y las 10 herramientas.</p>
         </CardContent>
       </Card>
       <Card>

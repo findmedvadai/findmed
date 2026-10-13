@@ -12,7 +12,7 @@ En WHAAPY → Agente → MCPs → agregar:
 | URL | `https://jyzvdowflblxmlahlupo.supabase.co/functions/v1/findmed-mcp` |
 | Autenticación | Bearer → el valor de `FINDMED_MCP_TOKEN` (en `.env.local` del equipo técnico; nunca en chats ni docs) |
 
-"Probar conexión" debe mostrar 9 herramientas. En FindMed → Agente IA aparece "WHAAPY probó la conexión con
+"Probar conexión" debe mostrar 10 herramientas. En FindMed → Agente IA aparece "WHAAPY probó la conexión con
 el MCP". Si aparece "token inválido", el valor pegado no coincide.
 
 ## 2. Campos fijos de cada herramienta
@@ -24,7 +24,7 @@ los llena la IA. Ver detalle en `../whaapy-mcp-config.md`.
 
 ## 3. Instrucciones del agente
 
-Pegar el contenido completo de `FINDI-prompt-v2.1.txt` (Ctrl+A, Ctrl+C).
+Pegar el contenido completo de `FINDI-prompt.txt` (Ctrl+A, Ctrl+C).
 Motor recomendado: `colme-2` (herramientas, MCPs y handoff).
 
 ## 4. Automatizaciones de WHAAPY

@@ -29,3 +29,8 @@ supabase/migrations.zip
 
 # Claude Code local settings (permissions of this machine)
 .claude/settings.local.json
+
+# Export del catálogo de triaje (contenido clínico de FindMed, no versionar)
+triage_findmed*.csv
+triage_findmed*.json
+triage-import*.sql
