@@ -3,13 +3,13 @@
 > Actualizar al cerrar cada bloque y antes de interrumpir el trabajo. Al retomar: leer este archivo, `decisiones.md`
 > y los hallazgos del bloque en curso; no depender de un resumen de conversación.
 
-**Rama**: `feat/whaapy-mcp-migration` (desde `main` = `9ed5aa5`).
+**Rama**: `main` (la rama `feat/whaapy-mcp-migration` se integró por fast-forward el 12-oct; Alex pidió trabajar siempre en `main`).
 **Último bloque cerrado**: B6 + B7 + B7b en producción (12-oct, ejecutado por Alex): migraciones hasta `20261013140000`, funciones `case-actions`, `messaging-admin`, `findmed-events-worker`, `findmed-mcp` (9 tools), `whaapy-inbound`, `dispatch-webhook`; secret `WHAAPY_API_KEY`. Los 8 eventos siguen con dueño n8n.
-**Bloque en curso**: B8 — prompt versionado del agente WHAAPY y mapeo de tools; después B9 (suite) y B10 (corte por evento + agente).
+**Bloque en curso**: B9 — pruebas con el número de prueba de Alex (en `.env.local`, no versionado) siguiendo `pruebas.md`; observabilidad en `/admin/agente-ia`.
 
 ## Siguiente acción concreta
 1. Verificado tras el deploy: 8 rutas (todas n8n), 14 pasos, 7 crons activos, worker respondió 200 y procesó 7 eventos de WHAAPY sin error, sondeos sin credencial = 401, MCP lista 9 tools, `types.ts` regenerado desde producción.
-2. B8: prompt versionado (`docs/findmed-migration/agente/`), tools y mapeos fijos, urgencias con texto D7, sin ambulancias (D5).
+2. B8 hecho: `agente/prompt-findi-v2.md` + `agente/README.md`. Falta: aprobación de FindMed del texto de urgencias (D7) y el catálogo `triage_findmed` (F10) para `suggest_specialty`; mientras tanto, orientación por síntomas = caso + persona.
 3. Corte gradual (B10): eventos sin botones primero (EV02, EV04, EV08, EV01 reservada/completada), luego los de botones junto con el agente y la automatización "Omitir IA" (A6).
 
 ## Pendientes de prueba
@@ -50,3 +50,5 @@
 | 12-oct | B7 | `message_routes`/`message_route_steps`/`domain_outbox`/`message_deliveries` (migración `20261013140000`), `dispatch-webhook` con dueño por evento, `_shared/messaging.ts`, `_shared/whaapy-events.ts`, `findmed-events-worker`, `whaapy-inbound` procesa recibos y botones | `46c4bbd`, `messaging_test.ts` |
 | 12-oct | B7b | `messaging-admin` + `/admin/mensajeria` (eventos, envíos, plantillas) | `994c1b2`, `2bbb259`, `messaging-admin_test.ts` |
 | 12-oct | Deploy B6/B7 | Alex ejecutó `db push` + secret + 6 funciones (comando único en PowerShell); verificación posterior OK | `97cbd3a` (types) |
+| 12-oct | Observabilidad | `mcp_requests` (migración `20261013150000`), registro en `findmed-mcp`, acción `health`, página `/admin/agente-ia` (conexión, actividad, errores, guía) | `3e82d5e`, `e9abf20` |
+| 12-oct | B8 | Prompt FINDI v2 y guía de configuración del agente en WHAAPY | `docs/findmed-migration/agente/` |
