@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { differenceInMinutes } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { es } from "date-fns/locale";
+import { CalendarClock, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -71,9 +73,11 @@ export default function RescheduleAppointmentDialog({
 
   useEffect(() => {
     if (!open) return;
-    setDate(formatMx(start, "yyyy-MM-dd"));
-    setStartTime(formatMx(start, "HH:mm"));
-    setDuration(originalDuration);
+    const s = new Date(appointment.start_at);
+    const e = new Date(appointment.end_at);
+    setDate(formatMx(s, "yyyy-MM-dd"));
+    setStartTime(formatMx(s, "HH:mm"));
+    setDuration(Math.max(5, differenceInMinutes(e, s)));
   }, [open, appointment.id, appointment.start_at, appointment.end_at]);
 
   const endTime = useMemo(() => addMinutesToHm(startTime, duration), [startTime, duration]);
@@ -183,33 +187,43 @@ export default function RescheduleAppointmentDialog({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Reagendar cita</DialogTitle>
-          <DialogDescription>
-            {appointment.patient_name} — se notifica al paciente y al doctor por WhatsApp.
-          </DialogDescription>
+          <DialogDescription>Se notifica al paciente y al doctor por WhatsApp.</DialogDescription>
         </DialogHeader>
+
+        <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+            <CalendarClock className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-foreground">{appointment.patient_name}</p>
+            <p className="text-xs text-muted-foreground first-letter:uppercase">
+              Ahora: {formatMx(start, "EEE d 'de' MMM yyyy", { locale: es })} · {formatMx(start, "HH:mm")} – {formatMx(end, "HH:mm")}
+            </p>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="r-date">Nueva fecha *</Label>
+              <Label htmlFor="r-date" className="text-sm">Nueva fecha</Label>
               <Input
                 id="r-date"
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
+                className="h-9 text-sm"
                 required
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="r-start">Nueva hora *</Label>
-              <TimePicker value={startTime} onValueChange={setStartTime} />
+              <Label className="text-sm">Nueva hora</Label>
+              <TimePicker value={startTime} onValueChange={setStartTime} className="h-9 text-sm" withIcon />
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="r-duration">Duración (min) *</Label>
+              <Label htmlFor="r-duration" className="text-sm">Duración (min)</Label>
               <Input
                 id="r-duration"
                 type="number"
@@ -217,23 +231,24 @@ export default function RescheduleAppointmentDialog({
                 step={5}
                 value={duration}
                 onChange={(e) => setDuration(Math.max(5, parseInt(e.target.value || "0", 10)))}
+                className="h-9 text-sm"
                 required
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Termina</Label>
-              <Input value={endTime} disabled readOnly />
+              <Label className="text-sm text-muted-foreground">Termina</Label>
+              <Input value={endTime} disabled readOnly className="h-9 bg-muted/50 text-sm" />
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+          <DialogFooter className="gap-2 pt-2 sm:space-x-0">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Button type="submit" size="sm" disabled={submitting} className="gap-1.5">
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               {submitting ? "Reagendando..." : "Reagendar"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
 

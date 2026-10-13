@@ -87,7 +87,10 @@ function findOverlap(rows: AvailabilityRow[]): { officeId: string; weekday: numb
 
 export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
   const queryClient = useQueryClient();
-  const offKey = ["doctor-offices", doctorId];
+  // Key propia (prefijo "doctor-offices" para recibir las mismas invalidaciones):
+  // este editor solo lee id/nombre/color, y compartir la key exacta con
+  // OfficeManager hacía que este pintara consultorios incompletos.
+  const offKey = ["doctor-offices", doctorId, "availability-editor"];
   const avKey = ["doctor-all-availability", doctorId];
 
   const { data: offices } = useQuery<OfficeRow[]>({

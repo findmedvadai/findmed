@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Search, UserPlus } from "lucide-react";
+import { Loader2, Search, UserPlus, UserRound } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export interface PatientLookupResult {
@@ -82,8 +83,8 @@ export default function PatientAutocomplete({
   return (
     <div ref={containerRef} className={cn("relative", className)}>
       <div className="relative">
-        <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-        <input
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
           type="text"
           value={query}
           onChange={(e) => {
@@ -92,19 +93,24 @@ export default function PatientAutocomplete({
           }}
           onFocus={() => setOpen(true)}
           placeholder={placeholder}
-          className="flex h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-label="Buscar paciente"
+          autoComplete="off"
+          className="h-9 pl-8 pr-8 text-sm"
         />
         {loading && (
-          <Loader2 className="absolute right-2 top-2 h-5 w-5 animate-spin text-muted-foreground" />
+          <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
         )}
       </div>
 
       {open && query.trim().length >= 2 && (
-        <div className="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-md">
+        <div className="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+          {loading && results.length === 0 && (
+            <p className="px-2 py-2 text-sm text-muted-foreground">Buscando…</p>
+          )}
           {!loading && results.length === 0 && (
-            <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
-              <UserPlus className="h-4 w-4" />
-              Sin coincidencias. Continúa escribiendo y creará un paciente nuevo al guardar.
+            <div className="flex items-start gap-2 px-2 py-2 text-sm text-muted-foreground">
+              <UserPlus className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>Sin coincidencias. Escribe sus datos abajo y se creará un paciente nuevo al guardar.</span>
             </div>
           )}
           {results.map((p) => (
@@ -115,10 +121,15 @@ export default function PatientAutocomplete({
                 onSelect(p);
                 setOpen(false);
               }}
-              className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent"
+              className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
             >
-              <span className="font-medium">{p.full_name}</span>
-              <span className="text-xs text-muted-foreground">{p.phone}</span>
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
+                <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate font-medium text-foreground">{p.full_name}</span>
+                <span className="block text-xs text-muted-foreground">{p.phone}</span>
+              </span>
             </button>
           ))}
         </div>

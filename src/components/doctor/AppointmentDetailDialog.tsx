@@ -14,6 +14,7 @@ function formatMx(date: Date, fmt: string, opts?: Parameters<typeof format>[2]) 
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -30,12 +31,24 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TimePicker } from "@/components/ui/time-picker";
+import {
+  CalendarClock,
+  CheckCircle2,
+  ClipboardList,
+  ExternalLink,
+  FileText,
+  MapPin,
+  Pencil,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
+import { AppointmentStatusBadge, SoftBadge } from "@/components/app/StatusBadge";
+import { cn } from "@/lib/utils";
 import type { Database } from "@/integrations/supabase/types";
 import CreateEventDialog from "./CreateEventDialog";
 
@@ -66,20 +79,6 @@ interface Props {
   onClose: () => void;
   doctorId: string;
 }
-
-const STATUS_LABELS: Record<AppointmentStatus, string> = {
-  scheduled: "Agendada",
-  confirmed: "Confirmada",
-  cancelled: "Cancelada",
-  completed: "Completada",
-};
-
-const STATUS_STYLES: Record<AppointmentStatus, string> = {
-  scheduled: "bg-scheduled text-scheduled-foreground",
-  confirmed: "bg-confirmed text-confirmed-foreground",
-  cancelled: "bg-destructive/60 text-destructive-foreground",
-  completed: "bg-primary/80 text-primary-foreground",
-};
 
 export default function AppointmentDetailDialog({ item, open, onClose, doctorId }: Props) {
   const queryClient = useQueryClient();
@@ -198,8 +197,8 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
         : "Evento eliminado de Google Calendar");
       invalidateExternal();
       onClose();
-    } catch (err: any) {
-      toast.error(err.message || "Error al eliminar evento");
+    } catch (err) {
+      toast.error((err instanceof Error && err.message) || "Error al eliminar evento");
     } finally {
       setDeleting(false);
     }
@@ -307,95 +306,135 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
   return (
     <>
       <Dialog open={open && !editEventOpen} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {item.title}
-              {!isExternal && item.status && (
-                <Badge className={STATUS_STYLES[item.status]}>{STATUS_LABELS[item.status]}</Badge>
-              )}
-              {!isExternal && !item.status && (
-                <Badge variant="outline" className="text-xs">Plataforma</Badge>
-              )}
-              {externalProvider === "google" && (
-                <Badge variant="outline" className="text-xs">Google</Badge>
-              )}
-              {externalProvider === "outlook" && (
-                <Badge variant="outline" className="text-xs">Outlook</Badge>
-              )}
-            </DialogTitle>
-            <DialogDescription>
-              {formatMx(item.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
+        <DialogContent className={cn("max-h-[90vh] overflow-y-auto", isExternal ? "sm:max-w-lg" : "sm:max-w-2xl")}>
+          <DialogHeader className="space-y-2 pr-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle className="text-base">{item.title}</DialogTitle>
+              {!isExternal && item.status && <AppointmentStatusBadge status={item.status} />}
+              {!isExternal && !item.status && <SoftBadge tone="neutral">FindMed</SoftBadge>}
+              {externalProvider === "google" && <SoftBadge tone="neutral">Google Calendar</SoftBadge>}
+              {externalProvider === "outlook" && <SoftBadge tone="neutral">Outlook Calendar</SoftBadge>}
+            </div>
+            <DialogDescription className="first-letter:uppercase">
+              {formatMx(item.start, "EEEE d 'de' MMMM 'de' yyyy", { locale: es })} ·{" "}
+              {formatMx(item.start, "HH:mm")} – {formatMx(item.end, "HH:mm")}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Horario: </span>
-              <span className="font-medium">
-                {formatMx(item.start, "HH:mm")} – {formatMx(item.end, "HH:mm")}
-              </span>
+          {!isExternal && (
+            <div className="space-y-4">
+              {item.officeName && (
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                  <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="text-muted-foreground">Consultorio</span>
+                  <span className="truncate font-medium text-foreground">{item.officeName}</span>
+                </div>
+              )}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <section className="space-y-1.5">
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                    <ClipboardList className="h-4 w-4 text-muted-foreground" /> Síntomas
+                  </h3>
+                  <p className="whitespace-pre-line text-sm text-muted-foreground">
+                    {item.symptoms || "Sin síntomas registrados."}
+                  </p>
+                </section>
+                <section className="space-y-1.5">
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                    <FileText className="h-4 w-4 text-muted-foreground" /> Notas médicas
+                  </h3>
+                  {canEditNotes && editingNotes ? (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Escribe las notas médicas..."
+                        rows={4}
+                        className="text-sm"
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setEditingNotes(false)}>
+                          Cancelar
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={notesMutation.isPending}
+                          onClick={() => notesMutation.mutate({ id: item.id, doctorNotes: notes })}
+                        >
+                          Guardar notas
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-line text-sm text-muted-foreground">
+                      {item.doctorNotes || "Sin notas."}
+                    </p>
+                  )}
+                </section>
+              </div>
             </div>
+          )}
 
-            {!isExternal && item.officeName && (
+          {isExternal && (item.description || item.htmlLink) && (
+            <div className="space-y-3">
+              {item.description && (
+                <p className="whitespace-pre-line rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  {item.description}
+                </p>
+              )}
+              {item.htmlLink && (
+                <Button asChild variant="outline" size="sm" className="gap-1.5">
+                  <a href={item.htmlLink} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    {externalProvider === "outlook" ? "Abrir en Outlook Calendar" : "Abrir en Google Calendar"}
+                  </a>
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Reschedule inline form */}
+          {!isExternal && canReschedule && rescheduling && (
+            <div className="space-y-3 rounded-lg border p-4">
               <div>
-                <span className="text-muted-foreground">Consultorio: </span>
-                <span className="font-medium">{item.officeName}</span>
+                <p className="text-sm font-semibold text-foreground">Reagendar cita</p>
+                <p className="text-xs text-muted-foreground">Se avisa al paciente del nuevo horario.</p>
               </div>
-            )}
-
-            {!isExternal && item.symptoms && (
-              <div>
-                <span className="text-muted-foreground">Síntomas: </span>
-                <span>{item.symptoms}</span>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="col-span-2 space-y-1.5 sm:col-span-1">
+                  <Label className="text-sm">Fecha</Label>
+                  <Input
+                    type="date"
+                    value={rescheduleDate}
+                    min={fmx(new Date(), "yyyy-MM-dd")}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Inicio</Label>
+                  <TimePicker value={rescheduleStart} onValueChange={setRescheduleStart} className="h-9 text-sm" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Fin</Label>
+                  <TimePicker value={rescheduleEnd} onValueChange={setRescheduleEnd} className="h-9 text-sm" />
+                </div>
               </div>
-            )}
-
-            {isExternal && item.description && (
-              <div>
-                <span className="text-muted-foreground">Descripción: </span>
-                <span>{item.description}</span>
-              </div>
-            )}
-
-            {!isExternal && item.doctorNotes && !editingNotes && (
-              <div>
-                <span className="text-muted-foreground">Notas médicas: </span>
-                <span>{item.doctorNotes}</span>
-              </div>
-            )}
-
-            {isExternal && item.htmlLink && (
-              <a
-                href={item.htmlLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline text-xs"
-              >
-                {externalProvider === "outlook" ? "Abrir en Outlook Calendar" : "Abrir en Google Calendar"}
-              </a>
-            )}
-          </div>
-
-          {/* Edit notes for completed appointments */}
-          {canEditNotes && editingNotes && (
-            <div className="space-y-2">
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Escribe las notas médicas..."
-                rows={4}
-              />
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" size="sm" onClick={() => setEditingNotes(false)}>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRescheduling(false)}
+                  disabled={rescheduleMutation.isPending}
+                >
                   Cancelar
                 </Button>
                 <Button
                   size="sm"
-                  disabled={notesMutation.isPending}
-                  onClick={() => notesMutation.mutate({ id: item.id, doctorNotes: notes })}
+                  disabled={rescheduleMutation.isPending || !rescheduleDate || !rescheduleStart || !rescheduleEnd}
+                  onClick={() => rescheduleMutation.mutate()}
                 >
-                  Guardar notas
+                  {rescheduleMutation.isPending ? "Reagendando..." : "Confirmar nuevo horario"}
                 </Button>
               </div>
             </div>
@@ -403,13 +442,11 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
 
           {/* Actions for external events (Google / Outlook) */}
           {isExternal && (
-            <div className="flex gap-2 justify-end pt-2">
-              <Button variant="outline" size="sm" onClick={() => setEditEventOpen(true)}>
-                Editar
-              </Button>
+            <DialogFooter className="gap-2 border-t pt-4 sm:justify-between sm:space-x-0">
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="destructive" size="sm">
+                  <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive">
+                    <Trash2 className="h-4 w-4" />
                     Eliminar
                   </Button>
                 </AlertDialogTrigger>
@@ -424,85 +461,35 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Volver</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleDeleteExternalEvent} disabled={deleting}>
+                    <AlertDialogAction
+                      onClick={handleDeleteExternalEvent}
+                      disabled={deleting}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
                       {deleting ? "Eliminando..." : "Sí, eliminar"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-            </div>
+              {/* El editor solo existe cuando el evento trae su consultorio (ver abajo). */}
+              {externalProvider && item.officeId && (
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditEventOpen(true)}>
+                  <Pencil className="h-4 w-4" />
+                  Editar
+                </Button>
+              )}
+            </DialogFooter>
           )}
 
           {/* Actions for appointments */}
-          {!isExternal && (
-            <>
-              {/* Reschedule inline form */}
-              {canReschedule && rescheduling && (
-                <div className="space-y-3 rounded-md border border-border p-3">
-                  <p className="text-sm font-medium">Reagendar cita</p>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Fecha</Label>
-                    <Input
-                      type="date"
-                      value={rescheduleDate}
-                      min={fmx(new Date(), "yyyy-MM-dd")}
-                      onChange={(e) => setRescheduleDate(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Hora inicio</Label>
-                      <TimePicker value={rescheduleStart} onValueChange={setRescheduleStart} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Hora fin</Label>
-                      <TimePicker value={rescheduleEnd} onValueChange={setRescheduleEnd} />
-                    </div>
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setRescheduling(false)}
-                      disabled={rescheduleMutation.isPending}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      size="sm"
-                      disabled={rescheduleMutation.isPending || !rescheduleDate || !rescheduleStart || !rescheduleEnd}
-                      onClick={() => rescheduleMutation.mutate()}
-                    >
-                      {rescheduleMutation.isPending ? "Reagendando..." : "Confirmar reagenda"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-2 justify-end pt-2">
-                {canEditNotes && !editingNotes && (
-                  <Button variant="outline" size="sm" onClick={startEditNotes}>
-                    Editar notas
-                  </Button>
-                )}
-                {canReschedule && !rescheduling && (
-                  <Button variant="outline" size="sm" onClick={openRescheduleForm}>
-                    Reagendar
-                  </Button>
-                )}
-                {canComplete && (
-                  <Button
-                    size="sm"
-                    disabled={completeMutation.isPending}
-                    onClick={() => completeMutation.mutate(item.id)}
-                  >
-                    Completar
-                  </Button>
-                )}
+          {!isExternal && (canCancel || (canEditNotes && !editingNotes) || (canReschedule && !rescheduling) || canComplete) && (
+            <DialogFooter className="gap-2 border-t pt-4 sm:justify-between sm:space-x-0">
+              <div>
                 {canCancel && (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button variant="destructive" size="sm">
+                      <Button variant="ghost" size="sm" className="w-full gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto">
+                        <XCircle className="h-4 w-4" />
                         Cancelar cita
                       </Button>
                     </AlertDialogTrigger>
@@ -518,6 +505,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
                         <AlertDialogAction
                           onClick={() => cancelMutation.mutate(item.id)}
                           disabled={cancelMutation.isPending}
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                         >
                           Sí, cancelar
                         </AlertDialogAction>
@@ -526,7 +514,32 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
                   </AlertDialog>
                 )}
               </div>
-            </>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                {canEditNotes && !editingNotes && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={startEditNotes}>
+                    <Pencil className="h-4 w-4" />
+                    Editar notas
+                  </Button>
+                )}
+                {canReschedule && !rescheduling && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={openRescheduleForm}>
+                    <CalendarClock className="h-4 w-4" />
+                    Reagendar
+                  </Button>
+                )}
+                {canComplete && (
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={completeMutation.isPending}
+                    onClick={() => completeMutation.mutate(item.id)}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Completar
+                  </Button>
+                )}
+              </div>
+            </DialogFooter>
           )}
         </DialogContent>
       </Dialog>

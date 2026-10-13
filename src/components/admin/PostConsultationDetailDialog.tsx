@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
@@ -11,9 +12,11 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
+import { SoftBadge } from "@/components/app/StatusBadge";
+import type { Tone } from "@/components/app/StatCard";
+import { cn } from "@/lib/utils";
 import {
   User,
   Calendar,
@@ -26,13 +29,16 @@ import {
   Clock,
   Eye,
   Send,
+  MapPin,
+  Stethoscope,
+  CheckCircle2,
 } from "lucide-react";
 import SendReportModal from "./SendReportModal";
 
-const STATUS_BADGE: Record<string, { label: string; className: string }> = {
-  pending: { label: "Pendiente", className: "bg-amber-100 text-amber-800 border-amber-200" },
-  read: { label: "Leído", className: "bg-blue-100 text-blue-800 border-blue-200" },
-  report_sent: { label: "Informe enviado", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+const STATUS_BADGE: Record<string, { label: string; tone: Tone }> = {
+  pending: { label: "Pendiente de revisión", tone: "warning" },
+  read: { label: "Leído", tone: "info" },
+  report_sent: { label: "Informe enviado", tone: "success" },
 };
 
 const ACTION_FIELDS = [
@@ -47,6 +53,18 @@ interface Props {
   appointmentId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+function InfoItem({ icon: Icon, label, children, className }: { icon: ComponentType<{ className?: string }>; label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("flex min-w-0 items-start gap-2.5", className)}>
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <dt className="text-xs text-muted-foreground">{label}</dt>
+        <dd className="text-sm text-foreground">{children}</dd>
+      </div>
+    </div>
+  );
 }
 
 export default function PostConsultationDetailDialog({ appointmentId, open, onOpenChange }: Props) {
@@ -105,127 +123,150 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
   const form = data?.form as any;
   const appt = data?.appointment as any;
   const statusCfg = form ? STATUS_BADGE[form.review_status] ?? STATUS_BADGE.pending : STATUS_BADGE.pending;
+  const actions = form ? ACTION_FIELDS.filter((f) => form[f.key]) : [];
+  const specialties: string[] = (appt?.doctors?.doctor_specialties ?? [])
+    .map((ds: { specialties?: { name?: string } | null }) => ds.specialties?.name)
+    .filter(Boolean);
+  const where = appt?.doctors?.cities?.name
+    ? `${appt.doctors.cities.name}${appt.doctors.zones?.name ? ` · ${appt.doctors.zones.name}` : ""}`
+    : null;
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              Formulario Post-Consulta
-            </DialogTitle>
-            <DialogDescription>Detalle del formulario enviado por el doctor.</DialogDescription>
+        <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="space-y-1 border-b p-4 pr-12 text-left">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+                Formulario post-consulta
+              </DialogTitle>
+              {form && <SoftBadge tone={statusCfg.tone} dot>{statusCfg.label}</SoftBadge>}
+            </div>
+            <DialogDescription className="text-xs">Notas que envió el doctor después de la consulta.</DialogDescription>
           </DialogHeader>
 
-          {isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          ) : !form ? (
-            <p className="text-sm text-muted-foreground py-4">No se encontró el formulario.</p>
-          ) : (
-            <div className="space-y-5">
-              {/* Status badge */}
-              <Badge className={statusCfg.className}>{statusCfg.label}</Badge>
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+            {isLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-28 w-full rounded-lg" />
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : !form ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No se encontró el formulario.</p>
+            ) : (
+              <>
+                {/* Appointment info */}
+                {appt && (
+                  <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
+                    <InfoItem icon={User} label="Paciente">
+                      <span className="font-medium">{appt.patients?.full_name ?? "—"}</span>
+                      {appt.patients?.phone && <span className="block text-xs text-muted-foreground">{appt.patients.phone}</span>}
+                    </InfoItem>
+                    <InfoItem icon={Calendar} label="Consulta">
+                      {format(parseISO(appt.start_at), "EEEE d 'de' MMMM yyyy · HH:mm", { locale: es })}
+                    </InfoItem>
+                    <InfoItem icon={Stethoscope} label="Doctor">
+                      <span>{appt.doctors?.full_name ?? "—"}</span>
+                      {specialties.length > 0 && (
+                        <span className="mt-1 flex flex-wrap gap-1">
+                          {specialties.map((name, i) => (
+                            <SoftBadge key={`${name}-${i}`} tone="neutral">{name}</SoftBadge>
+                          ))}
+                        </span>
+                      )}
+                    </InfoItem>
+                    {where && <InfoItem icon={MapPin} label="Ubicación">{where}</InfoItem>}
+                    {appt.symptoms && (
+                      <InfoItem icon={FileText} label="Motivo de consulta" className="sm:col-span-2">
+                        {appt.symptoms}
+                      </InfoItem>
+                    )}
+                  </dl>
+                )}
 
-              {/* Appointment info */}
-              {appt && (
-                <div className="rounded-lg border p-3 space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <User className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">{appt.patients?.full_name ?? "—"}</span>
-                    <span className="text-muted-foreground">· {appt.patients?.phone}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4 text-muted-foreground" />
-                    <span>{format(parseISO(appt.start_at), "d MMM yyyy · HH:mm", { locale: es })}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <span>Doctor: {appt.doctors?.full_name ?? "—"}</span>
-                  </div>
-                  {appt.doctors?.doctor_specialties?.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {appt.doctors.doctor_specialties.map((ds: any, i: number) => (
-                        <Badge key={i} variant="outline" className="text-xs">
-                          {ds.specialties?.name}
-                        </Badge>
-                      ))}
-                    </div>
+                {/* Observations */}
+                <section className="space-y-1.5">
+                  <h3 className="text-sm font-semibold text-foreground">Observaciones</h3>
+                  {form.observations ? (
+                    <p className="whitespace-pre-line text-sm text-foreground">{form.observations}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">El doctor no agregó observaciones.</p>
                   )}
-                  {appt.doctors?.cities?.name && (
-                    <span className="text-muted-foreground text-xs">
-                      {appt.doctors.cities.name}{appt.doctors.zones?.name ? ` · ${appt.doctors.zones.name}` : ""}
+                </section>
+
+                {/* Actions */}
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold text-foreground">Acciones indicadas</h3>
+                  {actions.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {actions.map((f) => {
+                        const Icon = f.icon;
+                        return (
+                          <div key={f.key} className="rounded-lg border p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                                <Icon className="h-3.5 w-3.5" />
+                              </span>
+                              <p className="text-sm font-medium text-foreground">{f.label}</p>
+                            </div>
+                            <p className="mt-2 whitespace-pre-line text-sm text-muted-foreground">{form[f.key]}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Sin medicamentos, estudios, referencias ni hospitalización.</p>
+                  )}
+                </section>
+
+                {form.review_status === "report_sent" && form.report_sent_at && (
+                  <div className="flex items-start gap-2 rounded-md border border-success/25 bg-success/5 px-3 py-2 text-sm text-foreground">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                    <span>
+                      Informe enviado
+                      {form.report_destination_type === "hospital" ? " al hospital" : form.report_destination_type === "laboratory" ? " al laboratorio" : ""}{" "}
+                      el {format(parseISO(form.report_sent_at), "d MMM yyyy · HH:mm", { locale: es })}.
                     </span>
-                  )}
-                  {appt.symptoms && (
-                    <div className="text-muted-foreground">
-                      <span className="font-medium text-foreground">Síntomas: </span>
-                      {appt.symptoms}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Observations */}
-              {form.observations && (
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">Observaciones</p>
-                  <p className="text-sm text-muted-foreground whitespace-pre-line">{form.observations}</p>
-                </div>
-              )}
-
-              {/* Actions */}
-              {ACTION_FIELDS.filter((f) => form[f.key]).map((f) => {
-                const Icon = f.icon;
-                return (
-                  <div key={f.key} className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-4 w-4 text-muted-foreground" />
-                      <p className="text-sm font-medium">{f.label}</p>
-                    </div>
-                    <p className="text-sm text-muted-foreground whitespace-pre-line ml-6">{form[f.key]}</p>
                   </div>
-                );
-              })}
+                )}
+              </>
+            )}
+          </div>
 
-              {/* No actions and no observations */}
-              {!form.observations && ACTION_FIELDS.every((f) => !form[f.key]) && (
-                <p className="text-sm text-muted-foreground italic">El doctor envió el formulario sin observaciones ni acciones.</p>
-              )}
-
-              {/* Submission time */}
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {form && !isLoading && (
+            <div className="flex flex-col-reverse gap-3 border-t bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock className="h-3.5 w-3.5" />
-                Enviado: {format(parseISO(form.created_at), "d MMM yyyy · HH:mm", { locale: es })}
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-2 pt-2 border-t">
-                {form.review_status === "pending" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => markReadMut.mutate()}
-                    disabled={markReadMut.isPending}
-                  >
-                    <Eye className="h-4 w-4" />
-                    Marcar como leído
-                  </Button>
-                )}
-                {form.review_status !== "report_sent" && (
-                  <Button
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => setSendReportOpen(true)}
-                  >
-                    <Send className="h-4 w-4" />
-                    Enviar Informe
-                  </Button>
-                )}
-              </div>
+                Enviado el {format(parseISO(form.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+              </p>
+              {form.review_status !== "report_sent" && (
+                <div className="flex flex-wrap justify-end gap-2">
+                  {form.review_status === "pending" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => markReadMut.mutate()}
+                      disabled={markReadMut.isPending}
+                    >
+                      <Eye className="h-4 w-4" />
+                      Marcar como leído
+                    </Button>
+                  )}
+                  {form.review_status !== "report_sent" && (
+                    <Button
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setSendReportOpen(true)}
+                    >
+                      <Send className="h-4 w-4" />
+                      Enviar informe
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

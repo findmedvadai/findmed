@@ -4,35 +4,55 @@
 // escrituras pasan por la Edge Function case-actions (que también apaga/
 // reactiva la IA y asigna en WHAAPY); esta página solo lee por RLS.
 import { useState } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/hooks/useAuth";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader } from "@/components/app/PageHeader";
+import { FilterBar, SearchInput } from "@/components/app/FilterBar";
+import { EmptyState } from "@/components/app/EmptyState";
+import { SoftBadge } from "@/components/app/StatusBadge";
+import type { Tone } from "@/components/app/StatCard";
+import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { extractEdgeFunctionError, toastFromEdgeFunctionError } from "@/lib/edge-function-error";
-import { AlertTriangle, Bot, BotOff, Hand, LifeBuoy, Phone, RefreshCw } from "lucide-react";
+import { AlertTriangle, Bot, BotOff, CheckCircle2, Hand, LifeBuoy, MapPin, Phone, SearchX, UserRound } from "lucide-react";
 
 type PatientCase = Tables<"patient_cases">;
 type CaseEvent = Tables<"case_events">;
 type Bucket = "pending" | "active" | "closed";
+type View = "unassigned" | "mine" | "active" | "waiting" | "closed";
 
 const BUCKETS: Record<Bucket, string[]> = {
   pending: ["open", "awaiting_assignment"],
   active: ["assigned", "awaiting_patient", "awaiting_provider"],
   closed: ["resolved", "closed"],
 };
+
+const WAITING = ["awaiting_patient", "awaiting_provider"];
+
+/** Vistas de la cola: Sin asignar = bucket pending; Míos/En curso/En espera = bucket active acotado en el cliente; Resueltos = bucket closed. */
+const VIEWS: { value: View; label: string }[] = [
+  { value: "unassigned", label: "Sin asignar" },
+  { value: "mine", label: "Míos" },
+  { value: "active", label: "En curso" },
+  { value: "waiting", label: "En espera" },
+  { value: "closed", label: "Resueltos" },
+];
 
 const TYPE_LABEL: Record<string, string> = {
   appointment_help: "Cita",
@@ -53,10 +73,20 @@ const STATUS_LABEL: Record<string, string> = {
   closed: "Cerrado",
 };
 
-const PRIORITY_BADGE: Record<string, { label: string; className: string }> = {
-  urgent: { label: "Urgente", className: "bg-destructive text-destructive-foreground" },
-  high: { label: "Alta", className: "bg-amber-500 text-white" },
-  normal: { label: "Normal", className: "bg-muted text-muted-foreground" },
+const STATUS_TONE: Record<string, Tone> = {
+  open: "info",
+  awaiting_assignment: "danger",
+  assigned: "info",
+  awaiting_patient: "warning",
+  awaiting_provider: "warning",
+  resolved: "success",
+  closed: "neutral",
+};
+
+const PRIORITY: Record<string, { label: string; tone: Tone }> = {
+  urgent: { label: "Urgente", tone: "danger" },
+  high: { label: "Alta", tone: "warning" },
+  normal: { label: "Normal", tone: "neutral" },
 };
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2 };
@@ -95,6 +125,14 @@ const AI_STATE: Record<string, { label: string; icon: typeof Bot; className: str
   resume_failed: { label: "No se pudo reactivar la IA", icon: AlertTriangle, className: "text-destructive" },
 };
 
+const EMPTY_COPY: Record<View, { title: string; description: string }> = {
+  unassigned: { title: "No hay casos sin asignar", description: "Cuando el agente de WhatsApp canalice a un paciente, aparecerá aquí para que alguien del equipo lo tome." },
+  mine: { title: "No tienes casos asignados", description: "Toma un caso desde \"Sin asignar\" para darle seguimiento." },
+  active: { title: "No hay casos en curso", description: "Los casos que el equipo ya tomó aparecen aquí hasta cerrarse." },
+  waiting: { title: "Nada en espera", description: "Aquí aparecen los casos que esperan respuesta del paciente o de un proveedor." },
+  closed: { title: "Sin casos resueltos recientes", description: "Se muestran los últimos 50 casos resueltos o cerrados." },
+};
+
 async function invokeCaseAction(body: Record<string, unknown>) {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
@@ -108,13 +146,26 @@ async function invokeCaseAction(body: Record<string, unknown>) {
 
 const ago = (iso: string) => formatDistanceToNow(parseISO(iso), { addSuffix: true, locale: es });
 
-export default function Casos() {
-  const queryClient = useQueryClient();
-  const [bucket, setBucket] = useState<Bucket>("pending");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+/** Antigüedad compacta para la tabla: "hace 5 min", "hace 2 h", "hace 3 d". */
+function shortAgo(iso: string) {
+  const mins = Math.floor((Date.now() - parseISO(iso).getTime()) / 60_000);
+  if (mins < 1) return "ahora";
+  if (mins < 60) return `hace ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `hace ${days} d`;
+  return format(parseISO(iso), "d MMM", { locale: es });
+}
 
-  const { data: cases, isLoading } = useQuery({
+const caseLocation = (c: PatientCase) => (c.city ? `${c.city}${c.zone ? `, ${c.zone}` : ""}` : null);
+const isOverdue = (c: PatientCase) =>
+  !!c.due_at && !BUCKETS.closed.includes(c.status) && parseISO(c.due_at).getTime() < Date.now();
+
+function useCaseBucket(bucket: Bucket, enabled = true) {
+  return useQuery({
     queryKey: ["patient-cases", bucket],
+    enabled,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("patient_cases")
@@ -132,6 +183,22 @@ export default function Casos() {
     refetchInterval: 20_000,
     placeholderData: keepPreviousData,
   });
+}
+
+export default function Casos() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const me = user?.id ?? null;
+  const [view, setView] = useState<View>("unassigned");
+  const [selected, setSelected] = useState<PatientCase | null>(null);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+
+  // Pendientes y en curso siempre (alimentan los contadores); cerrados solo al verlos.
+  const pending = useCaseBucket("pending");
+  const active = useCaseBucket("active");
+  const closed = useCaseBucket("closed", view === "closed");
 
   const { data: staff } = useQuery({
     queryKey: ["case-staff"],
@@ -142,96 +209,284 @@ export default function Casos() {
     },
   });
 
-  const selected = cases?.find((c) => c.id === selectedId) ?? null;
+  const pendingRows = pending.data ?? [];
+  const activeRows = active.data ?? [];
+  const closedRows = closed.data ?? [];
+
+  const rowsFor = (v: View): PatientCase[] => {
+    if (v === "unassigned") return pendingRows;
+    if (v === "closed") return closedRows;
+    if (v === "mine") return activeRows.filter((c) => !!me && c.assigned_user_id === me);
+    if (v === "waiting") return activeRows.filter((c) => WAITING.includes(c.status));
+    return activeRows;
+  };
+
+  const counts: Partial<Record<View, number>> = {
+    unassigned: pending.data ? pendingRows.length : undefined,
+    mine: active.data ? rowsFor("mine").length : undefined,
+    active: active.data ? activeRows.length : undefined,
+    waiting: active.data ? rowsFor("waiting").length : undefined,
+  };
+  const urgentOpen = [...pendingRows, ...activeRows].filter((c) => c.priority === "urgent").length;
+
+  const source = view === "unassigned" ? pending : view === "closed" ? closed : active;
+  const term = search.trim().toLowerCase();
+  const rows = rowsFor(view).filter((c) => {
+    if (typeFilter !== "all" && c.request_type !== typeFilter) return false;
+    if (priorityFilter !== "all" && c.priority !== priorityFilter) return false;
+    if (!term) return true;
+    return [c.contact_name, c.subject_phone, c.summary, c.city, c.zone, TYPE_LABEL[c.request_type]]
+      .some((v) => (v ?? "").toLowerCase().includes(term));
+  });
+  const filtersActive = !!term || typeFilter !== "all" || priorityFilter !== "all";
+  const clearFilters = () => {
+    setSearch("");
+    setTypeFilter("all");
+    setPriorityFilter("all");
+  };
+
+  // El caso abierto se refresca con los datos más nuevos aunque cambie de bucket.
+  const current = selected
+    ? [...pendingRows, ...activeRows, ...closedRows].find((c) => c.id === selected.id) ?? selected
+    : null;
+  const staffName = (id: string | null) => (id ? (id === me ? "Tú" : staff?.[id] ?? "—") : null);
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Casos</h1>
-          <p className="text-sm text-muted-foreground">
-            Solicitudes que necesitan a una persona: hospital, estudios, urgencias y canalizaciones del agente de WhatsApp.
-          </p>
-        </div>
-        <Tabs value={bucket} onValueChange={(v) => setBucket(v as Bucket)}>
-          <TabsList>
-            <TabsTrigger value="pending">Pendientes</TabsTrigger>
-            <TabsTrigger value="active">En curso</TabsTrigger>
-            <TabsTrigger value="closed">Cerrados</TabsTrigger>
+    <div className="space-y-5">
+      <PageHeader
+        title="Casos"
+        description="Solicitudes que necesitan a una persona: hospital, estudios, urgencias y canalizaciones del agente de WhatsApp."
+        actions={urgentOpen > 0 ? <SoftBadge tone="danger" dot>{urgentOpen === 1 ? "1 urgente abierto" : `${urgentOpen} urgentes abiertos`}</SoftBadge> : undefined}
+      />
+
+      <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+        <Tabs value={view} onValueChange={(v) => setView(v as View)}>
+          <TabsList className="h-9 w-max">
+            {VIEWS.map((v) => {
+              const n = counts[v.value];
+              return (
+                <TabsTrigger key={v.value} value={v.value} className="gap-1.5 text-sm">
+                  {v.label}
+                  {n !== undefined && (
+                    <span
+                      className={cn(
+                        "min-w-5 rounded-full px-1.5 text-center text-[11px] font-semibold tabular-nums leading-[18px]",
+                        v.value === "unassigned" && n > 0 ? "bg-destructive/10 text-destructive" : "bg-foreground/[0.06] text-muted-foreground",
+                      )}
+                    >
+                      {n}
+                    </span>
+                  )}
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
         </Tabs>
       </div>
 
-      {isLoading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-24 w-full rounded-xl" />)}
-        </div>
-      ) : cases && cases.length > 0 ? (
-        <div className="space-y-2">
-          {cases.map((c) => {
-            const prio = PRIORITY_BADGE[c.priority] ?? PRIORITY_BADGE.normal;
-            const ai = AI_STATE[c.ai_state] ?? AI_STATE.not_requested;
-            const overdue = c.due_at && bucket !== "closed" && parseISO(c.due_at).getTime() < Date.now();
-            return (
-              <Card
-                key={c.id}
-                className={`cursor-pointer transition-all hover:bg-accent/50 ${c.priority === "urgent" && bucket !== "closed" ? "border-l-4 border-l-destructive" : ""}`}
-                onClick={() => setSelectedId(c.id)}
-              >
-                <CardContent className="space-y-2 p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge className={prio.className}>{prio.label}</Badge>
-                    <Badge variant="outline">{TYPE_LABEL[c.request_type] ?? c.request_type}</Badge>
-                    <Badge variant="secondary">{STATUS_LABEL[c.status] ?? c.status}</Badge>
-                    {overdue && <Badge variant="destructive">Vencido</Badge>}
-                    <span className="ml-auto text-xs text-muted-foreground">{ago(c.created_at)}</span>
-                  </div>
-                  <p className="text-sm font-medium text-foreground">
-                    {c.contact_name ?? "Sin nombre"} <span className="font-normal text-muted-foreground">· {c.subject_phone}</span>
-                    {c.city && <span className="font-normal text-muted-foreground"> · {c.city}{c.zone ? `, ${c.zone}` : ""}</span>}
-                  </p>
-                  <p className="line-clamp-2 text-sm text-muted-foreground">{c.summary}</p>
-                  <div className="flex flex-wrap items-center gap-4 text-xs">
-                    <span className={`flex items-center gap-1 ${ai.className}`}>
-                      <ai.icon className="h-3.5 w-3.5" /> {ai.label}
-                    </span>
-                    {c.assigned_user_id && (
-                      <span className="text-muted-foreground">Lo lleva: {staff?.[c.assigned_user_id] ?? "—"}</span>
-                    )}
-                    {c.next_action && <span className="text-muted-foreground">Próximo: {c.next_action}</span>}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+      <FilterBar>
+        <SearchInput value={search} onChange={setSearch} placeholder="Buscar paciente, teléfono, ciudad…" />
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="h-9 min-w-[140px] flex-1 text-sm sm:w-[170px] sm:flex-none"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los tipos</SelectItem>
+            {Object.entries(TYPE_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+          <SelectTrigger className="h-9 min-w-[140px] flex-1 text-sm sm:w-[170px] sm:flex-none"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas las prioridades</SelectItem>
+            {Object.entries(PRIORITY).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {filtersActive && (
+          <Button size="sm" variant="ghost" className="h-9 px-2.5 text-muted-foreground" onClick={clearFilters}>
+            Limpiar
+          </Button>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground">
+          {source.data ? (rows.length === 1 ? "1 caso" : `${rows.length} casos`) : ""}
+        </span>
+      </FilterBar>
+
+      {source.isPending ? (
+        <Card className="overflow-hidden">
+          <div className="h-9 border-b bg-muted/40" />
+          <div className="divide-y">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3">
+                <Skeleton className="hidden h-5 w-16 rounded-full sm:block" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+                <Skeleton className="hidden h-4 w-48 md:block" />
+                <Skeleton className="h-3 w-14" />
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : source.isError && !source.data ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="No se pudieron cargar los casos"
+          description="Revisa tu conexión e inténtalo de nuevo."
+          action={<Button size="sm" variant="outline" onClick={() => source.refetch()}>Reintentar</Button>}
+        />
+      ) : rows.length === 0 ? (
+        filtersActive ? (
+          <EmptyState
+            icon={SearchX}
+            title="Sin resultados con estos filtros"
+            description="Prueba con otra búsqueda o quita los filtros."
+            action={<Button size="sm" variant="outline" onClick={clearFilters}>Limpiar filtros</Button>}
+          />
+        ) : (
+          <EmptyState icon={view === "closed" ? CheckCircle2 : LifeBuoy} title={EMPTY_COPY[view].title} description={EMPTY_COPY[view].description} />
+        )
       ) : (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 p-10 text-center text-muted-foreground">
-            <LifeBuoy className="h-8 w-8" />
-            <p>{bucket === "pending" ? "No hay casos pendientes." : bucket === "active" ? "No hay casos en curso." : "No hay casos cerrados recientes."}</p>
-          </CardContent>
+        <Card className="overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableHead className="hidden h-9 w-[112px] text-xs sm:table-cell">Prioridad</TableHead>
+                <TableHead className="h-9 text-xs">Paciente</TableHead>
+                <TableHead className="hidden h-9 text-xs sm:table-cell">Solicitud</TableHead>
+                <TableHead className="hidden h-9 text-xs lg:table-cell">Ciudad</TableHead>
+                <TableHead className="hidden h-9 text-xs md:table-cell">Estado</TableHead>
+                <TableHead className="hidden h-9 text-xs xl:table-cell">Responsable</TableHead>
+                <TableHead className="h-9 text-right text-xs">Recibido</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((c) => (
+                <CaseRow
+                  key={c.id}
+                  c={c}
+                  selected={current?.id === c.id}
+                  assignee={staffName(c.assigned_user_id)}
+                  onOpen={() => setSelected(c)}
+                />
+              ))}
+            </TableBody>
+          </Table>
         </Card>
       )}
 
       <CaseSheet
-        caseRow={selected}
+        caseRow={current}
         staff={staff ?? {}}
-        onClose={() => setSelectedId(null)}
+        me={me}
+        onClose={() => setSelected(null)}
         onChanged={() => queryClient.invalidateQueries({ queryKey: ["patient-cases"] })}
       />
     </div>
   );
 }
 
+function CaseRow({ c, selected, assignee, onOpen }: { c: PatientCase; selected: boolean; assignee: string | null; onOpen: () => void }) {
+  const prio = PRIORITY[c.priority] ?? PRIORITY.normal;
+  const ai = AI_STATE[c.ai_state] ?? AI_STATE.not_requested;
+  const isClosed = BUCKETS.closed.includes(c.status);
+  const overdue = isOverdue(c);
+  const where = caseLocation(c);
+
+  return (
+    <TableRow
+      tabIndex={0}
+      data-state={selected ? "selected" : undefined}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className={cn(
+        "cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none",
+        c.priority === "urgent" && !isClosed && "bg-destructive/[0.03]",
+      )}
+    >
+      <TableCell className="hidden py-2.5 sm:table-cell">
+        <SoftBadge tone={prio.tone} dot>{prio.label}</SoftBadge>
+      </TableCell>
+      <TableCell className="py-2.5">
+        <p className="max-w-[240px] truncate font-medium text-foreground">{c.contact_name ?? "Sin nombre"}</p>
+        <p className="text-xs text-muted-foreground">
+          {c.subject_phone}
+          {where && <span className="lg:hidden"> · {where}</span>}
+        </p>
+        <div className="mt-1.5 flex flex-wrap gap-1 md:hidden">
+          {c.priority !== "normal" && <SoftBadge tone={prio.tone} dot className="sm:hidden">{prio.label}</SoftBadge>}
+          <SoftBadge tone="neutral" className="sm:hidden">{TYPE_LABEL[c.request_type] ?? c.request_type}</SoftBadge>
+          <SoftBadge tone={STATUS_TONE[c.status] ?? "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</SoftBadge>
+          {overdue && <SoftBadge tone="danger">Vencido</SoftBadge>}
+        </div>
+      </TableCell>
+      <TableCell className="hidden py-2.5 sm:table-cell">
+        <p className="text-sm font-medium text-foreground">{TYPE_LABEL[c.request_type] ?? c.request_type}</p>
+        <p className="line-clamp-1 max-w-[360px] text-xs text-muted-foreground">{c.summary}</p>
+      </TableCell>
+      <TableCell className="hidden py-2.5 text-sm text-muted-foreground lg:table-cell">{where ?? "—"}</TableCell>
+      <TableCell className="hidden py-2.5 md:table-cell">
+        <div className="flex flex-wrap items-center gap-1">
+          <SoftBadge tone={STATUS_TONE[c.status] ?? "neutral"} dot>{STATUS_LABEL[c.status] ?? c.status}</SoftBadge>
+          {overdue && <SoftBadge tone="danger">Vencido</SoftBadge>}
+        </div>
+        {!isClosed && (
+          <p className={cn("mt-1 flex items-center gap-1 text-[11px]", ai.className)}>
+            <ai.icon className="h-3 w-3" /> {ai.label}
+          </p>
+        )}
+      </TableCell>
+      <TableCell className="hidden py-2.5 xl:table-cell">
+        <span className={cn("block max-w-[200px] truncate text-sm", assignee ? "text-foreground" : "text-muted-foreground")}>
+          {assignee ?? "Sin asignar"}
+        </span>
+      </TableCell>
+      <TableCell
+        className="whitespace-nowrap py-2.5 text-right text-xs text-muted-foreground"
+        title={format(parseISO(c.created_at), "d MMM yyyy, HH:mm", { locale: es })}
+      >
+        {shortAgo(c.created_at)}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function InfoItem({ icon: Icon, label, children }: { icon: ComponentType<{ className?: string }>; label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-start gap-2.5">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <dt className="text-xs text-muted-foreground">{label}</dt>
+        <dd className="truncate text-sm text-foreground">{children}</dd>
+      </div>
+    </div>
+  );
+}
+
+function eventDot(type: string) {
+  if (type.endsWith("_failed") || type === "conversation_not_found" || type === "whaapy_not_configured" || type === "whaapy_no_matching_agent") {
+    return "bg-destructive";
+  }
+  if (type === "resolved" || type === "closed") return "bg-success";
+  if (type === "note") return "bg-info";
+  if (type === "created" || type === "assigned") return "bg-primary";
+  return "bg-muted-foreground/40";
+}
+
 function CaseSheet({
   caseRow,
   staff,
+  me,
   onClose,
   onChanged,
 }: {
   caseRow: PatientCase | null;
   staff: Record<string, string>;
+  me: string | null;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -253,7 +508,7 @@ function CaseSheet({
     setResumeAi(true);
   }
 
-  const { data: events } = useQuery({
+  const { data: events, isPending: eventsPending } = useQuery({
     queryKey: ["case-events", caseRow?.id],
     enabled: !!caseRow,
     queryFn: async () => {
@@ -292,126 +547,238 @@ function CaseSheet({
   const closed = caseRow.status === "resolved" || caseRow.status === "closed";
   const busy = action.isPending;
   const ai = AI_STATE[caseRow.ai_state] ?? AI_STATE.not_requested;
+  const prio = PRIORITY[caseRow.priority] ?? PRIORITY.normal;
+  const overdue = isOverdue(caseRow);
+  // Con keepPreviousData puede llegar el historial del caso anterior mientras carga.
+  const caseEvents = (events ?? []).filter((e) => e.case_id === caseRow.id);
+  const assignee = caseRow.assigned_user_id
+    ? caseRow.assigned_user_id === me
+      ? "Tú"
+      : staff[caseRow.assigned_user_id] ?? "—"
+    : "Sin asignar";
+  const canPauseAi = caseRow.ai_state === "pause_failed" || caseRow.ai_state === "not_requested" || caseRow.ai_state === "resumed";
 
   return (
     <Sheet open={!!caseRow} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle>
-            {TYPE_LABEL[caseRow.request_type] ?? caseRow.request_type} · {caseRow.contact_name ?? "Sin nombre"}
-          </SheetTitle>
-          <SheetDescription>
-            {STATUS_LABEL[caseRow.status]} · abierto {ago(caseRow.created_at)}
-          </SheetDescription>
+      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
+        <SheetHeader className="space-y-2 border-b p-4 pr-12 text-left">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <SoftBadge tone={prio.tone} dot>{prio.label}</SoftBadge>
+            <SoftBadge tone="neutral">{TYPE_LABEL[caseRow.request_type] ?? caseRow.request_type}</SoftBadge>
+            <SoftBadge tone={STATUS_TONE[caseRow.status] ?? "neutral"}>{STATUS_LABEL[caseRow.status] ?? caseRow.status}</SoftBadge>
+            {overdue && <SoftBadge tone="danger">Vencido</SoftBadge>}
+          </div>
+          <div className="space-y-0.5">
+            <SheetTitle className="text-base font-semibold leading-tight">{caseRow.contact_name ?? "Sin nombre"}</SheetTitle>
+            <SheetDescription className="text-xs">
+              Abierto {ago(caseRow.created_at)} · {format(parseISO(caseRow.created_at), "d MMM yyyy, HH:mm", { locale: es })}
+            </SheetDescription>
+          </div>
         </SheetHeader>
 
-        <div className="mt-4 space-y-5 text-sm">
-          <section className="space-y-1">
-            <p className="flex items-center gap-2"><Phone className="h-4 w-4" /> {caseRow.subject_phone}</p>
-            {caseRow.city && <p className="text-muted-foreground">{caseRow.city}{caseRow.zone ? `, ${caseRow.zone}` : ""}</p>}
-            <p className="whitespace-pre-wrap">{caseRow.summary}</p>
-            {caseRow.handoff_reason && <p className="text-muted-foreground">Motivo de canalización: {caseRow.handoff_reason}</p>}
-            {caseRow.resolution_reason && <p className="text-muted-foreground">Cierre: {caseRow.resolution_reason}</p>}
-            <p className={`flex items-center gap-1 ${ai.className}`}><ai.icon className="h-4 w-4" /> {ai.label}</p>
-            {caseRow.assigned_user_id && <p className="text-muted-foreground">Lo lleva: {staff[caseRow.assigned_user_id] ?? "—"}</p>}
-          </section>
+        {!closed && (
+          <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+            <Button
+              size="sm"
+              variant={caseRow.assigned_user_id ? "outline" : "default"}
+              className="gap-1.5"
+              disabled={busy}
+              onClick={() => action.mutate({ action: "take", reassign: !!caseRow.assigned_user_id })}
+            >
+              <Hand className="h-4 w-4" /> {caseRow.assigned_user_id ? "Reasignarme el caso" : "Tomar caso"}
+            </Button>
+            {canPauseAi && (
+              <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => action.mutate({ action: "retry_pause" })}>
+                <BotOff className="h-4 w-4" /> Apagar IA en WhatsApp
+              </Button>
+            )}
+            <Select
+              value={["awaiting_assignment", "assigned", "awaiting_patient", "awaiting_provider"].includes(caseRow.status) ? caseRow.status : undefined}
+              onValueChange={(v) => action.mutate({ action: "update", status: v })}
+              disabled={busy}
+            >
+              <SelectTrigger className="h-9 w-full text-sm sm:ml-auto sm:w-[210px]" aria-label="Estado del caso">
+                <SelectValue placeholder="Cambiar estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="awaiting_assignment">Sin asignar</SelectItem>
+                <SelectItem value="assigned">Asignado</SelectItem>
+                <SelectItem value="awaiting_patient">Esperando al paciente</SelectItem>
+                <SelectItem value="awaiting_provider">Esperando al proveedor</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
-          {!closed && (
-            <>
-              <section className="flex flex-wrap gap-2">
-                <Button size="sm" className="gap-2" disabled={busy} onClick={() => action.mutate({ action: "take", reassign: !!caseRow.assigned_user_id })}>
-                  <Hand className="h-4 w-4" /> {caseRow.assigned_user_id ? "Reasignarme el caso" : "Tomar caso"}
-                </Button>
-                {(caseRow.ai_state === "pause_failed" || caseRow.ai_state === "not_requested" || caseRow.ai_state === "resumed") && (
-                  <Button size="sm" variant="outline" className="gap-2" disabled={busy} onClick={() => action.mutate({ action: "retry_pause" })}>
-                    <RefreshCw className="h-4 w-4" /> Apagar IA en WhatsApp
-                  </Button>
+        <Tabs defaultValue="detalle" className="flex min-h-0 flex-1 flex-col">
+          <div className="border-b px-4 py-2">
+            <TabsList className="grid h-9 w-full grid-cols-2">
+              <TabsTrigger value="detalle" className="text-sm">Detalle</TabsTrigger>
+              <TabsTrigger value="historial" className="gap-1.5 text-sm">
+                Historial
+                {caseEvents.length > 0 && (
+                  <span className="rounded-full bg-foreground/[0.06] px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-muted-foreground">
+                    {caseEvents.length}
+                  </span>
                 )}
-              </section>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-              <section className="space-y-2">
-                <Label>Estado</Label>
-                <Select
-                  value={["awaiting_assignment", "assigned", "awaiting_patient", "awaiting_provider"].includes(caseRow.status) ? caseRow.status : undefined}
-                  onValueChange={(v) => action.mutate({ action: "update", status: v })}
-                  disabled={busy}
-                >
-                  <SelectTrigger><SelectValue placeholder="Cambiar estado" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="awaiting_assignment">Sin asignar</SelectItem>
-                    <SelectItem value="assigned">Asignado</SelectItem>
-                    <SelectItem value="awaiting_patient">Esperando al paciente</SelectItem>
-                    <SelectItem value="awaiting_provider">Esperando al proveedor</SelectItem>
-                  </SelectContent>
-                </Select>
-              </section>
+          <TabsContent value="detalle" className="mt-0 min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+            <dl className="grid gap-x-4 gap-y-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
+              <InfoItem icon={Phone} label="Teléfono">{caseRow.subject_phone}</InfoItem>
+              <InfoItem icon={MapPin} label="Ubicación">{caseLocation(caseRow) ?? "—"}</InfoItem>
+              <InfoItem icon={UserRound} label="Responsable">{assignee}</InfoItem>
+              <InfoItem icon={ai.icon} label="Asistente de WhatsApp">
+                <span className={ai.className}>{ai.label}</span>
+              </InfoItem>
+            </dl>
 
-              <section className="space-y-2">
-                <Label htmlFor="next-action">Próxima acción y vencimiento</Label>
-                <Input id="next-action" value={nextAction} maxLength={500} placeholder="Ej. Llamar al hospital para confirmar cupo" onChange={(e) => setNextAction(e.target.value)} />
-                <Input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() =>
-                    action.mutate({
-                      action: "update",
-                      next_action: nextAction.trim() || null,
-                      due_at: dueAt ? new Date(dueAt).toISOString() : null,
-                    })}
-                >
-                  Guardar seguimiento
-                </Button>
-              </section>
-
-              <section className="space-y-2">
-                <Label htmlFor="note">Nota interna</Label>
-                <Textarea id="note" value={note} maxLength={2000} onChange={(e) => setNote(e.target.value)} />
-                <Button size="sm" variant="outline" disabled={busy || !note.trim()} onClick={() => action.mutate({ action: "note", text: note })}>
-                  Agregar nota
-                </Button>
-              </section>
-
-              <section className="space-y-2 rounded-lg border p-3">
-                <Label htmlFor="reason">Cerrar caso</Label>
-                <Textarea id="reason" value={reason} maxLength={500} placeholder="Motivo (obligatorio): qué se resolvió o por qué se cierra" onChange={(e) => setReason(e.target.value)} />
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={resumeAi} onCheckedChange={(v) => setResumeAi(v === true)} />
-                  Reactivar la IA en la conversación de WhatsApp
-                </label>
-                <div className="flex gap-2">
-                  <Button size="sm" disabled={busy || reason.trim().length < 3} onClick={() => action.mutate({ action: "resolve", outcome: "resolved", reason, resume_ai: resumeAi })}>
-                    Resuelto
-                  </Button>
-                  <Button size="sm" variant="outline" disabled={busy || reason.trim().length < 3} onClick={() => action.mutate({ action: "resolve", outcome: "closed", reason, resume_ai: resumeAi })}>
-                    Cerrar sin resolver
-                  </Button>
+            <section className="space-y-1.5">
+              <h3 className="text-sm font-semibold text-foreground">Solicitud</h3>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{caseRow.summary}</p>
+              {caseRow.handoff_reason && (
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Motivo de canalización:</span> {caseRow.handoff_reason}
+                </p>
+              )}
+              {caseRow.resolution_reason && (
+                <div className="mt-2 rounded-md border border-success/25 bg-success/5 px-3 py-2">
+                  <p className="text-xs font-medium text-success">Cierre</p>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">{caseRow.resolution_reason}</p>
                 </div>
-              </section>
-            </>
-          )}
+              )}
+            </section>
 
-          <section className="space-y-2">
-            <h3 className="font-medium">Historial</h3>
-            <ol className="space-y-2 border-l pl-4">
-              {(events ?? []).map((e) => {
-                const detail = (e.detail ?? {}) as Record<string, unknown>;
-                const text = typeof detail.text === "string" ? detail.text : typeof detail.reason === "string" ? detail.reason : null;
-                return (
-                  <li key={e.id} className="space-y-0.5">
-                    <p className={e.event_type.endsWith("_failed") ? "text-destructive" : ""}>
-                      {EVENT_LABEL[e.event_type] ?? e.event_type}
-                      {e.actor_user_id && <span className="text-muted-foreground"> · {staff[e.actor_user_id] ?? "equipo"}</span>}
+            {!closed && (
+              <>
+                <section className="space-y-3 rounded-lg border p-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">Seguimiento</h3>
+                    <p className="text-xs text-muted-foreground">Qué sigue y para cuándo.</p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_200px]">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="next-action" className="text-xs font-medium">Próxima acción</Label>
+                      <Input
+                        id="next-action"
+                        className="h-9 text-sm"
+                        value={nextAction}
+                        maxLength={500}
+                        placeholder="Ej. Llamar al hospital para confirmar cupo"
+                        onChange={(e) => setNextAction(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="due-at" className="text-xs font-medium">Vence</Label>
+                      <Input id="due-at" type="datetime-local" className="h-9 text-sm" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className={cn("text-xs", overdue ? "text-destructive" : "text-muted-foreground")}>
+                      {overdue ? "La próxima acción ya venció." : ""}
                     </p>
-                    {text && <p className="whitespace-pre-wrap text-muted-foreground">{text}</p>}
-                    <p className="text-xs text-muted-foreground">{format(parseISO(e.created_at), "d MMM yyyy, HH:mm", { locale: es })}</p>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
-        </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        action.mutate({
+                          action: "update",
+                          next_action: nextAction.trim() || null,
+                          due_at: dueAt ? new Date(dueAt).toISOString() : null,
+                        })}
+                    >
+                      Guardar seguimiento
+                    </Button>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <div>
+                    <Label htmlFor="note" className="text-sm font-semibold">Nota interna</Label>
+                    <p className="text-xs text-muted-foreground">Solo la ve el equipo; queda en el historial del caso.</p>
+                  </div>
+                  <Textarea id="note" rows={3} className="resize-none text-sm" value={note} maxLength={2000} onChange={(e) => setNote(e.target.value)} />
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="outline" disabled={busy || !note.trim()} onClick={() => action.mutate({ action: "note", text: note })}>
+                      Agregar nota
+                    </Button>
+                  </div>
+                </section>
+
+                <section className="space-y-3 rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="reason" className="text-sm font-semibold">Cerrar caso</Label>
+                    <p className="text-xs text-muted-foreground">El motivo es obligatorio y queda registrado en el historial.</p>
+                  </div>
+                  <Textarea
+                    id="reason"
+                    rows={2}
+                    className="resize-none text-sm"
+                    value={reason}
+                    maxLength={500}
+                    placeholder="Qué se resolvió o por qué se cierra"
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <Checkbox checked={resumeAi} onCheckedChange={(v) => setResumeAi(v === true)} />
+                    Reactivar la IA en la conversación de WhatsApp
+                  </label>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button size="sm" variant="outline" disabled={busy || reason.trim().length < 3} onClick={() => action.mutate({ action: "resolve", outcome: "closed", reason, resume_ai: resumeAi })}>
+                      Cerrar sin resolver
+                    </Button>
+                    <Button size="sm" className="gap-1.5" disabled={busy || reason.trim().length < 3} onClick={() => action.mutate({ action: "resolve", outcome: "resolved", reason, resume_ai: resumeAi })}>
+                      <CheckCircle2 className="h-4 w-4" /> Marcar como resuelto
+                    </Button>
+                  </div>
+                </section>
+              </>
+            )}
+          </TabsContent>
+
+          <TabsContent value="historial" className="mt-0 min-h-0 flex-1 overflow-y-auto p-4">
+            {eventsPending && caseEvents.length === 0 ? (
+              <div className="space-y-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex gap-3">
+                    <Skeleton className="mt-1 h-3 w-3 rounded-full" />
+                    <div className="flex-1 space-y-1.5">
+                      <Skeleton className="h-4 w-48" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : caseEvents.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">Sin movimientos todavía.</p>
+            ) : (
+              <ol>
+                {caseEvents.map((e, i) => {
+                  const detail = (e.detail ?? {}) as Record<string, unknown>;
+                  const text = typeof detail.text === "string" ? detail.text : typeof detail.reason === "string" ? detail.reason : null;
+                  const failed = e.event_type.endsWith("_failed");
+                  return (
+                    <li key={e.id} className="relative flex gap-3 pb-5 last:pb-0">
+                      {i < caseEvents.length - 1 && <span className="absolute -bottom-1.5 left-[5px] top-[17px] w-px bg-border" aria-hidden />}
+                      <span className={cn("mt-1.5 h-[11px] w-[11px] shrink-0 rounded-full ring-4 ring-background", eventDot(e.event_type))} aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <p className={cn("text-sm font-medium", failed ? "text-destructive" : "text-foreground")}>
+                          {EVENT_LABEL[e.event_type] ?? e.event_type}
+                          {e.actor_user_id && <span className="font-normal text-muted-foreground"> · {e.actor_user_id === me ? "tú" : staff[e.actor_user_id] ?? "equipo"}</span>}
+                        </p>
+                        {text && <p className="mt-1 whitespace-pre-wrap rounded-md bg-muted/60 px-2.5 py-1.5 text-sm text-foreground">{text}</p>}
+                        <p className="mt-0.5 text-xs text-muted-foreground">{format(parseISO(e.created_at), "d MMM yyyy, HH:mm", { locale: es })}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </TabsContent>
+        </Tabs>
       </SheetContent>
     </Sheet>
   );

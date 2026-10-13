@@ -5,14 +5,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
-import { Save, User, X } from "lucide-react";
+import { Save, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Props {
   doctorId: string;
+}
+
+/** Aviso discreto junto al botón de guardar cuando hay cambios pendientes. */
+function UnsavedHint({ show }: { show: boolean }) {
+  if (!show) return null;
+  return <span className="text-xs font-medium text-warning">Cambios sin guardar</span>;
 }
 
 export default function DoctorProfileCard({ doctorId }: Props) {
@@ -131,66 +136,95 @@ export default function DoctorProfileCard({ doctorId }: Props) {
     (s) => !selectedSpecIds.includes(s.id)
   );
 
+  // Solo para mostrar "Cambios sin guardar"; no altera qué se guarda.
+  const profileDirty =
+    !!profile && (fullName !== (profile.full_name ?? "") || phone !== (profile.phone ?? ""));
+  const savedSpecIds = (doctorSpecialties ?? []).map((ds) => ds.specialty_id);
+  const specsDirty =
+    !!doctorSpecialties &&
+    (savedSpecIds.length !== selectedSpecIds.length || savedSpecIds.some((id) => !selectedSpecIds.includes(id)));
+
   if (profileLoading || specLoading) {
-    return <Skeleton className="h-64 w-full" />;
+    return (
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Skeleton className="h-[220px] w-full rounded-lg" />
+        <Skeleton className="h-[220px] w-full rounded-lg" />
+      </div>
+    );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <User className="h-5 w-5" />
-          Perfil del Doctor
-        </CardTitle>
-        <CardDescription>Información personal y especialidades.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {/* Basic info */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Nombre completo *</Label>
+    <div className="grid gap-4 xl:grid-cols-2">
+      {/* Datos personales */}
+      <Card className="flex flex-col">
+        <CardHeader className="space-y-0.5 p-4 pb-3">
+          <CardTitle className="text-sm font-semibold">Datos personales</CardTitle>
+          <CardDescription className="text-xs">Tu nombre y teléfono de contacto.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid flex-1 gap-3 p-4 pt-0 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="doctor-full-name" className="text-sm">Nombre completo *</Label>
             <Input
+              id="doctor-full-name"
+              className="h-9 text-sm"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               maxLength={100}
               placeholder="Dr. Juan Pérez"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Teléfono</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="doctor-phone" className="text-sm">Teléfono</Label>
             <Input
+              id="doctor-phone"
+              className="h-9 text-sm"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               maxLength={20}
               placeholder="+52 555 123 4567"
             />
           </div>
+        </CardContent>
+        <div className="flex items-center justify-end gap-3 border-t px-4 py-3">
+          <UnsavedHint show={profileDirty} />
+          <Button
+            size="sm"
+            onClick={() => saveProfileMut.mutate()}
+            disabled={saveProfileMut.isPending || !fullName.trim()}
+            className="gap-1.5"
+          >
+            <Save className="h-4 w-4" />
+            {saveProfileMut.isPending ? "Guardando…" : "Guardar perfil"}
+          </Button>
         </div>
-        <Button
-          onClick={() => saveProfileMut.mutate()}
-          disabled={saveProfileMut.isPending || !fullName.trim()}
-          className="gap-2"
-        >
-          <Save className="h-4 w-4" />
-          {saveProfileMut.isPending ? "Guardando…" : "Guardar perfil"}
-        </Button>
+      </Card>
 
-        {/* Specialties */}
-        <div className="border-t pt-4 space-y-3">
-          <Label>Especialidades</Label>
-          <div className="flex flex-wrap gap-2">
+      {/* Especialidades */}
+      <Card className="flex flex-col">
+        <CardHeader className="space-y-0.5 p-4 pb-3">
+          <CardTitle className="text-sm font-semibold">Especialidades</CardTitle>
+          <CardDescription className="text-xs">Las especialidades en las que atiendes.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex-1 space-y-3 p-4 pt-0">
+          <div className="flex min-h-9 flex-wrap items-center gap-1.5">
             {selectedSpecIds.map((sid) => {
               const spec = (allSpecialties ?? []).find((s) => s.id === sid);
+              const specName = spec?.name ?? sid;
               return (
-                <Badge key={sid} variant="secondary" className="gap-1 pr-1">
-                  {spec?.name ?? sid}
+                <span
+                  key={sid}
+                  className="inline-flex items-center gap-1 rounded-full border bg-muted/60 py-0.5 pl-2.5 pr-1 text-xs font-medium text-foreground"
+                >
+                  {specName}
                   <button
+                    type="button"
                     onClick={() => removeSpecialty(sid)}
-                    className="ml-1 rounded-full p-0.5 hover:bg-muted"
+                    aria-label={`Quitar ${specName}`}
+                    className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
                   >
                     <X className="h-3 w-3" />
                   </button>
-                </Badge>
+                </span>
               );
             })}
             {selectedSpecIds.length === 0 && (
@@ -199,7 +233,7 @@ export default function DoctorProfileCard({ doctorId }: Props) {
           </div>
           {availableSpecialties.length > 0 && (
             <Select onValueChange={addSpecialty} value="">
-              <SelectTrigger className="w-60">
+              <SelectTrigger className="h-9 w-full text-sm sm:w-[240px]" aria-label="Agregar especialidad">
                 <SelectValue placeholder="Agregar especialidad" />
               </SelectTrigger>
               <SelectContent>
@@ -209,17 +243,21 @@ export default function DoctorProfileCard({ doctorId }: Props) {
               </SelectContent>
             </Select>
           )}
+        </CardContent>
+        <div className="flex items-center justify-end gap-3 border-t px-4 py-3">
+          <UnsavedHint show={specsDirty} />
           <Button
+            size="sm"
             variant="outline"
             onClick={() => saveSpecialtiesMut.mutate()}
             disabled={saveSpecialtiesMut.isPending}
-            className="gap-2"
+            className="gap-1.5"
           >
             <Save className="h-4 w-4" />
             {saveSpecialtiesMut.isPending ? "Guardando…" : "Guardar especialidades"}
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </Card>
+    </div>
   );
 }

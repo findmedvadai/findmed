@@ -14,14 +14,18 @@ export default function Agenda() {
     <div className="space-y-5">
       <PageHeader
         title="Agenda"
-        description="Citas de todos los doctores: en calendario o en lista con filtros."
+        description={
+          view === "lista"
+            ? "Todas las citas en una lista con búsqueda y filtros."
+            : "Citas de todos los doctores por semana. Haz clic en un horario para agendar."
+        }
         actions={
           <Tabs value={view} onValueChange={(v) => setParams(v === "lista" ? { vista: "lista" } : {}, { replace: true })}>
-            <TabsList className="h-9">
-              <TabsTrigger value="calendario" className="gap-1.5 text-sm">
+            <TabsList className="h-9 p-0.5" aria-label="Vista de la agenda">
+              <TabsTrigger value="calendario" className="h-8 gap-1.5 px-3 text-sm">
                 <CalendarDays className="h-4 w-4" /> Calendario
               </TabsTrigger>
-              <TabsTrigger value="lista" className="gap-1.5 text-sm">
+              <TabsTrigger value="lista" className="h-8 gap-1.5 px-3 text-sm">
                 <List className="h-4 w-4" /> Lista
               </TabsTrigger>
             </TabsList>

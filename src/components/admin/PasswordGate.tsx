@@ -1,13 +1,9 @@
 import { useState, useEffect } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -16,6 +12,7 @@ const PASSWORD = "Vadai123!";
 
 export default function PasswordGate({ children }: { children: React.ReactNode }) {
   const [unlocked, setUnlocked] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [input, setInput] = useState("");
   const [error, setError] = useState(false);
 
@@ -31,7 +28,7 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
       } catch {
         // ignore malformed storage
       }
-    });
+    }).finally(() => setChecking(false));
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,37 +46,55 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
 
   if (unlocked) return <>{children}</>;
 
+  // Evita el parpadeo del candado mientras se revisa si ya se desbloqueó en esta sesión.
+  if (checking) {
+    return (
+      <div className="flex justify-center px-4 py-12">
+        <Skeleton className="h-[236px] w-full max-w-sm rounded-lg" />
+      </div>
+    );
+  }
+
   return (
-    <Dialog open={true}>
-      <DialogContent className="sm:max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Lock className="h-5 w-5" />
-            Acceso protegido
-          </DialogTitle>
-          <DialogDescription>
-            Ingresa la contraseña para acceder a esta sección.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            type="password"
-            placeholder="Contraseña"
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              setError(false);
-            }}
-            autoFocus
-          />
-          {error && (
-            <p className="text-sm text-destructive">Contraseña incorrecta</p>
-          )}
-          <Button type="submit" className="w-full">
-            Acceder
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <div className="flex justify-center px-4 py-12">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="items-center space-y-2 p-6 pb-4 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+            <Lock className="h-5 w-5 text-primary" />
+          </div>
+          <CardTitle className="text-base font-semibold">Sección protegida</CardTitle>
+          <CardDescription className="text-sm">
+            Ingresa la contraseña de configuración para continuar.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-6 pt-0">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="settings-password" className="sr-only">Contraseña</Label>
+              <Input
+                id="settings-password"
+                type="password"
+                placeholder="Contraseña"
+                className="h-9 text-sm"
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  setError(false);
+                }}
+                aria-invalid={error}
+                aria-describedby={error ? "settings-password-error" : undefined}
+                autoFocus
+              />
+              {error && (
+                <p id="settings-password-error" className="text-xs text-destructive">Contraseña incorrecta</p>
+              )}
+            </div>
+            <Button type="submit" size="sm" className="w-full">
+              Desbloquear
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

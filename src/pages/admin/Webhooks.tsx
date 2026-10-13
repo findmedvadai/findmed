@@ -1,17 +1,25 @@
-import { useState } from "react";
+// Webhooks salientes (Configuración): eventos de FindMed firmados con
+// HMAC-SHA-256 hacia integraciones externas. Desde el 13-oct los WhatsApp a
+// pacientes los envía FindMed desde Automatización (WHAAPY); un evento cuyo
+// dueño es FindMed ya no llama a ningún webhook (ver dispatch-webhook).
+import { useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { Json, Tables } from "@/integrations/supabase/types";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -19,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -31,8 +40,25 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Trash2, Copy, Webhook, Info, Pencil, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Info,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 import PasswordGate from "@/components/admin/PasswordGate";
+import { PageHeader } from "@/components/app/PageHeader";
+import { EmptyState } from "@/components/app/EmptyState";
+import { SoftBadge } from "@/components/app/StatusBadge";
+import { cn } from "@/lib/utils";
 import { secureRandomString } from "@/lib/secure-random";
 
 const EVENT_GROUPS = [
@@ -304,11 +330,95 @@ function generateSecret(): string {
   return secureRandomString(chars, 32);
 }
 
+type WebhookRow = Tables<"webhooks">;
+
+const EVENT_LABEL: Record<string, string> = Object.fromEntries(
+  EVENT_GROUPS.flatMap((g) => g.events.map((e) => [e.id, e.label] as const)),
+);
+
+const HTTP_HEADERS = [
+  "Content-Type: application/json",
+  "X-FindMed-Signature: <hmac-sha256 del body>",
+  "X-FindMed-Event: <event_type>",
+];
+
+function urlHost(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text).then(
+    () => toast({ title: "Copiado al portapapeles" }),
+    () => toast({ title: "No se pudo copiar", variant: "destructive" }),
+  );
+}
+
 export default function Webhooks() {
   return (
     <PasswordGate>
       <WebhooksContent />
     </PasswordGate>
+  );
+}
+
+/* ───────── formulario (crear / editar) ───────── */
+
+function Field({ id, label, hint, children }: { id?: string; label: string; hint?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs font-medium text-foreground">{label}</Label>
+      {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+function WebhookFields({
+  idPrefix,
+  name,
+  onName,
+  url,
+  onUrl,
+  description,
+  onDescription,
+}: {
+  idPrefix: string;
+  name: string;
+  onName: (v: string) => void;
+  url: string;
+  onUrl: (v: string) => void;
+  description: string;
+  onDescription: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <Field id={`${idPrefix}-name`} label="Nombre">
+        <Input id={`${idPrefix}-name`} className="h-9 text-sm" placeholder="Ej: CRM Producción" value={name} onChange={(e) => onName(e.target.value)} />
+      </Field>
+      <Field id={`${idPrefix}-url`} label="URL de destino" hint="FindMed hace un POST a esta URL por cada evento suscrito.">
+        <Input
+          id={`${idPrefix}-url`}
+          className="h-9 font-mono text-sm"
+          placeholder="https://ejemplo.com/webhooks/findmed"
+          value={url}
+          onChange={(e) => onUrl(e.target.value)}
+        />
+      </Field>
+      <Field id={`${idPrefix}-description`} label="Descripción (opcional)">
+        <Textarea
+          id={`${idPrefix}-description`}
+          className="min-h-[60px] text-sm"
+          placeholder="Para qué sistema es y quién lo mantiene"
+          value={description}
+          onChange={(e) => onDescription(e.target.value)}
+          rows={2}
+        />
+      </Field>
+    </div>
   );
 }
 
@@ -322,34 +432,46 @@ function EventChecklist({
   onToggleGroup: (ids: string[]) => void;
 }) {
   return (
-    <div className="space-y-3">
-      {EVENT_GROUPS.map((group) => {
-        const groupEventIds = group.events.map((e) => e.id);
-        const allSelected = groupEventIds.every((e) => selectedEvents.includes(e));
-        return (
-          <div key={group.label} className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={allSelected}
-                onCheckedChange={() => onToggleGroup(groupEventIds)}
-              />
-              <span className="text-sm font-medium text-muted-foreground">{group.label}</span>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs font-medium text-foreground">Eventos</Label>
+        <span className="text-xs text-muted-foreground">
+          {selectedEvents.length === 0 ? "Elige al menos uno" : `${selectedEvents.length} seleccionados`}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {EVENT_GROUPS.map((group) => {
+          const groupEventIds = group.events.map((e) => e.id);
+          const selectedInGroup = groupEventIds.filter((e) => selectedEvents.includes(e)).length;
+          const allSelected = selectedInGroup === groupEventIds.length;
+          return (
+            <div key={group.label} className="overflow-hidden rounded-md border">
+              <label className="flex cursor-pointer items-center gap-2 border-b bg-muted/40 px-3 py-2">
+                <Checkbox checked={allSelected} onCheckedChange={() => onToggleGroup(groupEventIds)} />
+                <span className="flex-1 text-xs font-semibold text-foreground">{group.label}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {selectedInGroup}/{groupEventIds.length}
+                </span>
+              </label>
+              <div className="grid gap-x-3 gap-y-0.5 p-1.5 sm:grid-cols-2">
+                {group.events.map((ev) => (
+                  <label key={ev.id} className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1.5 hover:bg-accent/40">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={selectedEvents.includes(ev.id)}
+                      onCheckedChange={() => onToggleEvent(ev.id)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm leading-tight text-foreground">{ev.label}</span>
+                      <span className="block truncate font-mono text-[11px] text-muted-foreground">{ev.id}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
-            <div className="ml-6 space-y-1.5">
-              {group.events.map((ev) => (
-                <div key={ev.id} className="flex items-center gap-2">
-                  <Checkbox
-                    checked={selectedEvents.includes(ev.id)}
-                    onCheckedChange={() => onToggleEvent(ev.id)}
-                  />
-                  <span className="text-sm">{ev.label}</span>
-                  <Badge variant="outline" className="text-[10px] ml-auto">{ev.id}</Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -405,51 +527,49 @@ function PayloadBlock({
   };
 
   return (
-    <div className="border rounded-md overflow-hidden">
+    <div className="overflow-hidden rounded-md border">
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center justify-between w-full px-3 py-2 text-sm font-medium bg-muted/50 hover:bg-muted transition-colors"
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 bg-muted/40 px-3 py-2 text-left transition-colors hover:bg-muted"
       >
-        <span className="flex items-center gap-2">
-          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          {label}
-          <Badge variant="outline" className="text-[10px]">{eventId}</Badge>
-          {override && <Badge variant="secondary" className="text-[10px]">Personalizado</Badge>}
+        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-foreground">{label}</span>
+          <span className="block truncate font-mono text-[11px] text-muted-foreground">{eventId}</span>
         </span>
+        {override && <SoftBadge tone="info">Personalizado</SoftBadge>}
       </button>
       {open && (
-        <div className="relative">
+        <div className="border-t">
           {editing ? (
-            <div className="p-3 space-y-2">
-              <textarea
-                className="w-full text-[11px] bg-background border rounded p-2 font-mono leading-relaxed min-h-[200px] resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+            <div className="space-y-2 p-3">
+              <Textarea
+                className="min-h-[220px] resize-y font-mono text-[11px] leading-relaxed"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 spellCheck={false}
+                aria-label={`Payload de ${label}`}
               />
               {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
-              <div className="flex gap-2 justify-end">
+              <div className="flex justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={cancelEditing}>Cancelar</Button>
-                <Button size="sm" onClick={saveEditing}>Guardar</Button>
+                <Button size="sm" onClick={saveEditing}>Guardar payload</Button>
               </div>
             </div>
           ) : (
-            <>
-              <pre className="text-[11px] bg-muted p-3 overflow-x-auto leading-relaxed">{json}</pre>
-              <div className="absolute top-2 right-2 flex gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title="Editar payload"
-                  onClick={startEditing}
-                >
+            <div className="relative">
+              <pre className="max-h-80 overflow-auto bg-muted/30 p-3 pr-20 font-mono text-[11px] leading-relaxed">{json}</pre>
+              <div className="absolute right-2 top-2 flex gap-0.5 rounded-md border bg-card shadow-sm">
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Editar payload" onClick={startEditing}>
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="h-8 w-8"
+                  aria-label="Copiar payload"
                   onClick={() => {
                     navigator.clipboard.writeText(json);
                     toast({ title: "Copiado al portapapeles" });
@@ -458,7 +578,7 @@ function PayloadBlock({
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
-            </>
+            </div>
           )}
         </div>
       )}
@@ -466,11 +586,43 @@ function PayloadBlock({
   );
 }
 
+/* ───────── lista ───────── */
+
+function EventsCountBadge({ events }: { events: string[] }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <SoftBadge tone="neutral">{events.length === 1 ? "1 evento" : `${events.length} eventos`}</SoftBadge>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <ul className="space-y-0.5 text-xs">
+          {events.map((ev) => (
+            <li key={ev}>{EVENT_LABEL[ev] ?? ev}</li>
+          ))}
+        </ul>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function WebhooksTableSkeleton() {
+  return (
+    <Card className="overflow-hidden">
+      <div className="h-9 border-b bg-muted/40" />
+      <div className="space-y-2 p-4">
+        {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+      </div>
+    </Card>
+  );
+}
+
 function WebhooksContent() {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
-  const [selectedWebhook, setSelectedWebhook] = useState<any | null>(null);
+  const [selectedWebhook, setSelectedWebhook] = useState<WebhookRow | null>(null);
   const [editTab, setEditTab] = useState("config");
   const [regenerateOpen, setRegenerateOpen] = useState(false);
 
@@ -500,7 +652,7 @@ function WebhooksContent() {
     },
   });
 
-  const openEdit = (wh: any) => {
+  const openEdit = (wh: WebhookRow) => {
     setSelectedWebhook(wh);
     setEditName(wh.name);
     setEditUrl(wh.url);
@@ -520,7 +672,7 @@ function WebhooksContent() {
         description: description.trim() || null,
         events: selectedEvents,
         secret,
-      } as any);
+      });
       if (error) throw error;
       return secret;
     },
@@ -546,7 +698,7 @@ function WebhooksContent() {
           description: editDescription.trim() || null,
           events: editEvents,
           is_active: editActive,
-        } as any)
+        })
         .eq("id", selectedWebhook.id);
       if (error) throw error;
     },
@@ -565,7 +717,7 @@ function WebhooksContent() {
       const newSecret = generateSecret();
       const { error } = await supabase
         .from("webhooks")
-        .update({ secret: newSecret } as any)
+        .update({ secret: newSecret })
         .eq("id", selectedWebhook.id);
       if (error) throw error;
       return newSecret;
@@ -585,7 +737,7 @@ function WebhooksContent() {
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
       const { error } = await supabase
         .from("webhooks")
-        .update({ is_active } as any)
+        .update({ is_active })
         .eq("id", id);
       if (error) throw error;
     },
@@ -623,195 +775,239 @@ function WebhooksContent() {
     setEditEvents((prev) => allSelected ? prev.filter((e) => !ids.includes(e)) : [...new Set([...prev, ...ids])]);
   };
 
-  // Find labels for subscribed events
-  const allEventMap = EVENT_GROUPS.flatMap((g) => g.events).reduce<Record<string, string>>(
-    (acc, ev) => ({ ...acc, [ev.id]: ev.label }),
-    {}
-  );
-
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        {[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full" />)}
-      </div>
-    );
-  }
+  const list = webhooks ?? [];
+  const activeCount = list.filter((wh) => wh.is_active).length;
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Webhook className="h-6 w-6" />
-            Webhooks
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Configura webhooks para integrar con n8n y otros servicios.
+    <div className="space-y-5">
+      <PageHeader
+        title="Webhooks"
+        description="Envía eventos de FindMed, firmados con HMAC, a integraciones externas."
+        actions={
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Nuevo webhook
+          </Button>
+        }
+      />
+
+      <div className="flex items-start gap-3 rounded-lg border border-info/25 bg-info/5 p-3">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+        <div className="min-w-0 space-y-1 text-sm">
+          <p className="font-medium text-foreground">Los WhatsApp a pacientes ya no salen por webhooks</p>
+          <p className="text-muted-foreground">
+            Desde el 13 de octubre FindMed los envía desde Automatización por WHAAPY, y los 8 webhooks que apuntaban a n8n
+            quedaron pausados. Un evento que envía FindMed ya no se manda a ningún webhook: úsalos solo para integraciones externas.
           </p>
+          <Link to="/admin/automatizacion" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+            Ir a Automatización <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Crear Webhook
-        </Button>
       </div>
 
-      {/* Webhook list */}
-      {webhooks && webhooks.length > 0 ? (
-        <div className="space-y-3">
-          {webhooks.map((wh: any) => (
-            <Card key={wh.id}>
-              <CardContent className="flex items-center gap-4 p-4">
-                <div className="flex-1 min-w-0 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium truncate">{wh.name}</p>
-                    <Switch
-                      checked={wh.is_active}
-                      onCheckedChange={(checked) =>
-                        toggleMut.mutate({ id: wh.id, is_active: checked })
-                      }
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground truncate">{wh.url}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {(wh.events as string[]).map((ev) => (
-                      <Badge key={ev} variant="secondary" className="text-[10px]">
-                        {ev}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => openEdit(wh)}
-                    title="Ver/Editar webhook"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="icon" className="text-destructive">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>¿Eliminar webhook?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Esta acción no se puede deshacer.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => deleteMut.mutate(wh.id)}>
-                          Eliminar
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+      {isLoading ? (
+        <WebhooksTableSkeleton />
+      ) : list.length > 0 ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-foreground">Webhooks configurados</h2>
+            <span className="text-xs text-muted-foreground">
+              {list.length} en total · {activeCount} {activeCount === 1 ? "activo" : "activos"}
+            </span>
+          </div>
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableHead className="h-9 text-xs">Nombre</TableHead>
+                  <TableHead className="hidden h-9 text-xs md:table-cell">Destino</TableHead>
+                  <TableHead className="hidden h-9 text-xs sm:table-cell">Eventos</TableHead>
+                  <TableHead className="hidden h-9 text-xs lg:table-cell">Actualizado</TableHead>
+                  <TableHead className="h-9 text-xs">Estado</TableHead>
+                  <TableHead className="h-9 w-[84px] text-xs"><span className="sr-only">Acciones</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.map((wh) => (
+                  <TableRow key={wh.id} className={cn(!wh.is_active && "text-muted-foreground")}>
+                    <TableCell className="py-2.5">
+                      <div className="min-w-0 max-w-[130px] sm:max-w-[220px] lg:max-w-[260px]">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(wh)}
+                          className="block max-w-full truncate text-left text-sm font-medium text-foreground hover:underline"
+                        >
+                          {wh.name}
+                        </button>
+                        {wh.description && <p className="truncate text-xs text-muted-foreground">{wh.description}</p>}
+                        <p className="truncate font-mono text-xs text-muted-foreground md:hidden" title={wh.url}>{urlHost(wh.url)}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden py-2.5 md:table-cell">
+                      <span className="block max-w-[240px] truncate font-mono text-xs text-muted-foreground" title={wh.url}>
+                        {urlHost(wh.url)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="hidden py-2.5 sm:table-cell">
+                      <EventsCountBadge events={wh.events as string[]} />
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap py-2.5 text-xs text-muted-foreground lg:table-cell">
+                      {format(parseISO(wh.updated_at ?? wh.created_at), "d MMM yyyy", { locale: es })}
+                    </TableCell>
+                    <TableCell className="py-2.5">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={wh.is_active}
+                          onCheckedChange={(checked) =>
+                            toggleMut.mutate({ id: wh.id, is_active: checked })
+                          }
+                          className="scale-90"
+                          aria-label={wh.is_active ? `Pausar ${wh.name}` : `Activar ${wh.name}`}
+                        />
+                        <span className="hidden text-xs sm:inline">{wh.is_active ? "Activo" : "Pausado"}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => openEdit(wh)}
+                          aria-label={`Editar ${wh.name}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              aria-label={`Eliminar ${wh.name}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>¿Eliminar "{wh.name}"?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Dejará de recibir eventos y su secret se pierde. Esta acción no se puede deshacer; si solo quieres detenerlo, usa el interruptor.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => deleteMut.mutate(wh.id)}>
+                                Eliminar
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
         </div>
       ) : (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Webhook className="mb-3 h-10 w-10 text-muted-foreground/50" />
-            <p className="text-lg font-medium text-muted-foreground">Sin webhooks</p>
-            <p className="text-sm text-muted-foreground/70">
-              Crea un webhook para recibir eventos en tiempo real.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Webhook}
+          title="Sin webhooks"
+          description="Crea uno para mandar eventos de FindMed a un sistema externo (CRM, reportes, etc.)."
+          action={
+            <Button size="sm" variant="outline" className="gap-2" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" /> Nuevo webhook
+            </Button>
+          }
+        />
       )}
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={(open) => { if (!open) resetForm(); setCreateOpen(open); }}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Crear Webhook</DialogTitle>
-            <DialogDescription>Configura un nuevo webhook para recibir eventos.</DialogDescription>
+            <DialogTitle>Nuevo webhook</DialogTitle>
+            <DialogDescription>FindMed enviará por POST los eventos que elijas, firmados con HMAC.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Nombre *</label>
-              <Input placeholder="Ej: n8n Producción" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">URL *</label>
-              <Input placeholder="https://n8n.example.com/webhook/..." value={url} onChange={(e) => setUrl(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Descripción</label>
-              <Textarea placeholder="Descripción opcional..." value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
-            </div>
-            <div className="space-y-3">
-              <label className="text-sm font-medium">Eventos *</label>
-              <EventChecklist selectedEvents={selectedEvents} onToggleEvent={toggleEvent} onToggleGroup={toggleGroup} />
-            </div>
-            <div className="flex items-start gap-2 rounded-md border p-3 text-xs text-muted-foreground">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <div className="space-y-5">
+            <WebhookFields
+              idPrefix="wh-new"
+              name={name}
+              onName={setName}
+              url={url}
+              onUrl={setUrl}
+              description={description}
+              onDescription={setDescription}
+            />
+            <EventChecklist selectedEvents={selectedEvents} onToggleEvent={toggleEvent} onToggleGroup={toggleGroup} />
+            <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
-                Se generará un secret para verificar firmas HMAC. Los webhooks incluyen el header{" "}
-                <code className="bg-muted px-1 rounded">X-FindMed-Signature</code>.
+                Se generará un secret para verificar la firma; se muestra una sola vez. Cada envío incluye el header{" "}
+                <code className="rounded bg-muted px-1 font-mono">X-FindMed-Signature</code>.
               </span>
             </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => { resetForm(); setCreateOpen(false); }}>Cancelar</Button>
-              <Button
-                onClick={() => createMut.mutate()}
-                disabled={!name.trim() || !url.trim() || selectedEvents.length === 0 || createMut.isPending}
-              >
-                {createMut.isPending ? "Creando…" : "Crear Webhook"}
-              </Button>
-            </div>
           </div>
+          <DialogFooter className="gap-2">
+            <Button size="sm" variant="outline" onClick={() => { resetForm(); setCreateOpen(false); }}>Cancelar</Button>
+            <Button
+              size="sm"
+              onClick={() => createMut.mutate()}
+              disabled={!name.trim() || !url.trim() || selectedEvents.length === 0 || createMut.isPending}
+            >
+              {createMut.isPending ? "Creando…" : "Crear webhook"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit dialog */}
       <Dialog open={!!selectedWebhook} onOpenChange={(open) => { if (!open) setSelectedWebhook(null); }}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{selectedWebhook?.name}</DialogTitle>
+            <DialogTitle className="flex flex-wrap items-center gap-2 pr-6">
+              <span className="truncate">{selectedWebhook?.name}</span>
+              {selectedWebhook && (
+                <SoftBadge tone={selectedWebhook.is_active ? "success" : "neutral"} dot>
+                  {selectedWebhook.is_active ? "Activo" : "Pausado"}
+                </SoftBadge>
+              )}
+            </DialogTitle>
             <DialogDescription>
               Creado el {selectedWebhook ? format(new Date(selectedWebhook.created_at), "d 'de' MMMM yyyy", { locale: es }) : ""}
             </DialogDescription>
           </DialogHeader>
 
           <Tabs value={editTab} onValueChange={setEditTab}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="config">Configuración</TabsTrigger>
-              <TabsTrigger value="payload">Payload de ejemplo</TabsTrigger>
+            <TabsList className="h-9">
+              <TabsTrigger value="config" className="text-sm">Configuración</TabsTrigger>
+              <TabsTrigger value="payload" className="text-sm">Payload de ejemplo</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="config" className="space-y-4 pt-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Nombre *</label>
-                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">URL *</label>
-                <Input value={editUrl} onChange={(e) => setEditUrl(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Descripción</label>
-                <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} />
-              </div>
-              <div className="flex items-center gap-3">
-                <Switch checked={editActive} onCheckedChange={setEditActive} />
-                <span className="text-sm">{editActive ? "Activo" : "Inactivo"}</span>
-              </div>
-              <div className="space-y-3">
-                <label className="text-sm font-medium">Eventos *</label>
-                <EventChecklist selectedEvents={editEvents} onToggleEvent={toggleEditEvent} onToggleGroup={toggleEditGroup} />
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t">
+            <TabsContent value="config" className="mt-4 space-y-5">
+              <WebhookFields
+                idPrefix="wh-edit"
+                name={editName}
+                onName={setEditName}
+                url={editUrl}
+                onUrl={setEditUrl}
+                description={editDescription}
+                onDescription={setEditDescription}
+              />
+              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2.5">
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">{editActive ? "Activo" : "Pausado"}</span>
+                  <span className="block text-xs text-muted-foreground">Mientras esté pausado no recibe ningún evento.</span>
+                </span>
+                <Switch checked={editActive} onCheckedChange={setEditActive} aria-label="Webhook activo" />
+              </label>
+              <EventChecklist selectedEvents={editEvents} onToggleEvent={toggleEditEvent} onToggleGroup={toggleEditGroup} />
+              <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   className="gap-2 text-muted-foreground"
                   onClick={() => setRegenerateOpen(true)}
@@ -819,9 +1015,10 @@ function WebhooksContent() {
                   <RefreshCw className="h-4 w-4" />
                   Regenerar secret
                 </Button>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setSelectedWebhook(null)}>Cancelar</Button>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setSelectedWebhook(null)}>Cancelar</Button>
                   <Button
+                    size="sm"
                     onClick={() => updateMut.mutate()}
                     disabled={!editName.trim() || !editUrl.trim() || editEvents.length === 0 || updateMut.isPending}
                   >
@@ -831,34 +1028,26 @@ function WebhooksContent() {
               </div>
             </TabsContent>
 
-            <TabsContent value="payload" className="space-y-4 pt-2">
-              {/* HTTP Headers */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Headers HTTP enviados</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-1">
-                  {[
-                    "Content-Type: application/json",
-                    "X-FindMed-Signature: <hmac-sha256 del body>",
-                    "X-FindMed-Event: <event_type>",
-                  ].map((h) => (
-                    <code key={h} className="block text-xs bg-muted px-2 py-1 rounded">{h}</code>
+            <TabsContent value="payload" className="mt-4 space-y-4">
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Headers HTTP enviados</p>
+                <div className="space-y-1 rounded-md border bg-muted/30 p-3">
+                  {HTTP_HEADERS.map((h) => (
+                    <code key={h} className="block font-mono text-xs text-foreground">{h}</code>
                   ))}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
 
-              {/* Payload examples */}
               <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Ejemplos por evento suscrito</p>
+                <p className="text-xs font-medium text-muted-foreground">Ejemplos por evento suscrito</p>
                 {editEvents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No hay eventos seleccionados.</p>
+                  <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">No hay eventos seleccionados.</p>
                 ) : (
                   editEvents.map((ev) => (
                     <PayloadBlock
                       key={ev}
                       eventId={ev}
-                      label={allEventMap[ev] ?? ev}
+                      label={EVENT_LABEL[ev] ?? ev}
                       override={
                         editPayloadOverrides[ev] ??
                         (selectedWebhook?.payload_overrides as Record<string, object> | null)?.[ev] ??
@@ -874,7 +1063,7 @@ function WebhooksContent() {
                         // Persist immediately
                         supabase
                           .from("webhooks")
-                          .update({ payload_overrides: newOverrides } as any)
+                          .update({ payload_overrides: newOverrides as Json })
                           .eq("id", selectedWebhook.id)
                           .then(({ error }) => {
                             if (error) {
@@ -917,24 +1106,24 @@ function WebhooksContent() {
 
       {/* Secret reveal dialog */}
       <Dialog open={!!revealedSecret} onOpenChange={() => setRevealedSecret(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Secret del Webhook</DialogTitle>
-            <DialogDescription>Copia este secret ahora. No se volverá a mostrar.</DialogDescription>
+            <DialogTitle>Secret del webhook</DialogTitle>
+            <DialogDescription>Cópialo ahora y guárdalo en tu integración: no se volverá a mostrar.</DialogDescription>
           </DialogHeader>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 bg-muted p-2 rounded text-sm break-all">{revealedSecret}</code>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => {
-                navigator.clipboard.writeText(revealedSecret ?? "");
-                toast({ title: "Copiado al portapapeles" });
-              }}
-            >
-              <Copy className="h-4 w-4" />
+          <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
+            <code className="min-w-0 flex-1 break-all px-1 font-mono text-sm text-foreground">{revealedSecret}</code>
+            <Button size="sm" variant="outline" className="shrink-0 gap-1.5" onClick={() => copyToClipboard(revealedSecret ?? "")}>
+              <Copy className="h-3.5 w-3.5" /> Copiar
             </Button>
           </div>
+          <p className="flex items-start gap-2 text-xs text-muted-foreground">
+            <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-warning" />
+            Para verificar cada envío, calcula el HMAC-SHA256 del body con este secret y compáralo con el header X-FindMed-Signature.
+          </p>
+          <DialogFooter>
+            <Button size="sm" onClick={() => setRevealedSecret(null)}>Listo, ya lo guardé</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

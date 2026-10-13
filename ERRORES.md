@@ -627,3 +627,16 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** Se restauró la 160000 tal como se aplicó y los cambios v2 fueron a una migración nueva `20261013170000_triage_catalog_v2.sql`.
 
 **Lección aprendida:** Antes de editar una migración "no aplicada", consultar `select version from supabase_migrations.schema_migrations` en producción. Si ya existe la versión, siempre migración nueva.
+
+## 2026-10-13 — Bugs de UI encontrados en el rediseño por módulos
+
+**Categoría:** frontend
+
+**Síntomas y causas:**
+- **Por completar**: todos los formularios se renderizaban a la vez con los mismos `id` en los switches; al tocar la etiqueta de un toggle del segundo paciente se cambiaba el del primero. Ahora los ids incluyen el `appointment_id`.
+- **Inbox**: el botón de marcar como leída también abría el detalle y disparaba la mutación dos veces.
+- **Inbox (admin y doctor)**: faltaban `appointment_rescheduled` y `appointment_cancelled_by_admin` en el mapa de tipos; se mostraba el nombre crudo y había un error de TypeScript.
+- **Consultorios**: `UnifiedAvailabilityEditor` y `OfficeManager` usaban la misma query key `["doctor-offices", id]` con columnas distintas; en TanStack v5 el último en montar decide el queryFn y OfficeManager podía pintar consultorios sin dirección, sin duración y con calendario "desconectado". El editor usa ahora `["doctor-offices", id, "availability-editor"]` (mismo prefijo, recibe las mismas invalidaciones).
+- **Tipos de Supabase**: un `.select()` armado con `"..." + "..."` pierde el tipado (GenericStringError) y obliga a casts; pasó en `doctor/Agenda.tsx` y `OfficeManager.tsx`.
+
+**Lección aprendida:** una query key = una forma de dato. Si dos componentes leen columnas distintas de la misma tabla, keys distintas con prefijo común. Los `select` de Supabase siempre en un solo literal. Ids de formularios repetidos en listas deben llevar el id de la fila.

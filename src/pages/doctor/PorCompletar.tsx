@@ -1,18 +1,21 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
-import { Check, User, FileText, Send, Pill, ScanLine, FlaskConical, UserRoundPlus, Building2 } from "lucide-react";
+import { PageHeader } from "@/components/app/PageHeader";
+import { EmptyState } from "@/components/app/EmptyState";
+import { SoftBadge } from "@/components/app/StatusBadge";
+import { cn } from "@/lib/utils";
+import { CalendarDays, CheckCircle2, Phone, Send, Pill, ScanLine, FlaskConical, UserRoundPlus, Building2 } from "lucide-react";
 
 const TOGGLE_FIELDS = [
   { key: "prescribed_medications", label: "Se recetaron medicamentos", placeholder: "Nombres, dosis y frecuencia...", icon: Pill },
@@ -24,9 +27,27 @@ const TOGGLE_FIELDS = [
 
 type ToggleKey = typeof TOGGLE_FIELDS[number]["key"];
 
+type PendingAppointment = PostConsultationFormProps["appointment"];
+
+function initials(name: string | undefined) {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+/** Cuánto lleva pendiente la consulta: "Hoy", "Ayer", "Hace 3 días". */
+function pendingFor(iso: string) {
+  const days = differenceInCalendarDays(new Date(), parseISO(iso));
+  if (days <= 0) return "Hoy";
+  if (days === 1) return "Ayer";
+  return `Hace ${days} días`;
+}
+
 export default function PorCompletar() {
   const { doctorId } = useAuth();
   const queryClient = useQueryClient();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const { data: appointments, isLoading } = useQuery({
     queryKey: ["por-completar", doctorId],
@@ -47,49 +68,112 @@ export default function PorCompletar() {
     enabled: !!doctorId,
   });
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <Skeleton className="h-8 w-64" />
-        {[1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-40 w-full rounded-xl" />
-        ))}
-      </div>
-    );
-  }
+  const list = (appointments ?? []) as PendingAppointment[];
+  // Si la consulta elegida ya se envió (o aún no hay elección), se muestra la primera.
+  const selected = list.find((a) => a.id === selectedId) ?? list[0] ?? null;
+
+  const select = (id: string) => {
+    setSelectedId(id);
+    // En pantallas angostas el formulario queda debajo de la lista: llevarlo a la vista.
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Por Completar</h1>
-        <p className="text-sm text-muted-foreground">
-          Citas completadas que aún necesitan tu formulario post-consulta.
-        </p>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Por completar"
+        description="Consultas que ya pasaron y necesitan tus notas post-consulta. Con ellas FindMed da seguimiento al paciente."
+        actions={
+          list.length > 0 ? (
+            <SoftBadge tone="warning" dot>
+              {list.length === 1 ? "1 consulta pendiente" : `${list.length} consultas pendientes`}
+            </SoftBadge>
+          ) : undefined
+        }
+      />
 
-      {appointments && appointments.length > 0 ? (
-        <div className="space-y-4">
-          {appointments.map((appt) => (
-            <PostConsultationForm
-              key={appt.id}
-              appointment={appt}
-              doctorId={doctorId!}
-              onSaved={() =>
-                queryClient.invalidateQueries({ queryKey: ["por-completar", doctorId] })
-              }
-            />
-          ))}
+      {isLoading ? (
+        <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
+          <Card className="divide-y overflow-hidden">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-3">
+                <Skeleton className="h-10 w-10 rounded-md" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+              </div>
+            ))}
+          </Card>
+          <Skeleton className="h-[420px] w-full rounded-lg" />
         </div>
+      ) : list.length === 0 ? (
+        <EmptyState
+          icon={CheckCircle2}
+          title="Todo al día"
+          description="No tienes consultas pendientes de notas post-consulta."
+        />
       ) : (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Check className="mb-3 h-10 w-10 text-confirmed" />
-            <p className="text-lg font-medium text-muted-foreground">Todo al día</p>
-            <p className="text-sm text-muted-foreground/70">
-              No hay citas pendientes de formulario post-consulta.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
+          <Card className="overflow-hidden lg:sticky lg:top-20">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h2 className="text-sm font-semibold text-foreground">Consultas sin notas</h2>
+              <span className="text-xs tabular-nums text-muted-foreground">{list.length}</span>
+            </div>
+            <ul className="divide-y lg:max-h-[calc(100vh-11rem)] lg:overflow-y-auto">
+              {list.map((appt) => {
+                const start = parseISO(appt.start_at);
+                const active = appt.id === selected?.id;
+                return (
+                  <li key={appt.id}>
+                    <button
+                      type="button"
+                      onClick={() => select(appt.id)}
+                      aria-current={active ? "true" : undefined}
+                      className={cn(
+                        "relative flex w-full items-start gap-3 px-4 py-3 text-left transition-colors focus-visible:outline-none",
+                        active ? "bg-primary/5" : "hover:bg-accent/40 focus-visible:bg-accent/40",
+                      )}
+                    >
+                      {active && <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" aria-hidden />}
+                      <div className={cn("flex w-10 shrink-0 flex-col items-center rounded-md border py-1", active ? "border-primary/30 bg-background" : "bg-muted/50")}>
+                        <span className="text-[10px] font-medium uppercase leading-none text-muted-foreground">{format(start, "MMM", { locale: es })}</span>
+                        <span className="text-base font-semibold leading-tight text-foreground">{format(start, "d")}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className={cn("truncate text-sm font-medium", active ? "text-primary" : "text-foreground")}>
+                            {appt.patients?.full_name ?? "Paciente desconocido"}
+                          </p>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">{pendingFor(appt.start_at)}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{format(start, "EEEE · HH:mm", { locale: es })}</p>
+                        {appt.symptoms && <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{appt.symptoms}</p>}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+
+          <div ref={formRef} className="min-w-0 scroll-mt-20">
+            {/* Todos los formularios quedan montados para no perder lo escrito al cambiar de consulta. */}
+            {list.map((appt) => (
+              <div key={appt.id} className={appt.id === selected?.id ? "block" : "hidden"}>
+                <PostConsultationForm
+                  appointment={appt}
+                  doctorId={doctorId!}
+                  onSaved={() =>
+                    queryClient.invalidateQueries({ queryKey: ["por-completar", doctorId] })
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -223,91 +307,125 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
       toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const activeCount = TOGGLE_FIELDS.filter((f) => toggles[f.key]).length;
+  const idPrefix = `pc-${appointment.id}`;
+
   return (
-    <Card className="transition-shadow hover:shadow-md">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <User className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-base">
-              {patient?.full_name ?? "Paciente desconocido"}
-            </CardTitle>
+    <Card className="overflow-hidden">
+      <CardHeader className="flex flex-col gap-3 space-y-0 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+            {initials(patient?.full_name)}
           </div>
-          <Badge variant="outline" className="text-xs">
-            {format(start, "d MMM yyyy · HH:mm", { locale: es })}
-          </Badge>
+          <div className="min-w-0">
+            <CardTitle className="truncate text-sm font-semibold">{patient?.full_name ?? "Paciente desconocido"}</CardTitle>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <CalendarDays className="h-3 w-3" />
+                {format(start, "EEEE d 'de' MMMM yyyy · HH:mm", { locale: es })}
+              </span>
+              {patient?.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="h-3 w-3" />
+                  {patient.phone}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-        {appointment.symptoms && (
-          <CardDescription className="flex items-start gap-1.5 mt-1">
-            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>{appointment.symptoms}</span>
-          </CardDescription>
-        )}
+        <SoftBadge tone="warning" dot className="self-start sm:self-center">Sin notas</SoftBadge>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {/* Observations */}
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">Observaciones de la consulta</Label>
-          <Textarea
-            placeholder="Escribe las observaciones principales de esta consulta…"
-            value={observations}
-            onChange={(e) => setObservations(e.target.value)}
-            rows={3}
-            className="resize-none"
-          />
-        </div>
 
-        {/* Toggle fields */}
-        <div className="space-y-3">
-          <Label className="text-sm font-medium text-muted-foreground">Acciones realizadas</Label>
-          {TOGGLE_FIELDS.map((field) => {
-            const Icon = field.icon;
-            return (
-              <div key={field.key} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Icon className="h-4 w-4 text-muted-foreground" />
-                    <Label className="text-sm cursor-pointer" htmlFor={`toggle-${field.key}`}>
-                      {field.label}
-                    </Label>
+      <div className="space-y-5 p-4">
+        {appointment.symptoms && (
+          <div className="rounded-md border bg-muted/40 px-3 py-2.5">
+            <p className="text-xs font-medium text-muted-foreground">Motivo de consulta</p>
+            <p className="mt-0.5 text-sm text-foreground">{appointment.symptoms}</p>
+          </div>
+        )}
+
+        <div className="grid gap-5 xl:grid-cols-2">
+          {/* Observations */}
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-observations`} className="text-sm font-semibold">
+              Observaciones de la consulta
+            </Label>
+            <p className="text-xs text-muted-foreground">Diagnóstico, indicaciones y lo que FindMed debe saber para el seguimiento.</p>
+            <Textarea
+              id={`${idPrefix}-observations`}
+              placeholder="Escribe las observaciones principales de esta consulta…"
+              value={observations}
+              onChange={(e) => setObservations(e.target.value)}
+              rows={8}
+              className="resize-none text-sm"
+            />
+          </div>
+
+          {/* Toggle fields */}
+          <div className="space-y-1.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground">Acciones realizadas</p>
+              {activeCount > 0 && <span className="text-xs text-muted-foreground">{activeCount} seleccionada{activeCount > 1 ? "s" : ""}</span>}
+            </div>
+            <p className="text-xs text-muted-foreground">Activa lo que indicaste al paciente y agrega el detalle.</p>
+            <div className="divide-y rounded-lg border">
+              {TOGGLE_FIELDS.map((field) => {
+                const Icon = field.icon;
+                const on = toggles[field.key];
+                const toggleId = `${idPrefix}-toggle-${field.key}`;
+                return (
+                  <div key={field.key} className={cn("px-3 py-2.5 transition-colors", on && "bg-primary/[0.03]")}>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor={toggleId} className="flex min-w-0 cursor-pointer items-center gap-2.5 text-sm font-normal text-foreground">
+                        <span
+                          className={cn(
+                            "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
+                            on ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                        </span>
+                        {field.label}
+                      </Label>
+                      <Switch
+                        id={toggleId}
+                        checked={on}
+                        onCheckedChange={(checked) => handleToggle(field.key, checked)}
+                      />
+                    </div>
+                    {on && (
+                      <Textarea
+                        aria-label={field.label}
+                        placeholder={field.placeholder}
+                        value={fields[field.key]}
+                        onChange={(e) =>
+                          setFields((prev) => ({ ...prev, [field.key]: e.target.value }))
+                        }
+                        rows={2}
+                        autoFocus
+                        className="mt-2.5 resize-none bg-background text-sm animate-in fade-in-0 slide-in-from-top-1"
+                      />
+                    )}
                   </div>
-                  <Switch
-                    id={`toggle-${field.key}`}
-                    checked={toggles[field.key]}
-                    onCheckedChange={(checked) => handleToggle(field.key, checked)}
-                  />
-                </div>
-                <div
-                  className="overflow-hidden transition-all duration-300 ease-in-out"
-                  style={{
-                    maxHeight: toggles[field.key] ? "200px" : "0px",
-                    opacity: toggles[field.key] ? 1 : 0,
-                  }}
-                >
-                  <Textarea
-                    placeholder={field.placeholder}
-                    value={fields[field.key]}
-                    onChange={(e) =>
-                      setFields((prev) => ({ ...prev, [field.key]: e.target.value }))
-                    }
-                    rows={2}
-                    className="resize-none"
-                  />
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          </div>
         </div>
+      </div>
 
+      <div className="flex flex-col-reverse gap-3 border-t bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted-foreground">Al enviar, la consulta queda completada y se avisa al equipo de FindMed.</p>
         <Button
+          size="sm"
           onClick={() => submitMut.mutate()}
           disabled={submitMut.isPending}
-          className="gap-2 w-full sm:w-auto"
+          className="gap-1.5 self-end sm:self-auto"
         >
           <Send className="h-4 w-4" />
           {submitMut.isPending ? "Enviando…" : "Enviar formulario"}
         </Button>
-      </CardContent>
+      </div>
     </Card>
   );
 }

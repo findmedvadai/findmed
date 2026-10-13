@@ -7,6 +7,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SoftBadge } from "@/components/app/StatusBadge";
 import { Ban, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -84,51 +86,71 @@ export default function DayHeaderPopover({ day, doctorId, children }: DayHeaderP
   return (
     <Popover open={open} onOpenChange={(v) => { setOpen(v); if (v && override?.note) setNote(override.note); else if (!v) setNote(""); }}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent className="w-64 p-3" align="center">
-        <p className="text-sm font-semibold capitalize mb-2">
-          {format(day, "EEEE d MMMM", { locale: es })}
-        </p>
+      <PopoverContent className="w-72 space-y-3 p-4" align="center">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold capitalize text-foreground">
+              {format(day, "EEEE d 'de' MMMM", { locale: es })}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {isLoading
+                ? "Revisando el día…"
+                : isBlocked
+                ? "Los pacientes no pueden reservar este día."
+                : "Bloquéalo si no darás consulta."}
+            </p>
+          </div>
+          {!isLoading && isBlocked && (
+            <SoftBadge tone="danger" className="shrink-0">
+              <Ban className="h-3 w-3" /> Bloqueado
+            </SoftBadge>
+          )}
+        </div>
 
         {isLoading ? (
-          <p className="text-xs text-muted-foreground">Cargando...</p>
-        ) : isBlocked ? (
           <div className="space-y-2">
-            <p className="text-xs text-destructive flex items-center gap-1">
-              <Ban className="h-3 w-3" /> Día bloqueado
-            </p>
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : isBlocked ? (
+          <div className="space-y-3">
             {override?.note && (
-              <p className="text-xs text-muted-foreground">{override.note}</p>
+              <p className="rounded-md border bg-muted/40 px-2.5 py-2 text-sm text-muted-foreground">{override.note}</p>
             )}
             <Button
               size="sm"
               variant="outline"
-              className="w-full"
+              className="h-8 w-full gap-1.5"
               onClick={() => unblockDay.mutate()}
               disabled={unblockDay.isPending}
             >
-              <Check className="h-3.5 w-3.5 mr-1" />
+              <Check className="h-3.5 w-3.5" />
               Desbloquear día
             </Button>
           </div>
         ) : (
-          <div className="space-y-2">
-            <Label htmlFor="block-note" className="text-xs">Nota (opcional)</Label>
-            <Textarea
-              id="block-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Ej: Vacaciones, congreso..."
-              className="h-16 text-xs"
-              maxLength={200}
-            />
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="block-note" className="text-sm">
+                Nota <span className="font-normal text-muted-foreground">(opcional)</span>
+              </Label>
+              <Textarea
+                id="block-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Ej: Vacaciones, congreso..."
+                className="h-16 resize-none text-sm"
+                maxLength={200}
+              />
+            </div>
             <Button
               size="sm"
               variant="destructive"
-              className="w-full"
+              className="h-8 w-full gap-1.5"
               onClick={() => blockDay.mutate()}
               disabled={blockDay.isPending}
             >
-              <Ban className="h-3.5 w-3.5 mr-1" />
+              <Ban className="h-3.5 w-3.5" />
               Bloquear día
             </Button>
           </div>

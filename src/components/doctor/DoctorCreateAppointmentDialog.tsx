@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -24,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -259,133 +261,150 @@ export default function DoctorCreateAppointmentDialog({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Crear cita</DialogTitle>
+          <DialogTitle>Nueva cita</DialogTitle>
           <DialogDescription>
-            La cita se registra como confirmada y se sincroniza con tu calendario.
+            Se registra como confirmada y se sincroniza con tu calendario.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {offices.length > 1 && (
-            <div className="space-y-1.5">
-              <Label htmlFor="office">Consultorio *</Label>
-              <Select value={officeId} onValueChange={setOfficeId}>
-                <SelectTrigger id="office">
-                  <SelectValue placeholder="Selecciona un consultorio" />
-                </SelectTrigger>
-                <SelectContent>
-                  {offices.map((o) => (
-                    <SelectItem key={o.id} value={o.id}>
-                      <span className="inline-flex items-center gap-2">
-                        <span
-                          className="inline-block h-2 w-2 rounded-full"
-                          style={{ backgroundColor: o.display_color }}
-                        />
-                        {o.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold text-foreground">Horario</h3>
+            {offices.length > 1 && (
+              <div className="space-y-1.5">
+                <Label htmlFor="office" className="text-sm">Consultorio</Label>
+                <Select value={officeId} onValueChange={setOfficeId}>
+                  <SelectTrigger id="office" className="h-9 text-sm">
+                    <SelectValue placeholder="Selecciona un consultorio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {offices.map((o) => (
+                      <SelectItem key={o.id} value={o.id}>
+                        <span className="inline-flex items-center gap-2">
+                          <span
+                            className="inline-block h-2 w-2 rounded-full"
+                            style={{ backgroundColor: o.display_color }}
+                          />
+                          {o.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
-          <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="date" className="text-sm">Fecha</Label>
+                <Input
+                  id="date"
+                  type="date"
+                  value={date}
+                  min={formatMx(new Date(), "yyyy-MM-dd")}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="h-9 text-sm"
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm">Hora de inicio</Label>
+                <TimePicker value={startTime} onValueChange={setStartTime} className="h-9 text-sm" withIcon />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="duration" className="text-sm">Duración (min)</Label>
+                <Input
+                  id="duration"
+                  type="number"
+                  min={5}
+                  step={5}
+                  value={duration}
+                  onChange={(e) => {
+                    setDurationManuallyEdited(true);
+                    setDuration(Math.max(5, parseInt(e.target.value || "0", 10)));
+                  }}
+                  className="h-9 text-sm"
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm text-muted-foreground">Termina</Label>
+                <Input value={endTime} disabled readOnly className="h-9 bg-muted/50 text-sm" />
+              </div>
+            </div>
+          </section>
+
+          <Separator />
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold text-foreground">Paciente</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="fullName" className="text-sm">Nombre completo</Label>
+                <Input
+                  id="fullName"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Nombre y apellidos"
+                  className="h-9 text-sm"
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="phone" className="text-sm">Teléfono</Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  placeholder="+52 55 1234 5678"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="h-9 text-sm"
+                  required
+                />
+              </div>
+            </div>
+
             <div className="space-y-1.5">
-              <Label htmlFor="date">Fecha *</Label>
-              <Input
-                id="date"
-                type="date"
-                value={date}
-                min={formatMx(new Date(), "yyyy-MM-dd")}
-                onChange={(e) => setDate(e.target.value)}
-                required
+              <Label htmlFor="symptoms" className="text-sm">
+                Motivo de consulta <span className="font-normal text-muted-foreground">(opcional)</span>
+              </Label>
+              <Textarea
+                id="symptoms"
+                rows={2}
+                value={symptoms}
+                onChange={(e) => setSymptoms(e.target.value)}
+                className="text-sm"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="startTime">Hora inicio *</Label>
-              <TimePicker value={startTime} onValueChange={setStartTime} />
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="duration">Duración (min) *</Label>
-              <Input
-                id="duration"
-                type="number"
-                min={5}
-                step={5}
-                value={duration}
-                onChange={(e) => {
-                  setDurationManuallyEdited(true);
-                  setDuration(Math.max(5, parseInt(e.target.value || "0", 10)));
-                }}
-                required
+            <div className="flex items-start gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
+              <Checkbox
+                id="notify"
+                checked={notifyPatient}
+                onCheckedChange={(v) => setNotifyPatient(v === true)}
+                className="mt-0.5"
               />
+              <Label htmlFor="notify" className="cursor-pointer space-y-0.5 font-normal">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                  Avisar al paciente por WhatsApp
+                </span>
+                <span className="block text-xs text-muted-foreground">Le llega la confirmación de su cita.</span>
+              </Label>
             </div>
-            <div className="space-y-1.5">
-              <Label>Hora fin</Label>
-              <Input value={endTime} disabled readOnly />
-            </div>
-          </div>
+          </section>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="fullName">Nombre del paciente *</Label>
-              <Input
-                id="fullName"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Nombre completo"
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="phone">Teléfono *</Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="+52 55 1234 5678"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="symptoms">Motivo de consulta (opcional)</Label>
-            <Textarea
-              id="symptoms"
-              rows={2}
-              value={symptoms}
-              onChange={(e) => setSymptoms(e.target.value)}
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="notify"
-              checked={notifyPatient}
-              onCheckedChange={(v) => setNotifyPatient(v === true)}
-            />
-            <Label htmlFor="notify" className="text-sm font-normal cursor-pointer">
-              Enviar confirmación por WhatsApp al paciente
-            </Label>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+          <DialogFooter className="gap-2 border-t pt-4 sm:space-x-0">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={!canSubmit}>
-              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Button type="submit" size="sm" disabled={!canSubmit} className="gap-1.5">
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               {submitting ? "Creando..." : "Crear cita"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
 

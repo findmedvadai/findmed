@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { Building2, FlaskConical, Send } from "lucide-react";
 
 interface Props {
@@ -28,6 +29,11 @@ interface Props {
   appointmentId: string;
   onSuccess: () => void;
 }
+
+const DEST_TYPES = [
+  { value: "hospital", label: "Hospital", icon: Building2 },
+  { value: "laboratory", label: "Laboratorio", icon: FlaskConical },
+] as const;
 
 export default function SendReportModal({ open, onOpenChange, formId, appointmentId, onSuccess }: Props) {
   const [destType, setDestType] = useState<"hospital" | "laboratory">("hospital");
@@ -128,45 +134,50 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
       toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const destLabel = destType === "hospital" ? "Hospital" : "Laboratorio";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Enviar Informe</DialogTitle>
-          <DialogDescription>Selecciona el destino del informe médico.</DialogDescription>
+      <DialogContent className="gap-5 p-5 sm:max-w-lg">
+        <DialogHeader className="space-y-1 text-left">
+          <DialogTitle className="text-base font-semibold">Enviar informe</DialogTitle>
+          <DialogDescription className="text-sm">
+            Elige a qué hospital o laboratorio se envía el informe médico de esta consulta.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           {/* Destination type */}
-          <div className="space-y-2">
-            <Label>Tipo de destino</Label>
-            <div className="flex gap-2">
-              <Button
-                variant={destType === "hospital" ? "default" : "outline"}
-                size="sm"
-                className="gap-2 flex-1"
-                onClick={() => { setDestType("hospital"); setDestId(""); }}
-              >
-                <Building2 className="h-4 w-4" />
-                Hospital
-              </Button>
-              <Button
-                variant={destType === "laboratory" ? "default" : "outline"}
-                size="sm"
-                className="gap-2 flex-1"
-                onClick={() => { setDestType("laboratory"); setDestId(""); }}
-              >
-                <FlaskConical className="h-4 w-4" />
-                Laboratorio
-              </Button>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Tipo de destino</Label>
+            <div role="group" aria-label="Tipo de destino" className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
+              {DEST_TYPES.map((t) => {
+                const Icon = t.icon;
+                const active = destType === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => { setDestType(t.value); setDestId(""); }}
+                    className={cn(
+                      "flex h-8 items-center justify-center gap-1.5 rounded-sm text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>{destType === "hospital" ? "Seleccionar hospital" : "Seleccionar laboratorio"}</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="report-destination" className="text-xs font-medium">{destLabel}</Label>
             <Select value={destId} onValueChange={setDestId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccionar..." />
+              <SelectTrigger id="report-destination" className="h-9 text-sm">
+                <SelectValue placeholder={destType === "hospital" ? "Selecciona un hospital" : "Selecciona un laboratorio"} />
               </SelectTrigger>
               <SelectContent>
                 {(options ?? []).map((item) => (
@@ -177,21 +188,23 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
                   </SelectItem>
                 ))}
                 {(options ?? []).length === 0 && (
-                  <div className="px-2 py-3 text-sm text-muted-foreground text-center">
-                    Sin resultados
+                  <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                    {destType === "hospital" ? "No hay hospitales activos en el catálogo." : "No hay laboratorios activos en el catálogo."}
                   </div>
                 )}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">El formulario quedará marcado como «Informe enviado».</p>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+        <DialogFooter className="gap-2 sm:space-x-0">
+          <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button
+            size="sm"
             onClick={() => sendMut.mutate()}
             disabled={sendMut.isPending || !destId}
-            className="gap-2"
+            className="gap-1.5"
           >
             <Send className="h-4 w-4" />
             {sendMut.isPending ? "Enviando…" : "Confirmar y enviar informe"}

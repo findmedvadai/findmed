@@ -68,9 +68,7 @@ export default function OfficeManager({ doctorId }: Props) {
       const { data } = await supabase
         .from("doctor_offices")
         .select(
-          "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, " +
-            "google_calendar_connected, google_calendar_id, google_calendar_name, " +
-            "outlook_calendar_connected, outlook_calendar_id, outlook_calendar_name, is_active"
+          "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, google_calendar_connected, google_calendar_id, google_calendar_name, outlook_calendar_connected, outlook_calendar_id, outlook_calendar_name, is_active"
         )
         .eq("doctor_id", doctorId)
         .eq("is_deleted", false)

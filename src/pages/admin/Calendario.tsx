@@ -12,20 +12,22 @@ import {
 import { toZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
 import {
+  AlertTriangle,
+  CalendarX2,
+  Check,
   ChevronLeft,
   ChevronRight,
-  CalendarDays,
-  Check,
   ChevronsUpDown,
+  Info,
   Plus,
-  AlertTriangle,
+  X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Popover,
   PopoverContent,
@@ -39,7 +41,11 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { getSpecialtyColor } from "@/lib/specialty-colors";
+import { PageHeader } from "@/components/app/PageHeader";
+import { FilterBar } from "@/components/app/FilterBar";
+import type { Tone } from "@/components/app/StatCard";
+import { APPOINTMENT_STATUS } from "@/lib/appointment-status";
+import { DEFAULT_COLOR, getSpecialtyColor } from "@/lib/specialty-colors";
 import { cn } from "@/lib/utils";
 import {
   MEXICO_TZ,
@@ -58,8 +64,9 @@ import CreateAppointmentDialog from "@/components/admin/CreateAppointmentDialog"
 
 const START_HOUR = 7;
 const END_HOUR = 21;
-const HOUR_HEIGHT = 36;
+const HOUR_HEIGHT = 48;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
+const GRID_COLS = "grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]";
 
 // --- Types ---
 
@@ -113,7 +120,19 @@ interface ExternalApiEvent {
   end: string;
   description: string | null;
   htmlLink: string | null;
+  office_id?: string | null;
+  office_name?: string | null;
 }
+
+const STATUS_DOT: Record<Tone, string> = {
+  neutral: "bg-muted-foreground",
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-destructive",
+};
+
+const statusDot = (status?: string) => STATUS_DOT[APPOINTMENT_STATUS[status ?? ""]?.tone ?? "neutral"];
 
 // --- Overlap layout ---
 
@@ -145,7 +164,7 @@ function computeOverlapColumns(items: CalendarItem[]) {
   return result;
 }
 
-// --- Combobox (unchanged) ---
+// --- Presentational pieces ---
 
 function FilterCombobox({
   value,
@@ -166,24 +185,32 @@ function FilterCombobox({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" aria-expanded={open} className="h-8 w-52 justify-between text-xs font-normal">
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn(
+            "h-9 min-w-[150px] flex-1 justify-between px-3 text-sm font-normal sm:w-[200px] sm:flex-none",
+            value !== "all" && "border-primary/40 bg-primary/5",
+          )}
+        >
           <span className="truncate">{selected}</span>
-          <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-52 p-0">
+      <PopoverContent className="w-[240px] p-0" align="start">
         <Command>
-          <CommandInput placeholder={placeholder} className="h-8 text-xs" />
+          <CommandInput placeholder={placeholder} className="h-9 text-sm" />
           <CommandList>
             <CommandEmpty>Sin resultados</CommandEmpty>
             <CommandGroup>
               <CommandItem value="all" onSelect={() => { onChange("all"); setOpen(false); }}>
-                <Check className={cn("mr-2 h-3 w-3", value === "all" ? "opacity-100" : "opacity-0")} />
+                <Check className={cn("mr-2 h-3.5 w-3.5", value === "all" ? "opacity-100" : "opacity-0")} />
                 {allLabel}
               </CommandItem>
               {options.map((opt) => (
                 <CommandItem key={opt.id} value={opt.name} onSelect={() => { onChange(opt.id); setOpen(false); }}>
-                  <Check className={cn("mr-2 h-3 w-3", value === opt.id ? "opacity-100" : "opacity-0")} />
+                  <Check className={cn("mr-2 h-3.5 w-3.5", value === opt.id ? "opacity-100" : "opacity-0")} />
                   {opt.name}
                 </CommandItem>
               ))}
@@ -195,11 +222,61 @@ function FilterCombobox({
   );
 }
 
+/** Navegación de semana: anterior · Hoy · siguiente, en un solo grupo. */
+function WeekNav({ onPrev, onToday, onNext, isCurrent }: { onPrev: () => void; onToday: () => void; onNext: () => void; isCurrent: boolean }) {
+  return (
+    <div className="inline-flex items-center rounded-md border bg-background p-px shadow-sm">
+      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onPrev} aria-label="Semana anterior">
+        <ChevronLeft className="h-4 w-4" />
+      </Button>
+      <Button size="sm" variant="ghost" className={cn("h-8 px-3", isCurrent && "text-primary")} onClick={onToday}>
+        Hoy
+      </Button>
+      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onNext} aria-label="Semana siguiente">
+        <ChevronRight className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+function SummaryStat({ value, label, dot }: { value: number; label: string; dot?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {dot && <span className={cn("h-2 w-2 rounded-full", dot)} aria-hidden />}
+      <span className="font-semibold tabular-nums text-foreground">{value}</span>
+      {label}
+    </span>
+  );
+}
+
+function GridSkeleton() {
+  const blocks = [
+    { day: 0, top: 1.5, h: 1 }, { day: 1, top: 3, h: 0.5 }, { day: 1, top: 6, h: 1 },
+    { day: 2, top: 2, h: 0.5 }, { day: 3, top: 4.5, h: 1.5 }, { day: 4, top: 1, h: 0.5 },
+    { day: 4, top: 7, h: 1 }, { day: 5, top: 3.5, h: 1 },
+  ];
+  return (
+    <div className={cn("grid", GRID_COLS)} style={{ height: 9 * HOUR_HEIGHT }}>
+      <div />
+      {Array.from({ length: 7 }, (_, d) => (
+        <div key={d} className="relative border-l">
+          {blocks.filter((b) => b.day === d).map((b, i) => (
+            <Skeleton
+              key={i}
+              className="absolute inset-x-1"
+              style={{ top: b.top * HOUR_HEIGHT, height: b.h * HOUR_HEIGHT - 4 }}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // --- Component ---
 
 /** embedded: se muestra dentro de otro módulo, sin título propio. */
 export default function Calendario({ embedded = false }: { embedded?: boolean } = {}) {
-  void embedded;
   const [weekStart, setWeekStart] = useState(() => getMexicoWeekBounds(new Date()).start);
   const [filterDoctor, setFilterDoctor] = useState("all");
   const [filterOffice, setFilterOffice] = useState("all");
@@ -211,6 +288,7 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
   const [createDate, setCreateDate] = useState<string | undefined>();
   const [createTime, setCreateTime] = useState<string | undefined>();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const didAutoScroll = useRef(false);
 
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
@@ -414,8 +492,8 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
           doctorName: filteredDoctorRow?.full_name,
           description: e.description,
           htmlLink: e.htmlLink,
-          officeId: (e as any).office_id ?? null,
-          officeName: (e as any).office_name ?? null,
+          officeId: e.office_id ?? null,
+          officeName: e.office_name ?? null,
         });
       }
       for (const e of outlookResp?.events ?? []) {
@@ -430,8 +508,8 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
           doctorName: filteredDoctorRow?.full_name,
           description: e.description,
           htmlLink: e.htmlLink,
-          officeId: (e as any).office_id ?? null,
-          officeName: (e as any).office_name ?? null,
+          officeId: e.office_id ?? null,
+          officeName: e.office_name ?? null,
         });
       }
     }
@@ -483,19 +561,25 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
     return [...ids];
   }, [rawAppointments]);
 
-  // Auto-scroll to current CDMX hour on first mount.
+  // Auto-scroll to the current CDMX hour once the grid has rendered.
   useEffect(() => {
-    const now = new Date();
-    const h = getMexicoHours(now);
-    if (scrollRef.current && h >= START_HOUR && h <= END_HOUR) {
+    if (isLoading || didAutoScroll.current || !scrollRef.current) return;
+    didAutoScroll.current = true;
+    const h = getMexicoHours(new Date());
+    if (h >= START_HOUR && h <= END_HOUR) {
       scrollRef.current.scrollTop = Math.max(0, (h - START_HOUR - 1) * HOUR_HEIGHT);
     }
-  }, []);
+  }, [isLoading]);
 
   const goToPrev = () => setWeekStart((w) => subWeeks(w, 1));
   const goToNext = () => setWeekStart((w) => addWeeks(w, 1));
   const goToToday = () => setWeekStart(getMexicoWeekBounds(new Date()).start);
   const monthLabel = format(toZonedTime(weekStart, MEXICO_TZ), "MMMM yyyy", { locale: es });
+  const rangeLabel =
+    formatMx(weekStart, "M") === formatMx(weekEnd, "M")
+      ? `${formatMx(weekStart, "d")} – ${formatMx(weekEnd, "d 'de' MMMM", { locale: es })}`
+      : `${formatMx(weekStart, "d 'de' MMM", { locale: es })} – ${formatMx(weekEnd, "d 'de' MMM", { locale: es })}`;
+  const isCurrentWeek = isSameMexicoDay(weekStart, getMexicoWeekBounds(new Date()).start);
 
   const doctorOptions = (allDoctors ?? []).map((d) => ({ id: d.id, name: d.full_name }));
   const specialtyOptions = (allSpecialties ?? []).map((s) => ({ id: s.id, name: s.name }));
@@ -503,6 +587,20 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
   const calendarSyncWarning =
     (googleEnabled && googleResp?.error === "calendar_not_synced") ||
     (outlookEnabled && outlookResp?.error === "calendar_not_synced");
+
+  const hasFilters = filterDoctor !== "all" || filterOffice !== "all" || filterSpecialty !== "all" || showCancelled;
+  const clearFilters = () => {
+    setFilterDoctor("all");
+    setFilterOffice("all");
+    setFilterSpecialty("all");
+    setShowCancelled(false);
+  };
+
+  const openCreate = (date?: string, time?: string) => {
+    setCreateDate(date);
+    setCreateTime(time);
+    setCreateOpen(true);
+  };
 
   // --- Click on empty grid → open create dialog with that slot pre-filled. ---
   const handleSlotClick = (day: Date, e: React.MouseEvent<HTMLDivElement>) => {
@@ -513,9 +611,7 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
     const snapped = Math.floor(hour * 2) / 2; // half-hour snap
     const hh = String(Math.floor(snapped)).padStart(2, "0");
     const mm = String(Math.round((snapped % 1) * 60)).padStart(2, "0");
-    setCreateDate(formatMx(day, "yyyy-MM-dd"));
-    setCreateTime(`${hh}:${mm}`);
-    setCreateOpen(true);
+    openCreate(formatMx(day, "yyyy-MM-dd"), `${hh}:${mm}`);
   };
 
   const openItem = (item: CalendarItem) => {
@@ -535,43 +631,34 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
     }
   };
 
+  const showOfficeLegend = !!filteredDoctorIdEarly && doctorOfficeOptions.length > 0;
+  const currentLineTop = (() => {
+    const h = getMexicoHours(currentTime);
+    const m = getMexicoMinutes(currentTime);
+    if (h < START_HOUR || h >= END_HOUR) return null;
+    return ((h - START_HOUR) * 60 + m) / 60 * HOUR_HEIGHT;
+  })();
+
   return (
-    <div className="flex h-full flex-col gap-2">
-      {/* Header */}
-      <div className="flex items-center justify-between px-1">
-        <h1 className="text-xl font-bold text-foreground capitalize">{monthLabel}</h1>
-        <div className="flex items-center gap-1">
-          <Button
-            size="icon"
-            onClick={() => {
-              setCreateDate(undefined);
-              setCreateTime(undefined);
-              setCreateOpen(true);
-            }}
-            className="h-8 w-8"
-            title="Crear cita"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="icon" onClick={goToPrev} className="h-8 w-8">
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={isSameMexicoDay(weekStart, getMexicoWeekBounds(new Date()).start) ? "default" : "outline"}
-            size="sm"
-            onClick={goToToday}
-            className="h-8 text-xs"
-          >
-            Hoy
-          </Button>
-          <Button variant="outline" size="icon" onClick={goToNext} className="h-8 w-8">
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+    <div className="space-y-4">
+      {!embedded && (
+        <PageHeader title="Calendario" description="Citas de todos los doctores por semana." />
+      )}
+
+      {/* Toolbar: semana + acción principal */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <WeekNav onPrev={goToPrev} onToday={goToToday} onNext={goToNext} isCurrent={isCurrentWeek} />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold capitalize leading-tight text-foreground">{monthLabel}</p>
+          <p className="text-xs text-muted-foreground">{rangeLabel}</p>
         </div>
+        <Button size="sm" className="ml-auto gap-1.5" onClick={() => openCreate(undefined, undefined)}>
+          <Plus className="h-4 w-4" /> Nueva cita
+        </Button>
       </div>
 
-      {/* Filters + cancelled toggle */}
-      <div className="flex items-center gap-2 px-1 flex-wrap">
+      {/* Filtros */}
+      <FilterBar>
         <FilterCombobox
           value={filterDoctor}
           onChange={(v) => {
@@ -598,254 +685,235 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
           placeholder="Buscar especialidad..."
           allLabel="Todas las especialidades"
         />
-        <div className="flex items-center gap-2 ml-auto">
-          <Switch
-            id="show-cancelled"
-            checked={showCancelled}
-            onCheckedChange={setShowCancelled}
-          />
-          <Label htmlFor="show-cancelled" className="text-xs cursor-pointer">
-            Mostrar canceladas
+        <div className="flex h-9 items-center gap-2 rounded-md border bg-background px-3">
+          <Switch id="show-cancelled" checked={showCancelled} onCheckedChange={setShowCancelled} className="scale-90" />
+          <Label htmlFor="show-cancelled" className="cursor-pointer text-sm font-normal">
+            Canceladas
           </Label>
         </div>
-      </div>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" className="gap-1 text-muted-foreground" onClick={clearFilters}>
+            <X className="h-3.5 w-3.5" /> Limpiar
+          </Button>
+        )}
+      </FilterBar>
 
-      {/* Vista general legend */}
-      {filterDoctor === "all" && (
-        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Vista general:</span>{" "}
-          mostrando citas de la plataforma. Filtra un doctor para ver su calendario completo (Google/Outlook).
-        </div>
-      )}
-
-      {/* Calendar-not-synced warning when filtered */}
       {calendarSyncWarning && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          El calendario externo del doctor no se pudo sincronizar (token expirado).
-          Pídele que vuelva a vincularlo desde su configuración.
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-foreground">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p>
+            El calendario externo del doctor no se pudo sincronizar (token expirado). Pídele que lo vuelva a
+            vincular desde su configuración.
+          </p>
         </div>
       )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3 px-1">
-        <Card>
-          <CardContent className="flex items-center gap-2 p-3">
-            <CalendarDays className="h-4 w-4 text-primary" />
-            <div>
-              <p className="text-lg font-bold leading-none">{summary.total}</p>
-              <p className="text-[10px] text-muted-foreground">Citas</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-2 p-3">
-            <div className="h-2.5 w-2.5 rounded-full bg-confirmed" />
-            <div>
-              <p className="text-lg font-bold leading-none">{summary.confirmed}</p>
-              <p className="text-[10px] text-muted-foreground">Confirmadas</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-2 p-3">
-            <div className="h-2.5 w-2.5 rounded-full bg-scheduled" />
-            <div>
-              <p className="text-lg font-bold leading-none">{summary.scheduled}</p>
-              <p className="text-[10px] text-muted-foreground">Por confirmar</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Specialty legend */}
-      {weekSpecialtyIds.length > 0 && (
-        <div className="flex items-center gap-2 px-1 flex-wrap">
-          {weekSpecialtyIds.map((id) => {
-            const color = getSpecialtyColor(id, colorMap);
-            const name = (allSpecialties ?? []).find((s) => s.id === id)?.name ?? id;
-            return (
-              <Badge
-                key={id}
-                variant="outline"
-                className="text-[10px] gap-1 font-normal"
-                style={{ borderColor: color, color }}
-              >
-                <span className="h-2 w-2 rounded-full inline-block" style={{ backgroundColor: color }} />
-                {name}
-              </Badge>
-            );
-          })}
+      <Card className="relative overflow-hidden">
+        {/* Resumen de la semana */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b px-4 py-2.5">
+          <SummaryStat value={summary.total} label={summary.total === 1 ? "cita" : "citas"} />
+          <SummaryStat value={summary.confirmed} label={summary.confirmed === 1 ? "confirmada" : "confirmadas"} dot="bg-success" />
+          <SummaryStat value={summary.scheduled} label="por confirmar" dot="bg-warning" />
+          <span className="flex w-full items-center gap-1.5 text-xs text-muted-foreground md:ml-auto md:w-auto">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            {filterDoctor === "all"
+              ? "Vista general: solo citas de FindMed. Elige un doctor para ver también su Google/Outlook."
+              : "Incluye los eventos de Google/Outlook del doctor."}
+          </span>
         </div>
-      )}
 
-      {/* Day headers */}
-      <div className="grid grid-cols-[3rem_repeat(7,1fr)] border-b border-border">
-        <div />
-        {weekDays.map((day) => {
-          const dayIsToday = isSameMexicoDay(day, currentTime);
-          return (
-            <div key={day.toISOString()} className="flex flex-col items-center py-1">
-              <span className="text-[10px] uppercase text-muted-foreground">
-                {format(toZonedTime(day, MEXICO_TZ), "EEE", { locale: es })}
-              </span>
-              <span
-                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
-                  dayIsToday ? "bg-primary text-primary-foreground" : "text-foreground"
-                }`}
-              >
-                {formatMx(day, "d")}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Grid */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-[3rem_repeat(7,1fr)]" style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}>
-            {/* Time labels */}
-            <div className="relative">
-              {Array.from({ length: TOTAL_HOURS }, (_, i) => (
-                <div
-                  key={i}
-                  className="absolute right-2 text-[10px] text-muted-foreground"
-                  style={{ top: i * HOUR_HEIGHT - 6 }}
-                >
-                  {format(new Date(2000, 0, 1, START_HOUR + i), "h a")}
-                </div>
-              ))}
+        {/* Semana */}
+        <div ref={scrollRef} className="max-h-[min(70vh,680px)] overflow-auto">
+          <div className="min-w-[720px]">
+            <div className={cn("sticky top-0 z-40 grid border-b bg-card", GRID_COLS)}>
+              <div className="sticky left-0 z-10 bg-card" />
+              {weekDays.map((day) => {
+                const dayIsToday = isSameMexicoDay(day, currentTime);
+                return (
+                  <div key={day.toISOString()} className="flex flex-col items-center gap-0.5 border-l py-2">
+                    <span className={cn("text-[11px] font-medium uppercase", dayIsToday ? "text-primary" : "text-muted-foreground")}>
+                      {format(toZonedTime(day, MEXICO_TZ), "EEE", { locale: es })}
+                    </span>
+                    <span
+                      className={cn(
+                        "flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold",
+                        dayIsToday ? "bg-primary text-primary-foreground" : "text-foreground",
+                      )}
+                    >
+                      {formatMx(day, "d")}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Day columns */}
-            {weekDays.map((day, dayIdx) => {
-              const dayItems = itemsByDay[dayIdx] || [];
-              const positioned = computeOverlapColumns(dayItems);
-              const dayIsToday = isSameMexicoDay(day, currentTime);
-
-              return (
-                <div
-                  key={day.toISOString()}
-                  className={`relative border-l border-border ${dayIsToday ? "bg-primary/5" : ""}`}
-                  onClick={(e) => handleSlotClick(day, e)}
-                >
+            {isLoading ? (
+              <GridSkeleton />
+            ) : (
+              <div className={cn("relative grid", GRID_COLS)} style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}>
+                {/* Horas */}
+                <div className="sticky left-0 z-[35] bg-card">
                   {Array.from({ length: TOTAL_HOURS }, (_, i) => (
                     <div
                       key={i}
-                      className="absolute inset-x-0 border-t border-border/50"
-                      style={{ top: i * HOUR_HEIGHT }}
-                    />
+                      className="absolute right-2 text-[10px] tabular-nums text-muted-foreground"
+                      style={{ top: i * HOUR_HEIGHT + 3 }}
+                    >
+                      {String(START_HOUR + i).padStart(2, "0")}:00
+                    </div>
                   ))}
-
-                  {dayIsToday && (() => {
-                    const h = getMexicoHours(currentTime);
-                    const m = getMexicoMinutes(currentTime);
-                    if (h < START_HOUR || h >= END_HOUR) return null;
-                    const lineTop = ((h - START_HOUR) * 60 + m) / 60 * HOUR_HEIGHT;
-                    return (
-                      <div className="absolute inset-x-0 z-30 pointer-events-none" style={{ top: lineTop }}>
-                        <div className="relative">
-                          <div className="absolute -left-[5px] -top-[4px] h-[10px] w-[10px] rounded-full bg-red-500" />
-                          <div className="h-[2px] w-full bg-red-500" />
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {positioned.map(({ item, col, totalCols }) => {
-                    const startMin = (getMexicoHours(item.start) - START_HOUR) * 60 + getMexicoMinutes(item.start);
-                    const duration = Math.max(15, differenceInMinutes(item.end, item.start));
-                    const top = (startMin / 60) * HOUR_HEIGHT;
-                    const height = (duration / 60) * HOUR_HEIGHT;
-                    const widthPct = 100 / totalCols;
-                    const leftPct = col * widthPct;
-                    const isCompressed = totalCols > 1;
-
-                    const isExternal = item.type === "google" || item.type === "outlook";
-                    const isCancelledAppt = item.type === "appointment" && item.status === "cancelled";
-
-                    // When the admin filters by a specific doctor, switch the
-                    // event's left-border to the office color — this makes
-                    // multi-office days easy to scan. Otherwise we keep the
-                    // specialty color (which is the macro filter across all
-                    // doctors).
-                    const officeAccent = item.officeId ? officeColorMap.get(item.officeId) : null;
-                    const accent = filteredDoctorIdEarly && officeAccent
-                      ? officeAccent
-                      : isExternal
-                      ? "#6B7280"
-                      : item.specialtyId
-                      ? getSpecialtyColor(item.specialtyId, colorMap)
-                      : "#6B7280";
-
-                    return (
-                      <div
-                        key={item.id}
-                        className={cn(
-                          "absolute overflow-hidden rounded text-[10px] leading-tight cursor-pointer transition-shadow border-l-4 hover:ring-2 hover:ring-primary/50",
-                          isCompressed ? "px-0.5 py-0" : "px-1.5 py-0.5",
-                          isExternal ? "bg-muted/60 italic" : "bg-white",
-                          isCancelledAppt && "opacity-50 line-through"
-                        )}
-                        style={{
-                          top: Math.max(0, top),
-                          height: Math.max(15, height),
-                          left: `calc(${leftPct}% + 1px)`,
-                          width: `calc(${widthPct}% - 2px)`,
-                          borderLeftColor: accent,
-                          color: accent,
-                        }}
-                        onClick={(e) => {
-                          e.preventDefault(); // suppress slot-click
-                          e.stopPropagation();
-                          openItem(item);
-                        }}
-                        title={`${item.title}\n${formatMx(item.start, "HH:mm")} - ${formatMx(item.end, "HH:mm")}${item.doctorName ? `\n${item.doctorName}` : ""}`}
-                      >
-                        <div className="flex items-center gap-1 font-semibold truncate">
-                          {item.type === "appointment" ? (
-                            <span
-                              className="inline-block h-1.5 w-1.5 rounded-full flex-shrink-0"
-                              style={{
-                                backgroundColor:
-                                  item.status === "confirmed"
-                                    ? "#16A34A"
-                                    : item.status === "cancelled"
-                                    ? "#9CA3AF"
-                                    : "#EAB308",
-                              }}
-                            />
-                          ) : (
-                            <span className="inline-block text-[8px] uppercase font-bold tracking-wide opacity-70">
-                              {item.type === "outlook" ? "OUT" : "GCAL"}
-                            </span>
-                          )}
-                          <span className="truncate">{item.title}</span>
-                        </div>
-                        {!isCompressed && (
-                          <>
-                            <div className="truncate opacity-80">
-                              {formatMx(item.start, "HH:mm")} - {formatMx(item.end, "HH:mm")}
-                            </div>
-                            {height > 30 && item.doctorName && (
-                              <div className="truncate opacity-70">{item.doctorName}</div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
                 </div>
-              );
-            })}
+
+                {/* Días */}
+                {weekDays.map((day, dayIdx) => {
+                  const dayItems = itemsByDay[dayIdx] || [];
+                  const positioned = computeOverlapColumns(dayItems);
+                  const dayIsToday = isSameMexicoDay(day, currentTime);
+
+                  return (
+                    <div
+                      key={day.toISOString()}
+                      className={cn("relative cursor-pointer border-l", dayIsToday && "bg-primary/[0.03]")}
+                      onClick={(e) => handleSlotClick(day, e)}
+                    >
+                      {Array.from({ length: TOTAL_HOURS }, (_, i) => (
+                        <div key={i}>
+                          <div className="absolute inset-x-0 border-t" style={{ top: i * HOUR_HEIGHT }} />
+                          <div className="absolute inset-x-0 border-t border-dashed border-border/60" style={{ top: i * HOUR_HEIGHT + HOUR_HEIGHT / 2 }} />
+                        </div>
+                      ))}
+
+                      {dayIsToday && currentLineTop !== null && (
+                        <div className="pointer-events-none absolute inset-x-0 z-30" style={{ top: currentLineTop }}>
+                          <div className="relative">
+                            <div className="absolute -left-[4px] -top-[3px] h-2 w-2 rounded-full bg-destructive" />
+                            <div className="h-px w-full bg-destructive" />
+                          </div>
+                        </div>
+                      )}
+
+                      {positioned.map(({ item, col, totalCols }) => {
+                        const startMin = (getMexicoHours(item.start) - START_HOUR) * 60 + getMexicoMinutes(item.start);
+                        const duration = Math.max(15, differenceInMinutes(item.end, item.start));
+                        const top = (startMin / 60) * HOUR_HEIGHT;
+                        const height = Math.max(18, (duration / 60) * HOUR_HEIGHT);
+                        const widthPct = 100 / totalCols;
+                        const leftPct = col * widthPct;
+                        const isCompressed = totalCols > 1;
+                        const isShort = height < 34;
+
+                        const isExternal = item.type === "google" || item.type === "outlook";
+                        const isCancelledAppt = item.type === "appointment" && item.status === "cancelled";
+
+                        // When the admin filters by a specific doctor, switch the
+                        // event's left-border to the office color — this makes
+                        // multi-office days easy to scan. Otherwise we keep the
+                        // specialty color (which is the macro filter across all
+                        // doctors).
+                        const officeAccent = item.officeId ? officeColorMap.get(item.officeId) : null;
+                        const accent = filteredDoctorIdEarly && officeAccent
+                          ? officeAccent
+                          : isExternal
+                          ? DEFAULT_COLOR
+                          : item.specialtyId
+                          ? getSpecialtyColor(item.specialtyId, colorMap)
+                          : DEFAULT_COLOR;
+                        const time = `${formatMx(item.start, "HH:mm")} – ${formatMx(item.end, "HH:mm")}`;
+
+                        return (
+                          <button
+                            type="button"
+                            key={item.id}
+                            className={cn(
+                              "absolute overflow-hidden rounded-md border border-l-[3px] text-left leading-tight shadow-sm transition-shadow hover:z-20 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              isShort ? "px-1.5 py-0.5" : "px-1.5 py-1",
+                              isExternal ? "bg-muted text-muted-foreground" : "bg-card text-foreground",
+                              isCancelledAppt && "opacity-60",
+                            )}
+                            style={{
+                              top: Math.max(0, top),
+                              height,
+                              left: `calc(${leftPct}% + 2px)`,
+                              width: `calc(${widthPct}% - 4px)`,
+                              borderLeftColor: accent,
+                              ...(!isExternal && { background: `color-mix(in srgb, ${accent} 9%, hsl(var(--card)))` }),
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault(); // suppress slot-click
+                              e.stopPropagation();
+                              openItem(item);
+                            }}
+                            title={`${item.title}\n${time}${item.doctorName ? `\n${item.doctorName}` : ""}${item.officeName ? `\n${item.officeName}` : ""}`}
+                          >
+                            <span className={cn("flex items-center gap-1 text-[11px] font-semibold", isCancelledAppt && "line-through")}>
+                              {item.type === "appointment" ? (
+                                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot(item.status))} aria-hidden />
+                              ) : (
+                                <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide opacity-70">
+                                  {item.type === "outlook" ? "OUT" : "GCAL"}
+                                </span>
+                              )}
+                              {isShort && !isCompressed && (
+                                <span className="shrink-0 font-medium tabular-nums text-muted-foreground">{formatMx(item.start, "HH:mm")}</span>
+                              )}
+                              <span className="truncate">{item.title}</span>
+                            </span>
+                            {!isShort && !isCompressed && (
+                              <span className="mt-0.5 block truncate text-[10px] tabular-nums text-muted-foreground">{time}</span>
+                            )}
+                            {!isCompressed && height > 52 && item.doctorName && (
+                              <span className="block truncate text-[10px] text-muted-foreground">{item.doctorName}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!isLoading && filteredItems.length === 0 && (
+          <div className="pointer-events-none absolute inset-x-0 top-[124px] z-40 flex justify-center px-4">
+            <div className="flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm text-muted-foreground shadow-sm">
+              <CalendarX2 className="h-4 w-4 shrink-0" />
+              {hasFilters ? "Sin citas con estos filtros esta semana" : "Sin citas esta semana"}
+            </div>
           </div>
         )}
-      </div>
+
+        {/* Leyenda */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          {showOfficeLegend ? (
+            <>
+              <span className="font-medium text-foreground">Consultorios</span>
+              {doctorOfficeOptions.map((o) => (
+                <span key={o.id} className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: o.display_color }} aria-hidden />
+                  {o.name}
+                </span>
+              ))}
+            </>
+          ) : weekSpecialtyIds.length > 0 ? (
+            <>
+              <span className="font-medium text-foreground">Especialidades</span>
+              {weekSpecialtyIds.map((id) => {
+                const color = getSpecialtyColor(id, colorMap);
+                const name = (allSpecialties ?? []).find((s) => s.id === id)?.name ?? id;
+                return (
+                  <span key={id} className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} aria-hidden />
+                    {name}
+                  </span>
+                );
+              })}
+            </>
+          ) : null}
+          <span className="w-full sm:ml-auto sm:w-auto">Haz clic en un horario libre para crear una cita.</span>
+        </div>
+      </Card>
 
       {/* Detail dialogs */}
       <AppointmentDetailDialog

@@ -4,6 +4,7 @@ import { es } from "date-fns/locale";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -19,15 +20,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  User,
   Phone,
   Stethoscope,
-  Calendar,
-  Clock,
+  Tags,
   FileText,
   ClipboardList,
   CalendarClock,
@@ -36,14 +34,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { AppointmentStatusBadge, SoftBadge } from "@/components/app/StatusBadge";
 import { formatMx } from "@/lib/timezone";
 import RescheduleAppointmentDialog from "./RescheduleAppointmentDialog";
 
-const STATUS_MAP: Record<string, { label: string; className: string }> = {
-  scheduled: { label: "Programada", className: "bg-blue-100 text-blue-800" },
-  confirmed: { label: "Confirmada", className: "bg-green-100 text-green-800" },
-  cancelled: { label: "Cancelada", className: "bg-red-100 text-red-800" },
-  completed: { label: "Completada", className: "bg-primary/10 text-primary" },
+const CANCEL_REASON_LABELS: Record<string, string> = {
+  patient: "Cancelada por el paciente",
+  doctor: "Cancelada por el doctor",
+  no_confirmation: "Sin confirmación",
+  admin: "Cancelada por el equipo",
 };
 
 interface Props {
@@ -96,7 +95,6 @@ export default function AppointmentDetailDialog({
   const specialties = (doctor?.doctor_specialties ?? [])
     .map((ds) => ds.specialties?.name)
     .filter((x): x is string => Boolean(x));
-  const status = STATUS_MAP[data?.status ?? ""] ?? STATUS_MAP.scheduled;
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
@@ -133,101 +131,92 @@ export default function AppointmentDetailDialog({
 
   const isCancelled = data?.status === "cancelled";
   const showActions = enableActions && data && !isCancelled;
+  const start = data?.start_at ? new Date(data.start_at) : null;
+  const end = data?.end_at ? new Date(data.end_at) : null;
 
   return (
     <>
       <Dialog open={open && !rescheduleOpen} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              Detalle de cita
-              <Badge variant="outline" className="text-xs">Plataforma</Badge>
-            </DialogTitle>
-            <DialogDescription>Información de la cita seleccionada</DialogDescription>
-          </DialogHeader>
-
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           {isLoading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-5 w-full" />
-              ))}
-            </div>
+            <>
+              <DialogHeader className="space-y-2 pr-6">
+                <DialogTitle className="sr-only">Detalle de cita</DialogTitle>
+                <DialogDescription className="sr-only">Cargando la información de la cita.</DialogDescription>
+                <Skeleton className="h-5 w-48" />
+                <Skeleton className="h-4 w-64" />
+              </DialogHeader>
+              <Skeleton className="h-20 w-full rounded-lg" />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            </>
           ) : data ? (
-            <div className="space-y-4 text-sm">
-              <div className="flex justify-end gap-2">
-                <Badge className={status.className}>{status.label}</Badge>
-                {data.cancel_reason && (
-                  <Badge variant="outline" className="text-xs capitalize">
-                    Motivo: {data.cancel_reason}
-                  </Badge>
-                )}
+            <>
+              <DialogHeader className="space-y-2 pr-6">
+                <div className="flex flex-wrap items-center gap-2">
+                  <DialogTitle className="text-base">{patient?.full_name ?? "Detalle de cita"}</DialogTitle>
+                  <AppointmentStatusBadge status={data.status} />
+                  {data.cancel_reason && (
+                    <SoftBadge tone="neutral">
+                      {CANCEL_REASON_LABELS[data.cancel_reason] ?? data.cancel_reason}
+                    </SoftBadge>
+                  )}
+                </div>
+                <DialogDescription className="first-letter:uppercase">
+                  {start && formatMx(start, "EEEE d 'de' MMMM 'de' yyyy", { locale: es })}
+                  {start && end && ` · ${formatMx(start, "HH:mm")} – ${formatMx(end, "HH:mm")}`}
+                </DialogDescription>
+              </DialogHeader>
+
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-3">
+                <DetailField icon={Phone} label="Teléfono">{patient?.phone ?? "—"}</DetailField>
+                <DetailField icon={Stethoscope} label="Doctor">{doctor?.full_name ?? "—"}</DetailField>
+                <DetailField icon={Tags} label="Especialidad">
+                  {specialties.length > 0 ? specialties.join(", ") : "—"}
+                </DetailField>
+              </dl>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <section className="space-y-1.5">
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                    <ClipboardList className="h-4 w-4 text-muted-foreground" /> Síntomas iniciales
+                  </h3>
+                  <p className="whitespace-pre-line text-sm text-muted-foreground">
+                    {data.symptoms || "Sin síntomas registrados."}
+                  </p>
+                </section>
+                <section className="space-y-1.5">
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                    <FileText className="h-4 w-4 text-muted-foreground" /> Notas médicas
+                  </h3>
+                  <p className="whitespace-pre-line text-sm text-muted-foreground">
+                    {data.doctor_notes || "Sin notas."}
+                  </p>
+                  {data.doctor_notes_updated_at && (
+                    <p className="text-xs text-muted-foreground">
+                      Actualizado el{" "}
+                      {formatMx(new Date(data.doctor_notes_updated_at), "d MMM yyyy · HH:mm", { locale: es })}
+                    </p>
+                  )}
+                </section>
               </div>
 
-              <Section icon={User} label="Paciente">
-                <p className="font-medium">{patient?.full_name ?? "—"}</p>
-                {patient?.phone && (
-                  <p className="flex items-center gap-1 text-muted-foreground">
-                    <Phone className="h-3 w-3" />
-                    {patient.phone}
-                  </p>
-                )}
-              </Section>
-
-              <Section icon={Stethoscope} label="Doctor">
-                <p className="font-medium">{doctor?.full_name ?? "—"}</p>
-                {specialties.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {specialties.map((s) => (
-                      <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
-                    ))}
-                  </div>
-                )}
-              </Section>
-
-              <Section icon={Calendar} label="Fecha y horario">
-                <p>
-                  {data.start_at &&
-                    formatMx(new Date(data.start_at), "EEEE d 'de' MMMM yyyy", { locale: es })}
-                </p>
-                <p className="flex items-center gap-1 text-muted-foreground">
-                  <Clock className="h-3 w-3" />
-                  {data.start_at && formatMx(new Date(data.start_at), "HH:mm")}
-                  {" – "}
-                  {data.end_at && formatMx(new Date(data.end_at), "HH:mm")}
-                </p>
-              </Section>
-
-              <Section icon={ClipboardList} label="Síntomas iniciales">
-                <p className="whitespace-pre-line text-muted-foreground">
-                  {data.symptoms || "Sin síntomas registrados"}
-                </p>
-              </Section>
-
-              <Section icon={FileText} label="Notas médicas">
-                <p className="whitespace-pre-line text-muted-foreground">
-                  {data.doctor_notes || "Sin notas"}
-                </p>
-                {data.doctor_notes_updated_at && (
-                  <p className="text-xs text-muted-foreground/70 mt-1">
-                    Actualizado:{" "}
-                    {formatMx(new Date(data.doctor_notes_updated_at), "d MMM yyyy · HH:mm", { locale: es })}
-                  </p>
-                )}
-              </Section>
-
               {showActions && (
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" size="sm" onClick={() => setRescheduleOpen(true)}>
-                    <CalendarClock className="mr-1.5 h-4 w-4" />
-                    Reagendar
-                  </Button>
+                <DialogFooter className="gap-2 border-t pt-4 sm:justify-between sm:space-x-0">
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button variant="destructive" size="sm" disabled={cancelling}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={cancelling}
+                      >
                         {cancelling ? (
-                          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <XCircle className="mr-1.5 h-4 w-4" />
+                          <XCircle className="h-4 w-4" />
                         )}
                         Cancelar cita
                       </Button>
@@ -243,6 +232,7 @@ export default function AppointmentDetailDialog({
                       <AlertDialogFooter>
                         <AlertDialogCancel>Volver</AlertDialogCancel>
                         <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                           onClick={() => {
                             setCancelling(true);
                             cancelMutation.mutate();
@@ -253,11 +243,20 @@ export default function AppointmentDetailDialog({
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                </div>
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setRescheduleOpen(true)}>
+                    <CalendarClock className="h-4 w-4" />
+                    Reagendar
+                  </Button>
+                </DialogFooter>
               )}
-            </div>
+            </>
           ) : (
-            <p className="text-muted-foreground text-center py-4">No se encontró la cita.</p>
+            <>
+              <DialogHeader>
+                <DialogTitle>Detalle de cita</DialogTitle>
+                <DialogDescription>No se encontró la cita. Puede que se haya eliminado.</DialogDescription>
+              </DialogHeader>
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -282,22 +281,22 @@ export default function AppointmentDetailDialog({
   );
 }
 
-function Section({
+function DetailField({
   icon: Icon,
   label,
   children,
 }: {
-  icon: typeof User;
+  icon: typeof Phone;
   label: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+    <div className="min-w-0 space-y-0.5">
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Icon className="h-3.5 w-3.5" />
         {label}
-      </div>
-      <div className="pl-5">{children}</div>
+      </dt>
+      <dd className="text-sm text-foreground">{children}</dd>
     </div>
   );
 }

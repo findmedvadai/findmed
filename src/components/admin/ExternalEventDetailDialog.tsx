@@ -6,8 +6,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
-import { ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, Info, Stethoscope } from "lucide-react";
+import { SoftBadge } from "@/components/app/StatusBadge";
 import { formatMx } from "@/lib/timezone";
 
 export interface ExternalEvent {
@@ -39,52 +40,49 @@ export default function ExternalEventDetailDialog({ event, open, onClose }: Prop
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {event.title}
-            <Badge variant="outline" className="text-xs">{providerLabel}</Badge>
-          </DialogTitle>
-          <DialogDescription>
-            {formatMx(event.start, "EEEE d 'de' MMMM, yyyy", { locale: es })}
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader className="space-y-2 pr-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <DialogTitle className="text-base">{event.title}</DialogTitle>
+            <SoftBadge tone="neutral">{providerLabel} Calendar</SoftBadge>
+          </div>
+          <DialogDescription className="first-letter:uppercase">
+            {formatMx(event.start, "EEEE d 'de' MMMM 'de' yyyy", { locale: es })} ·{" "}
+            {formatMx(event.start, "HH:mm")} – {formatMx(event.end, "HH:mm")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 text-sm">
-          <div>
-            <span className="text-muted-foreground">Horario: </span>
-            <span className="font-medium">
-              {formatMx(event.start, "HH:mm")} – {formatMx(event.end, "HH:mm")}
-            </span>
-          </div>
           {event.doctorName && (
-            <div>
-              <span className="text-muted-foreground">Doctor: </span>
-              <span>{event.doctorName}</span>
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+              <Stethoscope className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="text-muted-foreground">Doctor</span>
+              <span className="truncate font-medium text-foreground">{event.doctorName}</span>
             </div>
           )}
           {event.description && (
-            <div>
-              <span className="text-muted-foreground">Descripción: </span>
-              <span>{event.description}</span>
-            </div>
+            <section className="space-y-1.5">
+              <h3 className="text-sm font-semibold text-foreground">Descripción</h3>
+              <p className="whitespace-pre-line text-muted-foreground">{event.description}</p>
+            </section>
           )}
-          {event.htmlLink && (
-            <a
-              href={event.htmlLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-primary underline text-xs"
-            >
-              <ExternalLink className="h-3 w-3" />
-              Abrir en {providerLabel} Calendar
-            </a>
-          )}
-          <p className="text-xs text-muted-foreground italic">
-            Este evento vive en el calendario externo del doctor. Solo el doctor
-            puede editarlo o eliminarlo desde su agenda.
+          <p className="flex items-start gap-2 text-xs text-muted-foreground">
+            <Info className="mt-px h-3.5 w-3.5 shrink-0" />
+            Este evento vive en el calendario externo del doctor. Solo el doctor puede editarlo o eliminarlo
+            desde su agenda.
           </p>
         </div>
+
+        {event.htmlLink && (
+          <div className="flex justify-end border-t pt-4">
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <a href={event.htmlLink} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="h-4 w-4" />
+                Abrir en {providerLabel} Calendar
+              </a>
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

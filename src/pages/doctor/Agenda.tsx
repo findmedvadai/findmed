@@ -1,61 +1,29 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  format,
-  startOfWeek,
-  endOfWeek,
-  addWeeks,
-  subWeeks,
-  addDays,
-  parseISO,
-  differenceInMinutes,
-} from "date-fns";
-import { toZonedTime, fromZonedTime } from "date-fns-tz";
+import { useQuery } from "@tanstack/react-query";
+import { addWeeks, subWeeks, addDays, parseISO, differenceInMinutes } from "date-fns";
 import { es } from "date-fns/locale";
-
-const MEXICO_TZ = "America/Mexico_City";
-
-function getMexicoHours(date: Date): number {
-  return toZonedTime(date, MEXICO_TZ).getHours();
-}
-function getMexicoMinutes(date: Date): number {
-  return toZonedTime(date, MEXICO_TZ).getMinutes();
-}
-function formatMexicoTime(date: Date, fmt: string): string {
-  return format(toZonedTime(date, MEXICO_TZ), fmt);
-}
-
-// Compare two instants by their CDMX calendar day, regardless of the browser's TZ.
-function isSameMexicoDay(a: Date, b: Date): boolean {
-  return formatMexicoTime(a, "yyyy-MM-dd") === formatMexicoTime(b, "yyyy-MM-dd");
-}
-
-// Returns the CDMX week boundaries for the week containing `instant`, expressed
-// as absolute UTC instants. weekStartsOn: 0 = Sunday.
-function getMexicoWeekBounds(instant: Date): { start: Date; end: Date } {
-  const cdmxNaive = toZonedTime(instant, MEXICO_TZ);
-  const startNaive = startOfWeek(cdmxNaive, { weekStartsOn: 0 });
-  const endNaive = endOfWeek(cdmxNaive, { weekStartsOn: 0 });
-  return {
-    start: fromZonedTime(startNaive, MEXICO_TZ),
-    end: fromZonedTime(endNaive, MEXICO_TZ),
-  };
-}
-import { CalendarPlus, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { CalendarPlus, ChevronLeft, ChevronRight, Info, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { CalendarDays } from "lucide-react";
-import { toast } from "sonner";
+import { PageHeader } from "@/components/app/PageHeader";
+import type { Tone } from "@/components/app/StatCard";
 import type { Database } from "@/integrations/supabase/types";
 import AppointmentDetailDialog, { type CalendarItem } from "@/components/doctor/AppointmentDetailDialog";
 import DayHeaderPopover from "@/components/doctor/DayHeaderPopover";
 import CreateEventDialog from "@/components/doctor/CreateEventDialog";
 import DoctorCreateAppointmentDialog from "@/components/doctor/DoctorCreateAppointmentDialog";
-import { formatMx } from "@/lib/timezone";
+import { APPOINTMENT_STATUS } from "@/lib/appointment-status";
+import {
+  formatMx,
+  getMexicoHours,
+  getMexicoMinutes,
+  getMexicoWeekBounds,
+  isSameMexicoDay,
+} from "@/lib/timezone";
+import { cn } from "@/lib/utils";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -72,8 +40,27 @@ interface GoogleEvent {
 
 const START_HOUR = 7;
 const END_HOUR = 21;
-const HOUR_HEIGHT = 36;
+const HOUR_HEIGHT = 48;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
+const GRID_COLS = "grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]";
+
+// Fondo y borde de cada cita según el tono de su estado (mismo color que en
+// el resto de los módulos). Los eventos del calendario externo van aparte.
+const TONE_CHIP: Record<Tone, string> = {
+  warning: "bg-warning/10 border-l-warning",
+  success: "bg-success/10 border-l-success",
+  info: "bg-info/10 border-l-info",
+  danger: "bg-destructive/10 border-l-destructive",
+  neutral: "bg-muted border-l-muted-foreground/40",
+};
+const TONE_DOT: Record<Tone, string> = {
+  warning: "bg-warning",
+  success: "bg-success",
+  info: "bg-info",
+  danger: "bg-destructive",
+  neutral: "bg-muted-foreground",
+};
+const toneOf = (status?: string): Tone => APPOINTMENT_STATUS[status ?? ""]?.tone ?? "neutral";
 
 function computeOverlapColumns(items: CalendarItem[]) {
   const sorted = [...items].sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -104,9 +91,35 @@ function computeOverlapColumns(items: CalendarItem[]) {
   return result;
 }
 
+/** Navegación de semana: anterior · Hoy · siguiente, en un solo grupo. */
+function WeekNav({ onPrev, onToday, onNext, isCurrent }: { onPrev: () => void; onToday: () => void; onNext: () => void; isCurrent: boolean }) {
+  return (
+    <div className="inline-flex items-center rounded-md border bg-background p-px shadow-sm">
+      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onPrev} aria-label="Semana anterior">
+        <ChevronLeft className="h-4 w-4" />
+      </Button>
+      <Button size="sm" variant="ghost" className={cn("h-8 px-3", isCurrent && "text-primary")} onClick={onToday}>
+        Hoy
+      </Button>
+      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onNext} aria-label="Semana siguiente">
+        <ChevronRight className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+function SummaryStat({ value, label, dot }: { value: number; label: string; dot?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {dot && <span className={cn("h-2 w-2 rounded-full", dot)} aria-hidden />}
+      <span className="font-semibold tabular-nums text-foreground">{value}</span>
+      {label}
+    </span>
+  );
+}
+
 export default function Agenda() {
   const { doctorId } = useAuth();
-  const queryClient = useQueryClient();
   // weekStart is the absolute UTC instant for Sunday 00:00 CDMX of the visible week.
   const [weekStart, setWeekStart] = useState(() => getMexicoWeekBounds(new Date()).start);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -154,7 +167,7 @@ export default function Agenda() {
   }, []);
 
   const weekEnd = useMemo(() => getMexicoWeekBounds(weekStart).end, [weekStart]);
-  const weekKey = formatMexicoTime(weekStart, "yyyy-MM-dd");
+  const weekKey = formatMx(weekStart, "yyyy-MM-dd");
 
   // Each day is the CDMX-midnight instant for that calendar day in the visible week.
   const weekDays = useMemo(
@@ -162,15 +175,14 @@ export default function Agenda() {
     [weekStart]
   );
 
-  const { data: appointments } = useQuery({
+  const { data: appointments, isLoading: loadingAppointments } = useQuery({
     queryKey: ["doctor-appointments", doctorId, weekKey, officeFilter],
     queryFn: async () => {
       if (!doctorId) return [];
       let q = supabase
         .from("appointments")
         .select(
-          "id, office_id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, " +
-            "patients(full_name, phone), doctor_offices(name)"
+          "id, office_id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone), doctor_offices(name)"
         )
         .eq("doctor_id", doctorId)
         .gte("start_at", weekStart.toISOString())
@@ -309,7 +321,12 @@ export default function Agenda() {
   const goToNext = () => setWeekStart((w) => addWeeks(w, 1));
   const goToToday = () => setWeekStart(getMexicoWeekBounds(new Date()).start);
 
-  const monthLabel = format(toZonedTime(weekStart, MEXICO_TZ), "MMMM yyyy", { locale: es });
+  const monthLabel = formatMx(weekStart, "MMMM yyyy", { locale: es });
+  const rangeLabel =
+    formatMx(weekStart, "M") === formatMx(weekEnd, "M")
+      ? `${formatMx(weekStart, "d")} – ${formatMx(weekEnd, "d 'de' MMMM", { locale: es })}`
+      : `${formatMx(weekStart, "d 'de' MMM", { locale: es })} – ${formatMx(weekEnd, "d 'de' MMM", { locale: es })}`;
+  const isCurrentWeek = isSameMexicoDay(weekStart, getMexicoWeekBounds(new Date()).start);
 
   const summary = useMemo(() => {
     if (!appointments) return { total: 0, confirmed: 0, scheduled: 0 };
@@ -322,14 +339,6 @@ export default function Agenda() {
     };
   }, [appointments, currentTime]);
 
-  function getEventStyle(item: CalendarItem): string {
-    if (item.type === "google" || item.type === "outlook")
-      return "bg-primary/80 text-primary-foreground";
-    if (item.status === "scheduled") return "bg-scheduled text-scheduled-foreground";
-    if (item.status === "confirmed") return "bg-confirmed text-confirmed-foreground";
-    return "bg-muted text-muted-foreground";
-  }
-
   // Current time line position
   const currentTimeTop = useMemo(() => {
     const h = getMexicoHours(currentTime);
@@ -338,253 +347,270 @@ export default function Agenda() {
     return ((h - START_HOUR) * 60 + m) / 60 * HOUR_HEIGHT;
   }, [currentTime]);
 
+  const openCreateAppointment = () => {
+    setCreateApptDate(undefined);
+    setCreateApptTime(undefined);
+    setCreateApptOpen(true);
+  };
+  const openCreateEvent = () => {
+    setCreateEventDate(undefined);
+    setCreateEventHour(undefined);
+    setCreateEventOpen(true);
+  };
+
   return (
-    <div className="flex h-full flex-col gap-2">
-      {/* Header */}
-      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-foreground capitalize">{monthLabel}</h1>
-          {offices.length > 1 && (
-            <Select value={officeFilter} onValueChange={setOfficeFilter}>
-              <SelectTrigger className="h-8 w-44 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos los consultorios</SelectItem>
-                {offices.map((o) => (
-                  <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+    <div className="space-y-4">
+      <PageHeader
+        title="Agenda"
+        description="Tus citas de FindMed y los eventos de tu calendario conectado."
+        actions={
+          <>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={openCreateEvent}>
+              <CalendarPlus className="h-4 w-4" /> Evento personal
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={openCreateAppointment}>
+              <Plus className="h-4 w-4" /> Nueva cita
+            </Button>
+          </>
+        }
+      />
+
+      {/* Toolbar: semana + consultorio */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <WeekNav onPrev={goToPrev} onToday={goToToday} onNext={goToNext} isCurrent={isCurrentWeek} />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold capitalize leading-tight text-foreground">{monthLabel}</p>
+          <p className="text-xs text-muted-foreground">{rangeLabel}</p>
         </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => {
-              setCreateApptDate(undefined);
-              setCreateApptTime(undefined);
-              setCreateApptOpen(true);
-            }}
-            className="h-8 gap-1 text-xs"
-            title="Crear cita"
-          >
-            <Plus className="h-3.5 w-3.5" /> Crear cita
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => {
-              setCreateEventDate(undefined);
-              setCreateEventHour(undefined);
-              setCreateEventOpen(true);
-            }}
-            className="h-8 w-8"
-            title="Crear evento personal"
-          >
-            <CalendarPlus className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="icon" onClick={goToPrev} className="h-8 w-8">
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={isSameMexicoDay(weekStart, getMexicoWeekBounds(new Date()).start) ? "default" : "outline"}
-            size="sm"
-            onClick={goToToday}
-            className="h-8 text-xs"
-          >
-            Hoy
-          </Button>
-          <Button variant="outline" size="icon" onClick={goToNext} className="h-8 w-8">
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
+        {offices.length > 1 && (
+          <Select value={officeFilter} onValueChange={setOfficeFilter}>
+            <SelectTrigger className="h-9 w-full text-sm sm:ml-auto sm:w-[220px]" aria-label="Consultorio">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los consultorios</SelectItem>
+              {offices.map((o) => (
+                <SelectItem key={o.id} value={o.id}>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: o.display_color }} aria-hidden />
+                    {o.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3 px-1">
-        <Card>
-          <CardContent className="flex items-center gap-2 p-3">
-            <CalendarDays className="h-4 w-4 text-primary" />
-            <div>
-              <p className="text-lg font-bold leading-none">{summary.total}</p>
-              <p className="text-[10px] text-muted-foreground">Citas</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-2 p-3">
-            <div className="h-2.5 w-2.5 rounded-full bg-confirmed" />
-            <div>
-              <p className="text-lg font-bold leading-none">{summary.confirmed}</p>
-              <p className="text-[10px] text-muted-foreground">Confirmadas</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-2 p-3">
-            <div className="h-2.5 w-2.5 rounded-full bg-scheduled" />
-            <div>
-              <p className="text-lg font-bold leading-none">{summary.scheduled}</p>
-              <p className="text-[10px] text-muted-foreground">Por confirmar</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Office color legend (visible when the doctor has more than one office). */}
-      {offices.length > 1 && (
-        <div className="flex items-center gap-3 px-1 flex-wrap text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Consultorios:</span>
-          {offices.map((o) => (
-            <span key={o.id} className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-sm"
-                style={{ backgroundColor: o.display_color }}
-                aria-hidden
-              />
-              <span className="text-foreground">{o.name}</span>
-            </span>
-          ))}
+      <Card className="relative overflow-hidden">
+        {/* Resumen de la semana */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b px-4 py-2.5">
+          <SummaryStat value={summary.total} label={summary.total === 1 ? "cita pendiente" : "citas pendientes"} />
+          <SummaryStat value={summary.confirmed} label={summary.confirmed === 1 ? "confirmada" : "confirmadas"} dot="bg-success" />
+          <SummaryStat value={summary.scheduled} label="por confirmar" dot="bg-warning" />
+          <span className="flex w-full items-center gap-1.5 text-xs text-muted-foreground md:ml-auto md:w-auto">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            Haz clic en un horario para crear una cita, o en un día para bloquearlo.
+          </span>
         </div>
-      )}
 
-      {/* Day headers */}
-      <div className="grid grid-cols-[3rem_repeat(7,1fr)] border-b border-border">
-        <div />
-        {weekDays.map((day) => {
-          const dayIsToday = isSameMexicoDay(day, currentTime);
-          return (
-            <DayHeaderPopover key={day.toISOString()} day={day} doctorId={doctorId ?? ""}>
-              <button className="flex flex-col items-center py-1 hover:bg-accent/50 rounded transition-colors cursor-pointer">
-                <span className="text-[10px] uppercase text-muted-foreground">
-                  {format(toZonedTime(day, MEXICO_TZ), "EEE", { locale: es })}
-                </span>
-                <span
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
-                    dayIsToday ? "bg-primary text-primary-foreground" : "text-foreground"
-                  }`}
-                >
-                  {formatMexicoTime(day, "d")}
-                </span>
-              </button>
-            </DayHeaderPopover>
-          );
-        })}
-      </div>
+        {/* Semana */}
+        <div ref={scrollRef} className="max-h-[min(70vh,680px)] overflow-auto">
+          <div className="min-w-[720px]">
+            <div className={cn("sticky top-0 z-40 grid border-b bg-card", GRID_COLS)}>
+              <div className="sticky left-0 z-10 bg-card" />
+              {weekDays.map((day) => {
+                const dayIsToday = isSameMexicoDay(day, currentTime);
+                return (
+                  <DayHeaderPopover key={day.toISOString()} day={day} doctorId={doctorId ?? ""}>
+                    <button
+                      type="button"
+                      title="Bloquear o desbloquear este día"
+                      aria-label={`Opciones del ${formatMx(day, "EEEE d 'de' MMMM", { locale: es })}`}
+                      className="flex flex-col items-center gap-0.5 border-l py-2 transition-colors hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none"
+                    >
+                      <span className={cn("text-[11px] font-medium uppercase", dayIsToday ? "text-primary" : "text-muted-foreground")}>
+                        {formatMx(day, "EEE", { locale: es })}
+                      </span>
+                      <span
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold",
+                          dayIsToday ? "bg-primary text-primary-foreground" : "text-foreground",
+                        )}
+                      >
+                        {formatMx(day, "d")}
+                      </span>
+                    </button>
+                  </DayHeaderPopover>
+                );
+              })}
+            </div>
 
-      {/* Grid */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
-        <div
-          ref={gridRef}
-          className="grid grid-cols-[3rem_repeat(7,1fr)]"
-          style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
-        >
-          {/* Time labels */}
-          <div className="relative">
-            {Array.from({ length: TOTAL_HOURS }, (_, i) => (
-              <div
-                key={i}
-                className="absolute right-2 text-[10px] text-muted-foreground"
-                style={{ top: i * HOUR_HEIGHT - 6 }}
-              >
-                {format(new Date(2000, 0, 1, START_HOUR + i), "h a")}
-              </div>
-            ))}
-          </div>
-
-          {/* Day columns */}
-          {weekDays.map((day, dayIdx) => {
-            const dayItems = itemsByDay[dayIdx] || [];
-            const positioned = computeOverlapColumns(dayItems);
-            const dayIsToday = isSameMexicoDay(day, currentTime);
-
-            return (
-              <div
-                key={day.toISOString()}
-                className={`relative border-l border-border ${dayIsToday ? "bg-primary/5" : ""}`}
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const y = e.clientY - rect.top;
-                  const hour = START_HOUR + y / HOUR_HEIGHT;
-                  const snappedHour = Math.floor(hour * 2) / 2;
-                  const h = Math.floor(snappedHour);
-                  const m = Math.round((snappedHour % 1) * 60);
-                  const timeStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-                  setCreateApptDate(formatMx(day, "yyyy-MM-dd"));
-                  setCreateApptTime(timeStr);
-                  setCreateApptOpen(true);
-                }}
-              >
-                {/* Hour lines */}
+            <div
+              ref={gridRef}
+              className={cn("grid", GRID_COLS)}
+              style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
+            >
+              {/* Time labels */}
+              <div className="sticky left-0 z-[35] bg-card">
                 {Array.from({ length: TOTAL_HOURS }, (_, i) => (
                   <div
                     key={i}
-                    className="absolute inset-x-0 border-t border-border/50"
-                    style={{ top: i * HOUR_HEIGHT }}
-                  />
-                ))}
-
-                {/* Current time red line */}
-                {dayIsToday && currentTimeTop !== null && (
-                  <div
-                    className="absolute inset-x-0 z-30 pointer-events-none"
-                    style={{ top: currentTimeTop }}
+                    className="absolute right-2 text-[10px] tabular-nums text-muted-foreground"
+                    style={{ top: i * HOUR_HEIGHT + 3 }}
                   >
-                    <div className="relative">
-                      <div className="absolute -left-[5px] -top-[4px] h-[10px] w-[10px] rounded-full bg-red-500" />
-                      <div className="h-[2px] w-full bg-red-500" />
-                    </div>
+                    {String(START_HOUR + i).padStart(2, "0")}:00
                   </div>
-                )}
-
-                {/* Events */}
-                {positioned.map(({ item, col, totalCols }) => {
-                  const startMinutes =
-                    (getMexicoHours(item.start) - START_HOUR) * 60 + getMexicoMinutes(item.start);
-                  const duration = Math.max(15, differenceInMinutes(item.end, item.start));
-                  const top = (startMinutes / 60) * HOUR_HEIGHT;
-                  const height = (duration / 60) * HOUR_HEIGHT;
-                  const widthPercent = 100 / totalCols;
-                  const leftPercent = col * widthPercent;
-
-                  // Office color is shown as a thicker left border on the
-                  // event chip — gives the doctor a quick visual cue per
-                  // office without changing the chip's main fill.
-                  const officeColorVal = item.officeId ? officeColor.get(item.officeId) : null;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight cursor-pointer hover:ring-2 hover:ring-primary/50 transition-shadow ${getEventStyle(item)}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedItem(item);
-                      }}
-                      style={{
-                        top: Math.max(0, top),
-                        height: Math.max(15, height),
-                        left: `calc(${leftPercent}% + 1px)`,
-                        width: `calc(${widthPercent}% - 2px)`,
-                        ...(officeColorVal && {
-                          borderLeft: `4px solid ${officeColorVal}`,
-                          paddingLeft: "4px",
-                        }),
-                      }}
-                       title={`${item.title}\n${formatMexicoTime(item.start, "HH:mm")} - ${formatMexicoTime(item.end, "HH:mm")}${item.officeName ? `\n${item.officeName}` : ""}${item.symptoms ? `\n${item.symptoms}` : ""}`}
-                    >
-                      <div className="font-semibold truncate">{item.title}</div>
-                      <div className="truncate opacity-80">
-                        {formatMexicoTime(item.start, "HH:mm")} - {formatMexicoTime(item.end, "HH:mm")}
-                      </div>
-                    </div>
-                  );
-                })}
+                ))}
               </div>
-            );
-          })}
+
+              {/* Day columns */}
+              {weekDays.map((day, dayIdx) => {
+                const dayItems = itemsByDay[dayIdx] || [];
+                const positioned = computeOverlapColumns(dayItems);
+                const dayIsToday = isSameMexicoDay(day, currentTime);
+
+                return (
+                  <div
+                    key={day.toISOString()}
+                    className={cn("relative cursor-pointer border-l", dayIsToday && "bg-primary/[0.03]")}
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const y = e.clientY - rect.top;
+                      const hour = START_HOUR + y / HOUR_HEIGHT;
+                      const snappedHour = Math.floor(hour * 2) / 2;
+                      const h = Math.floor(snappedHour);
+                      const m = Math.round((snappedHour % 1) * 60);
+                      const timeStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+                      setCreateApptDate(formatMx(day, "yyyy-MM-dd"));
+                      setCreateApptTime(timeStr);
+                      setCreateApptOpen(true);
+                    }}
+                  >
+                    {/* Hour lines */}
+                    {Array.from({ length: TOTAL_HOURS }, (_, i) => (
+                      <div key={i}>
+                        <div className="absolute inset-x-0 border-t" style={{ top: i * HOUR_HEIGHT }} />
+                        <div className="absolute inset-x-0 border-t border-dashed border-border/60" style={{ top: i * HOUR_HEIGHT + HOUR_HEIGHT / 2 }} />
+                      </div>
+                    ))}
+
+                    {/* Current time line */}
+                    {dayIsToday && currentTimeTop !== null && (
+                      <div
+                        className="pointer-events-none absolute inset-x-0 z-30"
+                        style={{ top: currentTimeTop }}
+                      >
+                        <div className="relative">
+                          <div className="absolute -left-[4px] -top-[3px] h-2 w-2 rounded-full bg-destructive" />
+                          <div className="h-px w-full bg-destructive" />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Events */}
+                    {positioned.map(({ item, col, totalCols }) => {
+                      const startMinutes =
+                        (getMexicoHours(item.start) - START_HOUR) * 60 + getMexicoMinutes(item.start);
+                      const duration = Math.max(15, differenceInMinutes(item.end, item.start));
+                      const top = (startMinutes / 60) * HOUR_HEIGHT;
+                      const height = Math.max(18, (duration / 60) * HOUR_HEIGHT);
+                      const widthPercent = 100 / totalCols;
+                      const leftPercent = col * widthPercent;
+                      const isExternal = item.type === "google" || item.type === "outlook";
+                      const isShort = height < 34;
+                      const isCompressed = totalCols > 1;
+                      const tone = toneOf(item.status);
+                      const time = `${formatMx(item.start, "HH:mm")} – ${formatMx(item.end, "HH:mm")}`;
+
+                      // Office color is shown as the left border of the chip —
+                      // gives the doctor a quick visual cue per office while the
+                      // fill keeps the status color.
+                      const officeColorVal = item.officeId ? officeColor.get(item.officeId) : null;
+                      return (
+                        <button
+                          type="button"
+                          key={item.id}
+                          className={cn(
+                            "absolute overflow-hidden rounded-md border-l-[3px] text-left leading-tight text-foreground shadow-sm transition-shadow hover:z-20 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            isShort ? "px-1.5 py-0.5" : "px-1.5 py-1",
+                            isExternal ? "border border-primary/20 border-l-primary/60 bg-primary/[0.06]" : TONE_CHIP[tone],
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedItem(item);
+                          }}
+                          style={{
+                            top: Math.max(0, top),
+                            height,
+                            left: `calc(${leftPercent}% + 2px)`,
+                            width: `calc(${widthPercent}% - 4px)`,
+                            ...(officeColorVal && { borderLeftColor: officeColorVal }),
+                          }}
+                          title={`${item.title}\n${time}${item.officeName ? `\n${item.officeName}` : ""}${item.symptoms ? `\n${item.symptoms}` : ""}`}
+                        >
+                          <span className="flex items-center gap-1 text-[11px] font-semibold">
+                            {isExternal ? (
+                              <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+                                {item.type === "outlook" ? "OUT" : "GCAL"}
+                              </span>
+                            ) : (
+                              <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", TONE_DOT[tone])} aria-hidden />
+                            )}
+                            {isShort && !isCompressed && (
+                              <span className="shrink-0 font-medium tabular-nums text-muted-foreground">{formatMx(item.start, "HH:mm")}</span>
+                            )}
+                            <span className="truncate">{item.title}</span>
+                          </span>
+                          {!isShort && !isCompressed && (
+                            <span className="mt-0.5 block truncate text-[10px] tabular-nums text-muted-foreground">{time}</span>
+                          )}
+                          {!isCompressed && height > 52 && item.officeName && offices.length > 1 && (
+                            <span className="block truncate text-[10px] text-muted-foreground">{item.officeName}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </div>
+
+        {loadingAppointments && (
+          <div className="pointer-events-none absolute inset-x-0 top-[124px] z-40 flex justify-center px-4">
+            <div className="flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm text-muted-foreground shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Cargando citas…
+            </div>
+          </div>
+        )}
+
+        {/* Leyenda */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          {(["scheduled", "confirmed", "completed"] as const).map((s) => (
+            <span key={s} className="inline-flex items-center gap-1.5">
+              <span className={cn("h-2.5 w-2.5 rounded-sm", TONE_DOT[toneOf(s)])} aria-hidden />
+              {APPOINTMENT_STATUS[s].label}
+            </span>
+          ))}
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm border border-primary/60 bg-primary/10" aria-hidden />
+            Evento de tu calendario
+          </span>
+          {offices.length > 1 && (
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:ml-auto">
+              <span className="font-medium text-foreground">Consultorios</span>
+              {offices.map((o) => (
+                <span key={o.id} className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-[3px] rounded-full" style={{ backgroundColor: o.display_color }} aria-hidden />
+                  {o.name}
+                </span>
+              ))}
+            </span>
+          )}
+        </div>
+      </Card>
 
       <AppointmentDetailDialog
         item={selectedItem}

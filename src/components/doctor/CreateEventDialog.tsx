@@ -12,6 +12,7 @@ const todayMx = () => formatMx(new Date(), "yyyy-MM-dd");
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -255,8 +256,8 @@ export default function CreateEventDialog({
         throw new Error(data.error || (isEdit ? "Error al actualizar evento" : "Error al crear evento"));
       }
       finishSuccess();
-    } catch (err: any) {
-      toast.error(err.message || "Error al guardar evento");
+    } catch (err) {
+      toast.error((err instanceof Error && err.message) || "Error al guardar evento");
     } finally {
       setSubmitting(false);
     }
@@ -270,38 +271,37 @@ export default function CreateEventDialog({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al guardar evento");
       finishSuccess();
-    } catch (err: any) {
-      toast.error(err.message || "Error al guardar evento");
+    } catch (err) {
+      toast.error((err instanceof Error && err.message) || "Error al guardar evento");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const target =
+    provider === "outlook"
+      ? "Outlook Calendar"
+      : provider === "google"
+      ? "Google Calendar"
+      : "tu calendario conectado";
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Editar evento" : "Crear evento"}</DialogTitle>
+          <DialogTitle>{isEdit ? "Editar evento" : "Evento personal"}</DialogTitle>
           <DialogDescription>
-            {(() => {
-              const target =
-                provider === "outlook"
-                  ? "Outlook Calendar"
-                  : provider === "google"
-                  ? "Google Calendar"
-                  : "tu calendario conectado";
-              return isEdit
-                ? `Se actualizará en ${target}.`
-                : `Se creará en ${target}.`;
-            })()}
+            {isEdit
+              ? `Se actualizará en ${target}.`
+              : `Se crea en ${target} y bloquea ese horario para pacientes.`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {!officeIdProp && !isEdit && (
-            <div className="space-y-2">
-              <Label htmlFor="office">Consultorio *</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="office" className="text-sm">Consultorio</Label>
               <Select value={officeIdState} onValueChange={setOfficeIdState}>
-                <SelectTrigger id="office">
+                <SelectTrigger id="office" className="h-9 text-sm">
                   <SelectValue placeholder="Selecciona un consultorio" />
                 </SelectTrigger>
                 <SelectContent>
@@ -320,57 +320,61 @@ export default function CreateEventDialog({
               </Select>
             </div>
           )}
-          <div className="space-y-2">
-            <Label htmlFor="summary">Título *</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="summary" className="text-sm">Título</Label>
             <Input
               id="summary"
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
-              placeholder="Ej: Consulta, Reunión..."
+              placeholder="Ej: Junta, comida, congreso…"
+              className="h-9 text-sm"
               required
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="description">Descripción</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="description" className="text-sm">
+              Descripción <span className="font-normal text-muted-foreground">(opcional)</span>
+            </Label>
             <Textarea
               id="description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Opcional"
               rows={2}
+              className="text-sm"
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="date">Fecha</Label>
-            <Input
-              id="date"
-              type="date"
-              value={date}
-              min={todayMx()}
-              onChange={(e) => setDate(e.target.value)}
-              required
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="startTime">Hora inicio</Label>
-              <TimePicker value={startTime} onValueChange={setStartTime} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="col-span-2 space-y-1.5 sm:col-span-1">
+              <Label htmlFor="date" className="text-sm">Fecha</Label>
+              <Input
+                id="date"
+                type="date"
+                value={date}
+                min={todayMx()}
+                onChange={(e) => setDate(e.target.value)}
+                className="h-9 text-sm"
+                required
+              />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="endTime">Hora fin</Label>
-              <TimePicker value={endTime} onValueChange={setEndTime} />
+            <div className="space-y-1.5">
+              <Label className="text-sm">Inicio</Label>
+              <TimePicker value={startTime} onValueChange={setStartTime} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Fin</Label>
+              <TimePicker value={endTime} onValueChange={setEndTime} className="h-9 text-sm" />
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+          <DialogFooter className="gap-2 border-t pt-4 sm:space-x-0">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting || !summary.trim()}>
+            <Button type="submit" size="sm" disabled={submitting || !summary.trim()}>
               {submitting
                 ? isEdit ? "Guardando..." : "Creando..."
                 : isEdit ? "Guardar cambios" : "Crear evento"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
 
