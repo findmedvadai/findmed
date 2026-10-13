@@ -615,3 +615,15 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 **Solución aplicada:** Credencial dedicada `FINDMED_CRON_SECRET` (secret de funciones + valor de Vault `service_role_key`, aceptada por `isServiceRequest`), `verify_jwt = false` en los 4 crons (validan en código). Verificado con llamada directa (200) antes de cambiar Vault. Efecto colateral bueno: la llave legacy filtrada ya no vive en Vault y los crons no dependen de la rotación de llaves de Supabase.
 
 **Lección aprendida:** Toda guarda nueva sobre un caller automático (cron, webhook) se prueba en el ambiente real con la credencial exacta que ese caller enviará, antes de desplegarla. No asumir que "la service key" del dashboard es igual al env del runtime. Las llaves que una API lista suelen venir enmascaradas.
+
+## 2026-10-12 — Editar una migración que ya estaba aplicada en producción
+
+**Categoría:** base de datos / deploy
+
+**Síntoma:** El import del catálogo de triaje v2 falló con `column "primera_parada" of relation "triage_findmed" does not exist`; `db push` decía "Remote database is up to date".
+
+**Causa raíz:** Se agregaron columnas editando `20261013160000_triage_catalog.sql` asumiendo que no estaba aplicada (el resumen de estado decía "no aplicada"), pero el usuario ya había corrido el deploy. Supabase registra la migración por versión y no vuelve a ejecutar un archivo editado. No se verificó `supabase_migrations.schema_migrations` antes de editar.
+
+**Solución aplicada:** Se restauró la 160000 tal como se aplicó y los cambios v2 fueron a una migración nueva `20261013170000_triage_catalog_v2.sql`.
+
+**Lección aprendida:** Antes de editar una migración "no aplicada", consultar `select version from supabase_migrations.schema_migrations` en producción. Si ya existe la versión, siempre migración nueva.
