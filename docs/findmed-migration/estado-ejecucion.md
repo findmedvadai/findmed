@@ -4,11 +4,11 @@
 > y los hallazgos del bloque en curso; no depender de un resumen de conversación.
 
 **Rama**: `feat/whaapy-mcp-migration` (desde `main` = `9ed5aa5`).
-**Último bloque cerrado**: B7 + B7b — mensajería propia (outbox, worker, botones, recibos) y centro de mensajería `/admin/mensajeria` (código y pruebas; migraciones y deploy pendientes de OK de Alex).
+**Último bloque cerrado**: B6 + B7 + B7b en producción (12-oct, ejecutado por Alex): migraciones hasta `20261013140000`, funciones `case-actions`, `messaging-admin`, `findmed-events-worker`, `findmed-mcp` (9 tools), `whaapy-inbound`, `dispatch-webhook`; secret `WHAAPY_API_KEY`. Los 8 eventos siguen con dueño n8n.
 **Bloque en curso**: B8 — prompt versionado del agente WHAAPY y mapeo de tools; después B9 (suite) y B10 (corte por evento + agente).
 
 ## Siguiente acción concreta
-1. Alex (PowerShell, una línea a la vez con `& "C:\Program Files\Git\bin\bash.exe" scripts/sb.sh …`): `db push` (aplica `20261013130000` y `20261013140000`), secret `WHAAPY_API_KEY`/`WHAAPY_API_BASE_URL`, deploy de `case-actions`, `findmed-mcp`, `messaging-admin`, `findmed-events-worker`, `whaapy-inbound` y `dispatch-webhook`. Ningún evento cambia de dueño: todo sigue en n8n hasta que se cambie en `/admin/mensajeria`.
+1. Verificado tras el deploy: 8 rutas (todas n8n), 14 pasos, 7 crons activos, worker respondió 200 y procesó 7 eventos de WHAAPY sin error, sondeos sin credencial = 401, MCP lista 9 tools, `types.ts` regenerado desde producción.
 2. B8: prompt versionado (`docs/findmed-migration/agente/`), tools y mapeos fijos, urgencias con texto D7, sin ambulancias (D5).
 3. Corte gradual (B10): eventos sin botones primero (EV02, EV04, EV08, EV01 reservada/completada), luego los de botones junto con el agente y la automatización "Omitir IA" (A6).
 
@@ -49,3 +49,4 @@
 | 12-oct | B6 | `patient_cases` + `case_events` (migración `20261013130000`), `_shared/cases.ts`, `_shared/whaapy-client.ts`, Edge Function `case-actions`, tools `open_case`/`request_handoff`/`get_my_case_status`, vista `/admin/casos` | `aa3c602`, `b150bc5`, `cases_test.ts` |
 | 12-oct | B7 | `message_routes`/`message_route_steps`/`domain_outbox`/`message_deliveries` (migración `20261013140000`), `dispatch-webhook` con dueño por evento, `_shared/messaging.ts`, `_shared/whaapy-events.ts`, `findmed-events-worker`, `whaapy-inbound` procesa recibos y botones | `46c4bbd`, `messaging_test.ts` |
 | 12-oct | B7b | `messaging-admin` + `/admin/mensajeria` (eventos, envíos, plantillas) | `994c1b2`, `2bbb259`, `messaging-admin_test.ts` |
+| 12-oct | Deploy B6/B7 | Alex ejecutó `db push` + secret + 6 funciones (comando único en PowerShell); verificación posterior OK | `97cbd3a` (types) |
