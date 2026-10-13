@@ -18,6 +18,7 @@ import Doctores from "./pages/admin/Doctores";
 import Catalogos from "./pages/admin/Catalogos";
 import AdminInbox from "./pages/admin/Inbox";
 import Casos from "./pages/admin/Casos";
+import Mensajeria from "./pages/admin/Mensajeria";
 import Webhooks from "./pages/admin/Webhooks";
 import ApiKeysPage from "./pages/admin/ApiKeys";
 
@@ -72,6 +73,7 @@ const App = () => (
               <Route path="/admin/catalogos" element={<Catalogos />} />
               <Route path="/admin/inbox" element={<AdminInbox />} />
               <Route path="/admin/casos" element={<Casos />} />
+              <Route path="/admin/mensajeria" element={<Mensajeria />} />
               <Route path="/admin/webhooks" element={<Webhooks />} />
               <Route path="/admin/api-keys" element={<ApiKeysPage />} />
             </Route>

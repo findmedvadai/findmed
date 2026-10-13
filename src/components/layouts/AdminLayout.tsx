@@ -1,5 +1,5 @@
 import { Outlet } from "react-router-dom";
-import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key, LifeBuoy } from "lucide-react";
+import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key, LifeBuoy, MessageSquare } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -29,6 +29,7 @@ const navItems = [
   { title: "Catálogos", url: "/admin/catalogos", icon: Layers },
   { title: "Inbox", url: "/admin/inbox", icon: Inbox },
   { title: "Casos", url: "/admin/casos", icon: LifeBuoy },
+  { title: "Mensajería", url: "/admin/mensajeria", icon: MessageSquare },
 ];
 
 const settingsItems = [

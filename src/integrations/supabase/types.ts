@@ -575,6 +575,54 @@ export type Database = {
           },
         ]
       }
+      domain_outbox: {
+        Row: {
+          aggregate_id: string | null
+          attempts: number
+          created_at: string
+          dedupe_key: string
+          event_type: string
+          id: string
+          last_error: string | null
+          locked_until: string | null
+          next_attempt_at: string
+          payload: Json
+          processed_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          aggregate_id?: string | null
+          attempts?: number
+          created_at?: string
+          dedupe_key: string
+          event_type: string
+          id?: string
+          last_error?: string | null
+          locked_until?: string | null
+          next_attempt_at?: string
+          payload: Json
+          processed_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          aggregate_id?: string | null
+          attempts?: number
+          created_at?: string
+          dedupe_key?: string
+          event_type?: string
+          id?: string
+          last_error?: string | null
+          locked_until?: string | null
+          next_attempt_at?: string
+          payload?: Json
+          processed_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       hospitals: {
         Row: {
           address: string | null
@@ -676,6 +724,167 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      message_deliveries: {
+        Row: {
+          appointment_id: string | null
+          attempts: number
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          language: string
+          outbox_id: string | null
+          request: Json | null
+          sent_by: string | null
+          source: string
+          status: string
+          step_position: number | null
+          template_name: string
+          to_phone: string
+          updated_at: string
+          wamid: string | null
+          whaapy_message_id: string | null
+        }
+        Insert: {
+          appointment_id?: string | null
+          attempts?: number
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          language?: string
+          outbox_id?: string | null
+          request?: Json | null
+          sent_by?: string | null
+          source?: string
+          status?: string
+          step_position?: number | null
+          template_name: string
+          to_phone: string
+          updated_at?: string
+          wamid?: string | null
+          whaapy_message_id?: string | null
+        }
+        Update: {
+          appointment_id?: string | null
+          attempts?: number
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          language?: string
+          outbox_id?: string | null
+          request?: Json | null
+          sent_by?: string | null
+          source?: string
+          status?: string
+          step_position?: number | null
+          template_name?: string
+          to_phone?: string
+          updated_at?: string
+          wamid?: string | null
+          whaapy_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_deliveries_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_deliveries_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: false
+            referencedRelation: "domain_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      message_route_steps: {
+        Row: {
+          body_params: string[]
+          created_at: string
+          enabled: boolean
+          event_type: string
+          id: string
+          language: string
+          position: number
+          quick_reply_action: string | null
+          template_name: string
+          updated_at: string
+          url_button_param: string | null
+          when_cancel_reason: string | null
+          when_status: string | null
+        }
+        Insert: {
+          body_params?: string[]
+          created_at?: string
+          enabled?: boolean
+          event_type: string
+          id?: string
+          language?: string
+          position: number
+          quick_reply_action?: string | null
+          template_name: string
+          updated_at?: string
+          url_button_param?: string | null
+          when_cancel_reason?: string | null
+          when_status?: string | null
+        }
+        Update: {
+          body_params?: string[]
+          created_at?: string
+          enabled?: boolean
+          event_type?: string
+          id?: string
+          language?: string
+          position?: number
+          quick_reply_action?: string | null
+          template_name?: string
+          updated_at?: string
+          url_button_param?: string | null
+          when_cancel_reason?: string | null
+          when_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_route_steps_event_type_fkey"
+            columns: ["event_type"]
+            isOneToOne: false
+            referencedRelation: "message_routes"
+            referencedColumns: ["event_type"]
+          },
+        ]
+      }
+      message_routes: {
+        Row: {
+          created_at: string
+          description: string | null
+          event_type: string
+          owner: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          event_type: string
+          owner?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          event_type?: string
+          owner?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
       }
       notifications: {
         Row: {
