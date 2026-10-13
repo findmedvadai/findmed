@@ -1,5 +1,5 @@
 import { Outlet } from "react-router-dom";
-import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key, LifeBuoy, MessageSquare } from "lucide-react";
+import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key, LifeBuoy, MessageSquare, Bot } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -33,6 +33,7 @@ const navItems = [
 ];
 
 const settingsItems = [
+  { title: "Agente IA", url: "/admin/agente-ia", icon: Bot },
   { title: "Webhooks", url: "/admin/webhooks", icon: Webhook },
   { title: "API Keys", url: "/admin/api-keys", icon: Key },
 ];

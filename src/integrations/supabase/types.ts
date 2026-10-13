@@ -745,6 +745,60 @@ export type Database = {
           },
         ]
       }
+      mcp_requests: {
+        Row: {
+          arguments: Json | null
+          client: string | null
+          created_at: string
+          duration_ms: number | null
+          error_code: string | null
+          error_message: string | null
+          id: string
+          kind: string
+          method: string | null
+          ok: boolean
+          result: Json | null
+          status: string | null
+          subject_phone: string | null
+          tool_name: string | null
+          trace_id: string | null
+        }
+        Insert: {
+          arguments?: Json | null
+          client?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          kind: string
+          method?: string | null
+          ok: boolean
+          result?: Json | null
+          status?: string | null
+          subject_phone?: string | null
+          tool_name?: string | null
+          trace_id?: string | null
+        }
+        Update: {
+          arguments?: Json | null
+          client?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          kind?: string
+          method?: string | null
+          ok?: boolean
+          result?: Json | null
+          status?: string | null
+          subject_phone?: string | null
+          tool_name?: string | null
+          trace_id?: string | null
+        }
+        Relationships: []
+      }
       message_deliveries: {
         Row: {
           appointment_id: string | null
