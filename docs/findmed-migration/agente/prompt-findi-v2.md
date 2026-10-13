@@ -1,4 +1,4 @@
-# Prompt del agente FINDI — v2.3 (WHAAPY nativo + MCP de FindMed)
+# Prompt del agente FINDI — v2.4 (WHAAPY nativo + MCP de FindMed)
 
 > Versión 2.1 · 12-oct-2026 · Bloque B8. Estructura tomada del prompt de MENNA (Daniela v11), que funciona
 > con herramientas, más lo que sí servía de FINDI v1 (n8n): ruta de seguridad, recolección de síntomas y tono.
@@ -22,4 +22,5 @@ El prompt vive en `FINDI-prompt.txt`. Cualquier cambio se hace ahí y se sube la
 | "Te transfiero con un asesor" sin respaldo | Texto según assignment real; nunca "asesor asignado" sin confirmación | R32 |
 | Textos de urgencia | Se conservan de la v1 con handoff real | D7 — **confirmar con FindMed** |
 | v2.2: si negaba las alarmas → semáforo NARANJA y agendar | v2.3: la `routing` del catálogo manda (urgencias_inmediato → seguridad; urgencias_hoy → urgencias + persona, sin agendar; consulta_mismo_dia → horarios más cercanos) | N32 |
+| v2.3: "imagen que no entiendes → no me llegó bien" chocaba con los documentos que FindMed pide al reservar (`pedir_documentos`) | v2.4: toda imagen/PDF después de pedir documentos es documento ("Recibido"), FAQ de qué documentos, foto de síntoma sin opinar, y el mensaje del enlace avisa que se pedirán póliza e INE | Flujo de documentos (D11) |
 | Duración fuera de las keywords | `subito` / `cronico` como keywords; empates con `pregunta_diferencial` | Catálogo v2 (D12) |
