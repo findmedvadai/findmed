@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -95,6 +95,8 @@ export type Database = {
           office_id: string | null
           outlook_event_id: string | null
           patient_id: string
+          reminder_48h_sent_at: string | null
+          reminder_day_of_sent_at: string | null
           start_at: string
           status: Database["public"]["Enums"]["appointment_status"]
           symptoms: string | null
@@ -115,6 +117,8 @@ export type Database = {
           office_id?: string | null
           outlook_event_id?: string | null
           patient_id: string
+          reminder_48h_sent_at?: string | null
+          reminder_day_of_sent_at?: string | null
           start_at: string
           status?: Database["public"]["Enums"]["appointment_status"]
           symptoms?: string | null
@@ -135,6 +139,8 @@ export type Database = {
           office_id?: string | null
           outlook_event_id?: string | null
           patient_id?: string
+          reminder_48h_sent_at?: string | null
+          reminder_day_of_sent_at?: string | null
           start_at?: string
           status?: Database["public"]["Enums"]["appointment_status"]
           symptoms?: string | null
@@ -156,6 +162,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "appointments_office_fk"
+            columns: ["doctor_id", "office_id"]
+            isOneToOne: false
+            referencedRelation: "doctor_offices"
+            referencedColumns: ["doctor_id", "id"]
+          },
+          {
             foreignKeyName: "appointments_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
@@ -163,6 +176,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      calendar_connection_events: {
+        Row: {
+          actor_role: string | null
+          actor_user_id: string | null
+          connected_at: string | null
+          doctor_id: string | null
+          event_type: string
+          http_status: number | null
+          id: string
+          lifetime_seconds: number | null
+          occurred_at: string
+          office_id: string
+          provider: string
+          provider_response: Json | null
+          reason_code: string | null
+        }
+        Insert: {
+          actor_role?: string | null
+          actor_user_id?: string | null
+          connected_at?: string | null
+          doctor_id?: string | null
+          event_type: string
+          http_status?: number | null
+          id?: string
+          lifetime_seconds?: number | null
+          occurred_at?: string
+          office_id: string
+          provider: string
+          provider_response?: Json | null
+          reason_code?: string | null
+        }
+        Update: {
+          actor_role?: string | null
+          actor_user_id?: string | null
+          connected_at?: string | null
+          doctor_id?: string | null
+          event_type?: string
+          http_status?: number | null
+          id?: string
+          lifetime_seconds?: number | null
+          occurred_at?: string
+          office_id?: string
+          provider?: string
+          provider_response?: Json | null
+          reason_code?: string | null
+        }
+        Relationships: []
       }
       case_events: {
         Row: {
@@ -257,116 +318,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      doctor_schedule_settings: {
-        Row: {
-          appointment_duration_minutes: number
-          doctor_id: string
-          min_confirm_hours_before: number
-          timezone: string
-          updated_at: string
-        }
-        Insert: {
-          appointment_duration_minutes?: number
-          doctor_id: string
-          min_confirm_hours_before?: number
-          timezone?: string
-          updated_at?: string
-        }
-        Update: {
-          appointment_duration_minutes?: number
-          doctor_id?: string
-          min_confirm_hours_before?: number
-          timezone?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "doctor_schedule_settings_doctor_id_fkey"
-            columns: ["doctor_id"]
-            isOneToOne: true
-            referencedRelation: "doctors"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      doctor_specialties: {
-        Row: {
-          doctor_id: string
-          specialty_id: string
-        }
-        Insert: {
-          doctor_id: string
-          specialty_id: string
-        }
-        Update: {
-          doctor_id?: string
-          specialty_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "doctor_specialties_doctor_id_fkey"
-            columns: ["doctor_id"]
-            isOneToOne: false
-            referencedRelation: "doctors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "doctor_specialties_specialty_id_fkey"
-            columns: ["specialty_id"]
-            isOneToOne: false
-            referencedRelation: "specialties"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      calendar_connection_events: {
-        Row: {
-          actor_role: string | null
-          actor_user_id: string | null
-          connected_at: string | null
-          doctor_id: string | null
-          event_type: string
-          http_status: number | null
-          id: string
-          lifetime_seconds: number | null
-          occurred_at: string
-          office_id: string
-          provider: string
-          provider_response: Json | null
-          reason_code: string | null
-        }
-        Insert: {
-          actor_role?: string | null
-          actor_user_id?: string | null
-          connected_at?: string | null
-          doctor_id?: string | null
-          event_type: string
-          http_status?: number | null
-          id?: string
-          lifetime_seconds?: number | null
-          occurred_at?: string
-          office_id: string
-          provider: string
-          provider_response?: Json | null
-          reason_code?: string | null
-        }
-        Update: {
-          actor_role?: string | null
-          actor_user_id?: string | null
-          connected_at?: string | null
-          doctor_id?: string | null
-          event_type?: string
-          http_status?: number | null
-          id?: string
-          lifetime_seconds?: number | null
-          occurred_at?: string
-          office_id?: string
-          provider?: string
-          provider_response?: Json | null
-          reason_code?: string | null
-        }
-        Relationships: []
       }
       doctor_offices: {
         Row: {
@@ -465,6 +416,68 @@ export type Database = {
           },
         ]
       }
+      doctor_schedule_settings: {
+        Row: {
+          appointment_duration_minutes: number
+          doctor_id: string
+          min_confirm_hours_before: number
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          appointment_duration_minutes?: number
+          doctor_id: string
+          min_confirm_hours_before?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          appointment_duration_minutes?: number
+          doctor_id?: string
+          min_confirm_hours_before?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctor_schedule_settings_doctor_id_fkey"
+            columns: ["doctor_id"]
+            isOneToOne: true
+            referencedRelation: "doctors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      doctor_specialties: {
+        Row: {
+          doctor_id: string
+          specialty_id: string
+        }
+        Insert: {
+          doctor_id: string
+          specialty_id: string
+        }
+        Update: {
+          doctor_id?: string
+          specialty_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctor_specialties_doctor_id_fkey"
+            columns: ["doctor_id"]
+            isOneToOne: false
+            referencedRelation: "doctors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_specialties_specialty_id_fkey"
+            columns: ["specialty_id"]
+            isOneToOne: false
+            referencedRelation: "specialties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctor_weekly_availability: {
         Row: {
           doctor_id: string
@@ -500,6 +513,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "doctors"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_weekly_availability_office_fk"
+            columns: ["doctor_id", "office_id"]
+            isOneToOne: false
+            referencedRelation: "doctor_offices"
+            referencedColumns: ["doctor_id", "id"]
           },
         ]
       }
@@ -937,6 +957,59 @@ export type Database = {
           },
         ]
       }
+      operation_requests: {
+        Row: {
+          action: string
+          appointment_id: string
+          channel: string
+          confirmation_evidence: Json | null
+          created_at: string
+          expires_at: string
+          id: string
+          payload_hash: string
+          result: Json | null
+          status: string
+          subject_phone: string
+          updated_at: string
+        }
+        Insert: {
+          action: string
+          appointment_id: string
+          channel: string
+          confirmation_evidence?: Json | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          payload_hash: string
+          result?: Json | null
+          status?: string
+          subject_phone: string
+          updated_at?: string
+        }
+        Update: {
+          action?: string
+          appointment_id?: string
+          channel?: string
+          confirmation_evidence?: Json | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          payload_hash?: string
+          result?: Json | null
+          status?: string
+          subject_phone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operation_requests_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patient_cases: {
         Row: {
           ai_state: string
@@ -1159,6 +1232,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "reservation_sessions_office_fk"
+            columns: ["doctor_id", "office_id"]
+            isOneToOne: false
+            referencedRelation: "doctor_offices"
+            referencedColumns: ["doctor_id", "id"]
+          },
+          {
             foreignKeyName: "reservation_sessions_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
@@ -1283,6 +1363,48 @@ export type Database = {
         }
         Relationships: []
       }
+      whaapy_events: {
+        Row: {
+          contact_id: string | null
+          conversation_id: string | null
+          dedupe_key: string
+          event_timestamp: string | null
+          event_type: string
+          id: string
+          payload: Json
+          processed_at: string | null
+          processing_error: string | null
+          received_at: string
+          whaapy_message_id: string | null
+        }
+        Insert: {
+          contact_id?: string | null
+          conversation_id?: string | null
+          dedupe_key: string
+          event_timestamp?: string | null
+          event_type: string
+          id?: string
+          payload: Json
+          processed_at?: string | null
+          processing_error?: string | null
+          received_at?: string
+          whaapy_message_id?: string | null
+        }
+        Update: {
+          contact_id?: string | null
+          conversation_id?: string | null
+          dedupe_key?: string
+          event_timestamp?: string | null
+          event_type?: string
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          processing_error?: string | null
+          received_at?: string
+          whaapy_message_id?: string | null
+        }
+        Relationships: []
+      }
       zones: {
         Row: {
           city_id: string
@@ -1320,6 +1442,30 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_outbox: {
+        Args: { p_lease_seconds: number; p_limit: number }
+        Returns: {
+          aggregate_id: string | null
+          attempts: number
+          created_at: string
+          dedupe_key: string
+          event_type: string
+          id: string
+          last_error: string | null
+          locked_until: string | null
+          next_attempt_at: string
+          payload: Json
+          processed_at: string | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "domain_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_doctor_id_for_user: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
@@ -1328,6 +1474,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      invoke_edge_function: { Args: { function_slug: string }; Returns: number }
       is_admin_or_superadmin: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
@@ -1360,12 +1507,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1389,11 +1536,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1414,11 +1561,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1439,11 +1586,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1456,11 +1603,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
