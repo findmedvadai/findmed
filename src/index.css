@@ -54,6 +54,13 @@ All colors MUST be HSL.
     --scheduled-foreground: 0 0% 100%;
     --confirmed: 142 71% 45%;
     --confirmed-foreground: 0 0% 100%;
+
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 45%;
+    --warning-foreground: 0 0% 100%;
+    --info: 213 85% 50%;
+    --info-foreground: 0 0% 100%;
   }
 
   .dark {
@@ -101,6 +108,41 @@ All colors MUST be HSL.
     --scheduled-foreground: 0 0% 100%;
     --confirmed: 142 71% 45%;
     --confirmed-foreground: 0 0% 100%;
+
+    --success: 152 55% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 213 85% 60%;
+    --info-foreground: 0 0% 100%;
+  }
+
+  /* Paneles internos (admin y doctor): superficie neutra, texto oscuro legible,
+     bordes visibles y radios más contenidos. El navy de marca queda en --primary.
+     --background sigue blanco (inputs, popovers); --canvas es el fondo del área
+     de trabajo. Las páginas públicas (landing, reserva, legales) conservan :root. */
+  .app-shell {
+    --background: 0 0% 100%;
+    --canvas: 220 20% 97%;
+    --foreground: 222 39% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 39% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 39% 14%;
+    --secondary: 220 16% 94%;
+    --secondary-foreground: 222 39% 14%;
+    --muted: 220 16% 95%;
+    --muted-foreground: 220 9% 44%;
+    --accent: 220 18% 94%;
+    --accent-foreground: 222 39% 14%;
+    --border: 220 14% 89%;
+    --input: 220 13% 84%;
+    --radius: 0.5rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 25% 26%;
+    --sidebar-accent: 212 60% 95%;
+    --sidebar-accent-foreground: 212 73% 26%;
+    --sidebar-border: 220 14% 91%;
   }
 }
 
@@ -110,6 +152,7 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
   }
 }

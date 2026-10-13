@@ -197,7 +197,9 @@ function FilterCombobox({
 
 // --- Component ---
 
-export default function Calendario() {
+/** embedded: se muestra dentro de otro módulo, sin título propio. */
+export default function Calendario({ embedded = false }: { embedded?: boolean } = {}) {
+  void embedded;
   const [weekStart, setWeekStart] = useState(() => getMexicoWeekBounds(new Date()).start);
   const [filterDoctor, setFilterDoctor] = useState("all");
   const [filterOffice, setFilterOffice] = useState("all");

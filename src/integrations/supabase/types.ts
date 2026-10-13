@@ -1325,6 +1325,84 @@ export type Database = {
         }
         Relationships: []
       }
+      triage_findmed: {
+        Row: {
+          accion_operativa: string | null
+          especialidad: string
+          extra: Json | null
+          id: number
+          imported_at: string
+          keywords: string[]
+          origen: string | null
+          padecimiento: string | null
+          pregunta_diferencial: string | null
+          primera_parada: string | null
+          requiere_alguno: string[]
+          requiere_todos: string[]
+          semaforo: string | null
+          si_esto_aparece_subir_a_urgencias: string | null
+          source: string
+          validado: boolean
+        }
+        Insert: {
+          accion_operativa?: string | null
+          especialidad: string
+          extra?: Json | null
+          id?: never
+          imported_at?: string
+          keywords?: string[]
+          origen?: string | null
+          padecimiento?: string | null
+          pregunta_diferencial?: string | null
+          primera_parada?: string | null
+          requiere_alguno?: string[]
+          requiere_todos?: string[]
+          semaforo?: string | null
+          si_esto_aparece_subir_a_urgencias?: string | null
+          source?: string
+          validado?: boolean
+        }
+        Update: {
+          accion_operativa?: string | null
+          especialidad?: string
+          extra?: Json | null
+          id?: never
+          imported_at?: string
+          keywords?: string[]
+          origen?: string | null
+          padecimiento?: string | null
+          pregunta_diferencial?: string | null
+          primera_parada?: string | null
+          requiere_alguno?: string[]
+          requiere_todos?: string[]
+          semaforo?: string | null
+          si_esto_aparece_subir_a_urgencias?: string | null
+          source?: string
+          validado?: boolean
+        }
+        Relationships: []
+      }
+      triage_specialty_map: {
+        Row: {
+          especialidad: string
+          notes: string | null
+          patient_label: string
+          search_specialties: string[]
+        }
+        Insert: {
+          especialidad: string
+          notes?: string | null
+          patient_label: string
+          search_specialties?: string[]
+        }
+        Update: {
+          especialidad?: string
+          notes?: string | null
+          patient_label?: string
+          search_specialties?: string[]
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           id: string

@@ -47,7 +47,7 @@ export default function Login() {
   useEffect(() => {
     if (!readyToRedirect) return;
     if (session && role) {
-      navigate(role === "doctor" ? "/doctor/agenda" : "/admin/calendario", { replace: true });
+      navigate(role === "doctor" ? "/doctor/inicio" : "/admin/inicio", { replace: true });
     }
   }, [readyToRedirect, session, role, navigate]);
 

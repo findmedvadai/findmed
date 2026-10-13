@@ -1,45 +1,19 @@
-import { Outlet } from "react-router-dom";
-import { Calendar, BookOpen, UserCog, Layers, Inbox, LogOut, Webhook, Key, LifeBuoy, MessageSquare, Bot } from "lucide-react";
-import { NavLink } from "@/components/NavLink";
-import { useAuth } from "@/hooks/useAuth";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bot, CalendarDays, Home, Key, Layers, LifeBuoy, MessageCircle, UserCog, Webhook, Workflow } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarHeader,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
+import AppShell, { type ShellNavItem, type ShellSettingsItem } from "./AppShell";
 
-const navItems = [
-  { title: "Calendario", url: "/admin/calendario", icon: Calendar },
-  { title: "Reservas", url: "/admin/reservas", icon: BookOpen },
-  { title: "Doctores", url: "/admin/doctores", icon: UserCog },
-  { title: "Catálogos", url: "/admin/catalogos", icon: Layers },
-  { title: "Inbox", url: "/admin/inbox", icon: Inbox },
-  { title: "Casos", url: "/admin/casos", icon: LifeBuoy },
-  { title: "Mensajería", url: "/admin/mensajeria", icon: MessageSquare },
-];
-
-const settingsItems = [
-  { title: "Agente IA", url: "/admin/agente-ia", icon: Bot },
-  { title: "Webhooks", url: "/admin/webhooks", icon: Webhook },
-  { title: "API Keys", url: "/admin/api-keys", icon: Key },
+const settings: ShellSettingsItem[] = [
+  { title: "Agente IA", url: "/admin/configuracion/agente-ia", icon: Bot, description: "Conexión, actividad y errores del agente" },
+  { title: "Catálogos", url: "/admin/configuracion/catalogos", icon: Layers, description: "Especialidades, ciudades, hospitales…" },
+  { title: "Webhooks", url: "/admin/configuracion/webhooks", icon: Webhook, description: "Integraciones salientes" },
+  { title: "API Keys", url: "/admin/configuracion/api-keys", icon: Key, description: "Acceso de sistemas externos" },
 ];
 
 export default function AdminLayout() {
-  const { signOut } = useAuth();
+  const { signOut, user, role } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: unreadCount = 0 } = useQuery({
@@ -71,93 +45,36 @@ export default function AdminLayout() {
   useEffect(() => {
     const channel = supabase
       .channel("admin-notifications-badge")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["admin-unread-notifications"] });
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => {
+        queryClient.invalidateQueries({ queryKey: ["admin-unread-notifications"] });
+        queryClient.invalidateQueries({ queryKey: ["admin-notifications"] });
+      })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [queryClient]);
 
-  return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full">
-        <Sidebar>
-          <SidebarHeader className="p-4">
-            <h2 className="text-lg font-bold text-primary">FindMed</h2>
-            <span className="text-xs text-muted-foreground">Panel Administrativo</span>
-          </SidebarHeader>
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>Navegación</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {navItems.map((item) => (
-                    <SidebarMenuItem key={item.url}>
-                      <SidebarMenuButton asChild>
-                        <NavLink
-                          to={item.url}
-                          className="flex items-center gap-2"
-                          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                        >
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                          {item.url === "/admin/inbox" && unreadCount > 0 && (
-                            <span className="ml-auto h-2 w-2 rounded-full bg-destructive" />
-                          )}
-                          {item.url === "/admin/casos" && pendingCases > 0 && (
-                            <span className="ml-auto rounded-full bg-destructive px-1.5 text-xs font-medium text-destructive-foreground">
-                              {pendingCases}
-                            </span>
-                          )}
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel>Configuración</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {settingsItems.map((item) => (
-                    <SidebarMenuItem key={item.url}>
-                      <SidebarMenuButton asChild>
-                        <NavLink
-                          to={item.url}
-                          className="flex items-center gap-2"
-                          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                        >
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-          <SidebarFooter>
-            <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground" onClick={signOut}>
-              <LogOut className="h-4 w-4" /> Cerrar sesión
-            </Button>
-          </SidebarFooter>
-        </Sidebar>
+  const nav: ShellNavItem[] = [
+    { title: "Inicio", url: "/admin/inicio", icon: Home, badge: unreadCount },
+    { title: "Agenda", url: "/admin/agenda", icon: CalendarDays },
+    { title: "Doctores", url: "/admin/doctores", icon: UserCog },
+    { title: "Casos", url: "/admin/casos", icon: LifeBuoy, badge: pendingCases },
+    { title: "WhatsApp", url: "/admin/whatsapp", icon: MessageCircle, fullBleed: true },
+    { title: "Automatización", url: "/admin/automatizacion", icon: Workflow },
+  ];
 
-        <SidebarInset>
-          <header className="flex h-12 items-center border-b px-4">
-            <SidebarTrigger />
-          </header>
-          <div className="flex-1 p-6">
-            <Outlet />
-          </div>
-        </SidebarInset>
-      </div>
-    </SidebarProvider>
+  return (
+    <AppShell
+      subtitle="Panel administrativo"
+      nav={nav}
+      settings={settings}
+      profile={{
+        name: "",
+        email: user?.email ?? "",
+        roleLabel: role === "superadmin" ? "Superadministrador" : "Administrador",
+      }}
+      onSignOut={signOut}
+    />
   );
 }

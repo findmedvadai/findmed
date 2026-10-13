@@ -84,7 +84,8 @@ interface ZoneRow {
   city_id: string;
 }
 
-export default function Reservas() {
+/** embedded: se muestra dentro de otro módulo, sin título propio. */
+export default function Reservas({ embedded = false }: { embedded?: boolean } = {}) {
   const [page, setPage] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -194,7 +195,7 @@ export default function Reservas() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">Reservas</h1>
+        {!embedded && <h1 className="text-xl font-bold text-foreground">Reservas</h1>}
         <span className="text-sm text-muted-foreground">{filtered.length} citas</span>
       </div>
 

@@ -1,47 +1,28 @@
-import { Outlet } from "react-router-dom";
-import { CalendarDays, Settings, ClipboardList, Inbox, LogOut } from "lucide-react";
-import { NavLink } from "@/components/NavLink";
-import { useAuth } from "@/hooks/useAuth";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarDays, ClipboardList, Home, SlidersHorizontal } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarHeader,
-  SidebarFooter,
-  SidebarInset,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
+import AppShell, { type ShellNavItem, type ShellSettingsItem } from "./AppShell";
 
-const navItems = [
-  { title: "Agenda", url: "/doctor/agenda", icon: CalendarDays },
-  { title: "Configuración", url: "/doctor/configuracion", icon: Settings },
-  { title: "Por Completar", url: "/doctor/por-completar", icon: ClipboardList },
-  { title: "Inbox", url: "/doctor/inbox", icon: Inbox },
+const settings: ShellSettingsItem[] = [
+  {
+    title: "Mi configuración",
+    url: "/doctor/configuracion",
+    icon: SlidersHorizontal,
+    description: "Consultorios, horarios y calendarios",
+  },
 ];
 
 export default function DoctorLayout() {
-  const { signOut, doctorId } = useAuth();
+  const { signOut, doctorId, user } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: doctorName } = useQuery({
     queryKey: ["doctor-name", doctorId],
     queryFn: async () => {
       if (!doctorId) return null;
-      const { data } = await supabase
-        .from("doctors")
-        .select("full_name")
-        .eq("id", doctorId)
-        .maybeSingle();
+      const { data } = await supabase.from("doctors").select("full_name").eq("id", doctorId).maybeSingle();
       return data?.full_name ?? null;
     },
     enabled: !!doctorId,
@@ -62,74 +43,52 @@ export default function DoctorLayout() {
     enabled: !!doctorId,
   });
 
+  // Consultas atendidas sin notas post-consulta (mismo criterio que "Por completar").
+  const { data: toComplete = 0 } = useQuery({
+    queryKey: ["doctor-to-complete-count", doctorId],
+    queryFn: async () => {
+      if (!doctorId) return 0;
+      const nowIso = new Date().toISOString();
+      const { count } = await supabase
+        .from("appointments")
+        .select("id", { count: "exact", head: true })
+        .eq("doctor_id", doctorId)
+        .is("doctor_notes", null)
+        .or(`status.eq.completed,and(status.eq.confirmed,end_at.lt.${nowIso})`);
+      return count ?? 0;
+    },
+    enabled: !!doctorId,
+    refetchInterval: 60_000,
+  });
+
   // Realtime: refresh count when notifications change
   useEffect(() => {
     if (!doctorId) return;
     const channel = supabase
       .channel("doctor-notifications-badge")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["doctor-unread-notifications", doctorId] });
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => {
+        queryClient.invalidateQueries({ queryKey: ["doctor-unread-notifications", doctorId] });
+        queryClient.invalidateQueries({ queryKey: ["doctor-notifications", doctorId] });
+      })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [doctorId, queryClient]);
 
-  return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full">
-        <Sidebar>
-          <SidebarHeader className="p-4">
-            <h2 className="text-lg font-bold text-primary">FindMed</h2>
-            <span className="text-xs text-muted-foreground">
-              {doctorName ?? "Portal Doctor"}
-            </span>
-          </SidebarHeader>
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>Navegación</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {navItems.map((item) => (
-                    <SidebarMenuItem key={item.url}>
-                      <SidebarMenuButton asChild>
-                        <NavLink
-                          to={item.url}
-                          className="flex items-center gap-2"
-                          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                        >
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                          {item.url === "/doctor/inbox" && unreadCount > 0 && (
-                            <span className="ml-auto h-2 w-2 rounded-full bg-destructive" />
-                          )}
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-          <SidebarFooter>
-            <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground" onClick={signOut}>
-              <LogOut className="h-4 w-4" /> Cerrar sesión
-            </Button>
-          </SidebarFooter>
-        </Sidebar>
+  const nav: ShellNavItem[] = [
+    { title: "Inicio", url: "/doctor/inicio", icon: Home, badge: unreadCount },
+    { title: "Agenda", url: "/doctor/agenda", icon: CalendarDays },
+    { title: "Por completar", url: "/doctor/por-completar", icon: ClipboardList, badge: toComplete },
+  ];
 
-        <SidebarInset>
-          <header className="flex h-12 items-center border-b px-4">
-            <SidebarTrigger />
-          </header>
-          <div className="flex-1 p-6">
-            <Outlet />
-          </div>
-        </SidebarInset>
-      </div>
-    </SidebarProvider>
+  return (
+    <AppShell
+      subtitle={doctorName ?? "Portal del doctor"}
+      nav={nav}
+      settings={settings}
+      profile={{ name: doctorName ?? "", email: user?.email ?? "", roleLabel: "Doctor" }}
+      onSignOut={signOut}
+    />
   );
 }

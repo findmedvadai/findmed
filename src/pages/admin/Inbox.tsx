@@ -71,7 +71,8 @@ const TYPE_CONFIG: Record<
   },
 };
 
-export default function AdminInbox() {
+/** embedded: se muestra dentro de otro módulo, sin título propio. */
+export default function AdminInbox({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [specialtyFilter, setSpecialtyFilter] = useState("all");
@@ -211,7 +212,7 @@ export default function AdminInbox() {
     <div className="space-y-6 max-w-3xl">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Inbox</h1>
+          {!embedded && <h1 className="text-2xl font-bold text-foreground">Inbox</h1>}
           <p className="text-sm text-muted-foreground">
             {unreadCount > 0
               ? `${unreadCount} notificación${unreadCount > 1 ? "es" : ""} sin leer`

@@ -23,7 +23,7 @@ export default function ProtectedRoute({ allowedRoles, children }: Props) {
   if (!session) return <Navigate to="/login" replace />;
 
   if (role && !allowedRoles.includes(role)) {
-    const dest = role === "doctor" ? "/doctor/agenda" : "/admin/calendario";
+    const dest = role === "doctor" ? "/doctor/inicio" : "/admin/inicio";
     return <Navigate to={dest} replace />;
   }
 

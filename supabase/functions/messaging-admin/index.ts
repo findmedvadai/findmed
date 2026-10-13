@@ -1,4 +1,4 @@
-// Admin messaging center (/admin/mensajeria): WHAAPY template catalog,
+// Admin messaging center (/admin/automatizacion): WHAAPY template catalog,
 // event → template mapping, owner per event, manual resend.
 // Auth: admin/superadmin JWT verified in code (verify_jwt = false in config.toml).
 // Secrets: WHAAPY_API_KEY, WHAAPY_API_BASE_URL.
