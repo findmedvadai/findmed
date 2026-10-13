@@ -100,6 +100,19 @@ Deno.test("validateStep catches mismatches before they reach a patient", () => {
   assert(validateStep(base, undefined)[0].includes("no existe"));
 });
 
+Deno.test("validateStep blocks templates the worker can't fill or that open an old domain", () => {
+  const tpl = (buttons: Record<string, unknown>[]) =>
+    normalizeTemplate({ name: "t", language: "es_MX", status: "APPROVED", category: "UTILITY", components: [{ type: "BODY", text: "Hola {{1}}" }, { type: "BUTTONS", buttons }] });
+  const base = { template_name: "t", language: "es_MX", body_params: ["patient_name"], url_button_param: null, quick_reply_action: "cancel" };
+  const confirmCancel = tpl([{ type: "QUICK_REPLY", text: "Confirmar cita" }, { type: "QUICK_REPLY", text: "Cancelar cita" }]);
+  assert(validateStep(base, confirmCancel).some((p) => p.includes("varios botones de respuesta rápida")));
+  const linkFirst = tpl([{ type: "URL", text: "Gestionar", url: "https://app.findmed.com.mx/gestionar?token={{1}}" }, { type: "QUICK_REPLY", text: "Cancelar cita" }]);
+  assert(validateStep(base, linkFirst).some((p) => p.includes("primer botón")));
+  const old = tpl([{ type: "URL", text: "Reagendar cita", url: "https://id-preview--abc.lovable.app/gestionar?token={{1}}" }]);
+  const oldProblems = validateStep({ ...base, quick_reply_action: null, url_button_param: "manage_token" }, old);
+  assertEquals(oldProblems, ['El botón "Reagendar cita" abre una dirección antigua (id-preview--abc.lovable.app). Corrige la plantilla en WHAAPY para que use https://app.findmed.com.mx.']);
+});
+
 Deno.test("messaging-admin: auth and catalog", async () => {
   const w = whaapy();
   assertEquals((await post(db(), w.client, { action: "templates" }, false)).status, 403);

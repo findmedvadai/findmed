@@ -79,7 +79,23 @@ export function validateStep(step: StepShape, template: CatalogTemplate | undefi
   const urlButton = template.buttons.find((b) => b.type === "URL" && /\{\{\s*1\s*\}\}/.test(b.url ?? ""));
   if (step.url_button_param && !urlButton) problems.push("La plantilla no tiene un botón de enlace con parte variable.");
   if (!step.url_button_param && urlButton) problems.push("La plantilla tiene un botón de enlace variable: elige qué enlace lleva.");
-  const quick = template.buttons.some((b) => b.type === "QUICK_REPLY");
-  if (step.quick_reply_action && !quick) problems.push("La plantilla no tiene botón de respuesta rápida.");
+  const quickButtons = template.buttons.filter((b) => b.type === "QUICK_REPLY");
+  if (step.quick_reply_action && quickButtons.length === 0) problems.push("La plantilla no tiene botón de respuesta rápida.");
+  // The worker sends the variable link and the quick-reply payload as button
+  // index 0 (messaging.ts); any other layout would fail at send time.
+  if (step.quick_reply_action && quickButtons.length > 1) {
+    problems.push("La plantilla tiene varios botones de respuesta rápida; cada mensaje solo puede llevar uno (confirmar o cancelar).");
+  }
+  if (step.url_button_param && template.buttons.findIndex((b) => b.type === "URL") > 0) {
+    problems.push("El botón de enlace debe ser el primer botón de la plantilla.");
+  }
+  if (step.quick_reply_action && template.buttons.findIndex((b) => b.type === "QUICK_REPLY") > 0) {
+    problems.push("El botón de respuesta rápida debe ser el primer botón de la plantilla.");
+  }
+  const stale = template.buttons.find((b) => b.type === "URL" && /lovable\.app/i.test(b.url ?? ""));
+  if (stale) {
+    const host = (stale.url ?? "").replace(/^https?:\/\//, "").split("/")[0];
+    problems.push(`El botón "${stale.text}" abre una dirección antigua (${host}). Corrige la plantilla en WHAAPY para que use https://app.findmed.com.mx.`);
+  }
   return problems;
 }
