@@ -32,7 +32,11 @@ import {
   MapPin,
   Stethoscope,
   CheckCircle2,
+  LifeBuoy,
 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { isManagementType, MANAGEMENT_TYPE_INFO } from "@/lib/management-type";
+import { CASE_PRIORITY, CASE_STATUS, caseTypeLabel } from "@/lib/case-labels";
 import SendReportModal from "./SendReportModal";
 
 const STATUS_BADGE: Record<string, { label: string; tone: Tone }> = {
@@ -91,7 +95,14 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
         .eq("id", appointmentId)
         .single();
 
-      return { form, appointment: appt };
+      // Casos que abrió (o actualizó) este formulario — Etapa 2.
+      const { data: links } = await supabase
+        .from("post_consultation_case_links")
+        .select("request_type, outcome, case_id, patient_cases(id, request_type, priority, status)")
+        .eq("form_id", form.id)
+        .order("created_at", { ascending: true });
+
+      return { form, appointment: appt, cases: links ?? [] };
     },
     enabled: open && !!appointmentId,
   });
@@ -101,8 +112,8 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
       if (!data?.form) return;
       const { error } = await supabase
         .from("post_consultation_forms")
-        .update({ review_status: "read" } as any)
-        .eq("id", (data.form as any).id);
+        .update({ review_status: "read" })
+        .eq("id", data.form.id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -120,8 +131,10 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
 
   if (!open) return null;
 
-  const form = data?.form as any;
-  const appt = data?.appointment as any;
+  const form = data?.form ?? null;
+  const appt = data?.appointment ?? null;
+  const generatedCases = data?.cases ?? [];
+  const managementType = form && isManagementType(form.management_type) ? MANAGEMENT_TYPE_INFO[form.management_type] : null;
   const statusCfg = form ? STATUS_BADGE[form.review_status] ?? STATUS_BADGE.pending : STATUS_BADGE.pending;
   const actions = form ? ACTION_FIELDS.filter((f) => form[f.key]) : [];
   const specialties: string[] = (appt?.doctors?.doctor_specialties ?? [])
@@ -142,6 +155,7 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
                 Formulario post-consulta
               </DialogTitle>
               {form && <SoftBadge tone={statusCfg.tone} dot>{statusCfg.label}</SoftBadge>}
+              {managementType && <SoftBadge tone={managementType.tone}>{managementType.label}</SoftBadge>}
             </div>
             <DialogDescription className="text-xs">Notas que envió el doctor después de la consulta.</DialogDescription>
           </DialogHeader>
@@ -221,6 +235,44 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
                   )}
                 </section>
 
+                {/* Tipo de manejo y casos generados (Etapa 2) */}
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold text-foreground">Tipo de manejo y seguimiento</h3>
+                  {managementType ? (
+                    <p className="text-sm text-foreground">
+                      <SoftBadge tone={managementType.tone} dot>{managementType.label}</SoftBadge>
+                      <span className="mt-1 block text-xs text-muted-foreground">{managementType.description}</span>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">El doctor no indicó el tipo de manejo (formulario anterior a este cambio).</p>
+                  )}
+                  {generatedCases.length > 0 ? (
+                    <ul className="divide-y rounded-lg border">
+                      {generatedCases.map((l) => {
+                        const c = l.patient_cases;
+                        const prio = CASE_PRIORITY[c?.priority ?? "normal"] ?? CASE_PRIORITY.normal;
+                        const st = c ? CASE_STATUS[c.status] : null;
+                        return (
+                          <li key={l.request_type} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                              <LifeBuoy className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="text-sm font-medium text-foreground">{caseTypeLabel(l.request_type)}</span>
+                              {c?.priority && c.priority !== "normal" && <SoftBadge tone={prio.tone} dot>{prio.label}</SoftBadge>}
+                              {st && <SoftBadge tone={st.tone}>{st.label}</SoftBadge>}
+                              {l.outcome === "appended" && <span className="text-xs text-muted-foreground">Se agregó a un caso que ya existía</span>}
+                            </div>
+                            <Button asChild size="sm" variant="ghost" className="h-8 px-2">
+                              <Link to={`/admin/casos?caso=${l.case_id}`} onClick={() => onOpenChange(false)}>Ver caso</Link>
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Este formulario no generó casos de seguimiento.</p>
+                  )}
+                </section>
+
                 {form.review_status === "report_sent" && form.report_sent_at && (
                   <div className="flex items-start gap-2 rounded-md border border-success/25 bg-success/5 px-3 py-2 text-sm text-foreground">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
@@ -255,16 +307,14 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
                       Marcar como leído
                     </Button>
                   )}
-                  {form.review_status !== "report_sent" && (
-                    <Button
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setSendReportOpen(true)}
-                    >
-                      <Send className="h-4 w-4" />
-                      Enviar informe
-                    </Button>
-                  )}
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setSendReportOpen(true)}
+                  >
+                    <Send className="h-4 w-4" />
+                    Enviar informe
+                  </Button>
                 </div>
               )}
             </div>
@@ -276,7 +326,7 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
         <SendReportModal
           open={sendReportOpen}
           onOpenChange={setSendReportOpen}
-          formId={(form as any).id}
+          formId={form.id}
           appointmentId={appointmentId!}
           onSuccess={handleReportSent}
         />

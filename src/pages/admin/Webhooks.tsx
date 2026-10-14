@@ -291,6 +291,7 @@ const PAYLOAD_EXAMPLES: Record<string, object> = {
     lab_tests: "Biometría hemática completa",
     specialist_referral: null,
     hospitalization: null,
+    management_type: "estudios", // conservador | estudios | procedimiento | urgente
   },
   "postconsultation.report_sent": {
     appointment_id: "uuid-example",

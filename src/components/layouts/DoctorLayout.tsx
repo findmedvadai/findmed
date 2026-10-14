@@ -49,13 +49,14 @@ export default function DoctorLayout() {
     queryFn: async () => {
       if (!doctorId) return 0;
       const nowIso = new Date().toISOString();
-      const { count } = await supabase
+      const { data } = await supabase
         .from("appointments")
-        .select("id", { count: "exact", head: true })
+        .select("id, post_consultation_forms(id)")
         .eq("doctor_id", doctorId)
         .is("doctor_notes", null)
         .or(`status.eq.completed,and(status.eq.confirmed,end_at.lt.${nowIso})`);
-      return count ?? 0;
+      // Las que ya tienen formulario (enviado sin observaciones) no cuentan.
+      return (data ?? []).filter((a) => !a.post_consultation_forms?.length).length;
     },
     enabled: !!doctorId,
     refetchInterval: 60_000,

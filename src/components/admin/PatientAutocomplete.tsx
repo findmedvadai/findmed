@@ -16,6 +16,8 @@ interface Props {
   onSelect: (patient: PatientLookupResult) => void;
   placeholder?: string;
   className?: string;
+  /** Texto cuando no hay coincidencias (por defecto, el del alta de citas). */
+  emptyText?: string;
 }
 
 /**
@@ -29,6 +31,7 @@ export default function PatientAutocomplete({
   onSelect,
   placeholder = "Buscar paciente por nombre o teléfono...",
   className,
+  emptyText = "Sin coincidencias. Escribe sus datos abajo y se creará un paciente nuevo al guardar.",
 }: Props) {
   const [results, setResults] = useState<PatientLookupResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -110,7 +113,7 @@ export default function PatientAutocomplete({
           {!loading && results.length === 0 && (
             <div className="flex items-start gap-2 px-2 py-2 text-sm text-muted-foreground">
               <UserPlus className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>Sin coincidencias. Escribe sus datos abajo y se creará un paciente nuevo al guardar.</span>
+              <span>{emptyText}</span>
             </div>
           )}
           {results.map((p) => (

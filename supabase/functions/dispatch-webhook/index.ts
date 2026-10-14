@@ -3,6 +3,7 @@ import { isServiceRequest } from "../_shared/service-auth.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { enqueueEvent, routeOwner } from "../_shared/messaging.ts";
+import { routePostConsultation } from "../_shared/postconsult-routes.ts";
 
 // Events the browser may dispatch directly (post-consultation flows in
 // PorCompletar.tsx and SendReportModal.tsx). Everything else must come from
@@ -111,6 +112,19 @@ Deno.serve(async (req) => {
     const patient = (appt as { patients?: { full_name?: string; phone?: string } }).patients;
     payload.patient_name = patient?.full_name ?? null;
     payload.patient_phone = patient?.phone ?? null;
+  }
+
+  // --- Etapa 2: post-consultation operational routes ---
+  // Opens (or adds to) the cases for the submitted form: studies, procedure,
+  // urgency, referral, follow-up. Idempotent per form; reads everything from
+  // the DB. A failure here never stops nor changes the message routing below.
+  if (event_type === "postconsultation.submitted" && typeof payload.appointment_id === "string") {
+    try {
+      const routed = await routePostConsultation(supabase, payload.appointment_id);
+      if (!routed.ok) console.warn("[dispatch-webhook] post-consultation routes skipped:", routed.code);
+    } catch (err) {
+      console.error("[dispatch-webhook] post-consultation routes failed:", err);
+    }
   }
 
   // --- Single owner per event type (B7, R38) ---

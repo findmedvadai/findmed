@@ -9,12 +9,20 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/app/PageHeader";
 import { EmptyState } from "@/components/app/EmptyState";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { cn } from "@/lib/utils";
+import {
+  isManagementType,
+  MANAGEMENT_TYPE_INFO,
+  MANAGEMENT_TYPES,
+  suggestManagementType,
+  type ManagementType,
+} from "@/lib/management-type";
 import { CalendarDays, CheckCircle2, Phone, Send, Pill, ScanLine, FlaskConical, UserRoundPlus, Building2 } from "lucide-react";
 
 const TOGGLE_FIELDS = [
@@ -56,14 +64,16 @@ export default function PorCompletar() {
       const nowIso = new Date().toISOString();
       const { data, error } = await supabase
         .from("appointments")
-        .select("id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone)")
+        .select("id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone), post_consultation_forms(id)")
         .eq("doctor_id", doctorId)
         .is("doctor_notes", null)
         .or(`status.eq.completed,and(status.eq.confirmed,end_at.lt.${nowIso})`)
         .order("start_at", { ascending: false });
 
       if (error) throw error;
-      return data ?? [];
+      // Una consulta enviada sin observaciones conserva doctor_notes en null:
+      // si ya tiene formulario, no se vuelve a pedir (evita formularios duplicados).
+      return (data ?? []).filter((a) => !a.post_consultation_forms?.length);
     },
     enabled: !!doctorId,
   });
@@ -166,9 +176,10 @@ export default function PorCompletar() {
                 <PostConsultationForm
                   appointment={appt}
                   doctorId={doctorId!}
-                  onSaved={() =>
-                    queryClient.invalidateQueries({ queryKey: ["por-completar", doctorId] })
-                  }
+                  onSaved={() => {
+                    queryClient.invalidateQueries({ queryKey: ["por-completar", doctorId] });
+                    queryClient.invalidateQueries({ queryKey: ["doctor-to-complete-count", doctorId] });
+                  }}
                 />
               </div>
             ))}
@@ -209,6 +220,13 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
     specialist_referral: "",
     hospitalization: "",
   });
+  // Obligatorio: el médico confirma la sugerencia o elige otro (null = aún no elige).
+  const [managementType, setManagementType] = useState<ManagementType | null>(null);
+  const suggested = suggestManagementType({
+    imaging_studies: toggles.imaging_studies,
+    lab_tests: toggles.lab_tests,
+    hospitalization: toggles.hospitalization,
+  });
 
   const start = parseISO(appointment.start_at);
   const patient = appointment.patients as { full_name: string; phone: string } | null;
@@ -222,12 +240,14 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
 
   const submitMut = useMutation({
     mutationFn: async () => {
+      if (!managementType) throw new Error("Elige el tipo de manejo antes de enviar.");
       // Build form data
       const formData: Record<string, string | null> = {
         observations: observations.trim() || null,
       };
       for (const f of TOGGLE_FIELDS) {
-        formData[f.key] = toggles[f.key] ? (fields[f.key].trim() || null) : null;
+        // Un interruptor encendido sin detalle también cuenta: el equipo debe saber que se indicó.
+        formData[f.key] = toggles[f.key] ? (fields[f.key].trim() || "Sí, sin detalle.") : null;
       }
 
       // Insert post consultation form
@@ -242,7 +262,8 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
           lab_tests: formData.lab_tests,
           specialist_referral: formData.specialist_referral,
           hospitalization: formData.hospitalization,
-        } as any);
+          management_type: managementType,
+        });
       if (formError) throw formError;
 
       // Update appointment status
@@ -251,7 +272,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
         .update({
           doctor_notes: formData.observations,
           doctor_notes_updated_at: new Date().toISOString(),
-          status: "completed" as any,
+          status: "completed",
         })
         .eq("id", appointment.id);
       if (apptError) throw apptError;
@@ -271,7 +292,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
         type: "postconsultation_submitted",
         title: "Formulario post-consulta enviado",
         body: `Dr. ${doctorData?.full_name ?? "Doctor"} envió formulario post-consulta para ${patient?.full_name ?? "Paciente"} (${format(start, "d MMM yyyy", { locale: es })})`,
-      } as any);
+      });
 
       // Dispatch webhook
       try {
@@ -292,6 +313,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
               lab_tests: formData.lab_tests,
               specialist_referral: formData.specialist_referral,
               hospitalization: formData.hospitalization,
+              management_type: managementType,
             },
           },
         });
@@ -300,7 +322,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
       }
     },
     onSuccess: () => {
-      toast({ title: "Formulario enviado" });
+      toast({ title: "Formulario enviado", description: "FindMed inicia el seguimiento según el tipo de manejo." });
       onSaved();
     },
     onError: (err: Error) =>
@@ -412,14 +434,71 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
             </div>
           </div>
         </div>
+
+        {/* Tipo de manejo (obligatorio): define el seguimiento que inicia FindMed. */}
+        <section className="space-y-2" aria-labelledby={`${idPrefix}-mt-title`}>
+          <div>
+            <p id={`${idPrefix}-mt-title`} className="text-sm font-semibold text-foreground">
+              Tipo de manejo <span className="text-destructive" aria-hidden>*</span>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Te sugerimos uno según lo que activaste arriba; confírmalo o elige otro. Con esto FindMed inicia el seguimiento que corresponde.
+            </p>
+          </div>
+          <RadioGroup
+            value={managementType ?? ""}
+            onValueChange={(v) => isManagementType(v) && setManagementType(v)}
+            aria-labelledby={`${idPrefix}-mt-title`}
+            aria-required
+            className="grid gap-2 sm:grid-cols-2"
+          >
+            {MANAGEMENT_TYPES.map((t) => {
+              const info = MANAGEMENT_TYPE_INFO[t];
+              const optionId = `${idPrefix}-mt-${t}`;
+              const checked = managementType === t;
+              return (
+                <Label
+                  key={t}
+                  htmlFor={optionId}
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal leading-normal transition-colors",
+                    checked
+                      ? t === "urgente"
+                        ? "border-destructive/50 bg-destructive/5"
+                        : "border-primary/50 bg-primary/5"
+                      : "hover:bg-accent/40",
+                  )}
+                >
+                  <RadioGroupItem id={optionId} value={t} className="mt-0.5 shrink-0" />
+                  <span className="min-w-0 space-y-0.5">
+                    <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+                      {info.label}
+                      {t === suggested && <SoftBadge tone="info">Sugerido</SoftBadge>}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{info.description}</span>
+                  </span>
+                </Label>
+              );
+            })}
+          </RadioGroup>
+          {managementType && managementType !== suggested && managementType !== "urgente" && (
+            <p className="text-xs text-muted-foreground">
+              Elegiste un manejo distinto a la sugerencia ({MANAGEMENT_TYPE_INFO[suggested].short}); se respetará tu elección.
+            </p>
+          )}
+        </section>
       </div>
 
       <div className="flex flex-col-reverse gap-3 border-t bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-muted-foreground">Al enviar, la consulta queda completada y se avisa al equipo de FindMed.</p>
+        <p className={cn("text-xs", managementType ? "text-muted-foreground" : "text-warning")}>
+          {managementType
+            ? "Al enviar, la consulta queda completada y FindMed inicia el seguimiento según el tipo de manejo."
+            : "Elige el tipo de manejo para poder enviar el formulario."}
+        </p>
         <Button
           size="sm"
           onClick={() => submitMut.mutate()}
-          disabled={submitMut.isPending}
+          disabled={submitMut.isPending || !managementType}
           className="gap-1.5 self-end sm:self-auto"
         >
           <Send className="h-4 w-4" />
