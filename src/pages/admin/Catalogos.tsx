@@ -53,6 +53,7 @@ import { FilterBar, SearchInput } from "@/components/app/FilterBar";
 import { EmptyState } from "@/components/app/EmptyState";
 import { CoordinateFields, CoordinatesCell, MissingCoordinatesFilter } from "@/components/admin/CoordinateFields";
 import { coordinateText, type CoordsPatch, hasCoordinates, toCoordsPatch } from "@/lib/geo-coords";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 type IconType = ComponentType<{ className?: string }>;
 
@@ -346,7 +347,7 @@ function CitiesTab() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad creada" }); setShowAdd(false); setName(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const editMut = useMutation({
@@ -355,7 +356,7 @@ function CitiesTab() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad actualizada" }); setEditItem(null); setName(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const toggleMut = useMutation({
@@ -373,7 +374,7 @@ function CitiesTab() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad eliminada" }); setDeleteItem(null); },
-    onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error al eliminar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const all = (cities ?? []).map((c) => ({ id: c.id, name: c.name, is_active: c.is_active, latitude: c.latitude, longitude: c.longitude }));
@@ -493,7 +494,7 @@ function ZonesTab() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateZones(qc); toast({ title: "Zona creada" }); setShowAdd(false); setName(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const editMut = useMutation({
@@ -502,7 +503,7 @@ function ZonesTab() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateZones(qc); toast({ title: "Zona actualizada" }); setEditItem(null); setName(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const toggleMut = useMutation({
@@ -520,7 +521,7 @@ function ZonesTab() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateZones(qc); toast({ title: "Zona eliminada" }); setDeleteItem(null); },
-    onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error al eliminar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const all = (zones ?? []).map((z) => ({
@@ -664,7 +665,7 @@ function SpecialtiesTab() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); qc.invalidateQueries({ queryKey: ["specialties"] }); toast({ title: "Especialidad creada" }); setShowAdd(false); setName(""); setColor(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const editMut = useMutation({
@@ -673,7 +674,7 @@ function SpecialtiesTab() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); qc.invalidateQueries({ queryKey: ["specialties"] }); toast({ title: "Especialidad actualizada" }); setEditItem(null); setName(""); setColor(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const toggleMut = useMutation({
@@ -691,7 +692,7 @@ function SpecialtiesTab() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-specialties"] }); qc.invalidateQueries({ queryKey: ["specialties"] }); toast({ title: "Especialidad eliminada" }); setDeleteItem(null); },
-    onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error al eliminar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const all = specialties ?? [];
@@ -1038,7 +1039,7 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: [`catalog-${type}`] }); toast({ title: `${label} creado` }); setShowAdd(false); resetForm(); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const editMut = useMutation({
@@ -1055,7 +1056,7 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: [`catalog-${type}`] }); toast({ title: `${label} actualizado` }); setEditItem(null); resetForm(); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const toggleMut = useMutation({
@@ -1072,7 +1073,7 @@ function FacilitiesTab({ type }: { type: "hospitals" | "laboratories" }) {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: [`catalog-${type}`] }); toast({ title: `${label} eliminado` }); setDeleteItem(null); },
-    onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error al eliminar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const openEdit = (item: FacilityItem) => {

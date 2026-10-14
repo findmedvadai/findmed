@@ -21,6 +21,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Building2, FlaskConical, Send } from "lucide-react";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 interface Props {
   open: boolean;
@@ -47,7 +48,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
         .select("id, name, city_id, zone_id, cities(name), zones(name)")
         .eq("is_active", true)
         .order("name");
-      return (data ?? []) as any[];
+      return data ?? [];
     },
     enabled: open,
   });
@@ -60,7 +61,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
         .select("id, name, city_id, zone_id, cities(name), zones(name)")
         .eq("is_active", true)
         .order("name");
-      return (data ?? []) as any[];
+      return data ?? [];
     },
     enabled: open,
   });
@@ -79,7 +80,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
           report_destination_type: destType,
           report_destination_id: destId,
           report_sent_at: new Date().toISOString(),
-        } as any)
+        })
         .eq("id", formId);
       if (error) throw error;
 
@@ -111,10 +112,10 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
             event_type: "postconsultation.report_sent",
             payload: {
               appointment_id: appointmentId,
-              patient_name: (appt as any)?.patients?.full_name,
-              patient_phone: (appt as any)?.patients?.phone,
-              doctor_name: (appt as any)?.doctors?.full_name,
-              start_at: (appt as any)?.start_at,
+              patient_name: appt?.patients?.full_name,
+              patient_phone: appt?.patients?.phone,
+              doctor_name: appt?.doctors?.full_name,
+              start_at: appt?.start_at,
               form: formData,
               destination_type: destType,
               destination: dest,
@@ -131,7 +132,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
       onSuccess();
     },
     onError: (err: Error) =>
-      toast({ title: "Error", description: err.message, variant: "destructive" }),
+      toast({ title: "Error", description: userErrorMessage(err, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const destLabel = destType === "hospital" ? "Hospital" : "Laboratorio";

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -179,7 +180,7 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
                       {appt.patients?.phone && <span className="block text-xs text-muted-foreground">{appt.patients.phone}</span>}
                     </InfoItem>
                     <InfoItem icon={Calendar} label="Consulta">
-                      {format(parseISO(appt.start_at), "EEEE d 'de' MMMM yyyy · HH:mm", { locale: es })}
+                      {formatMx(parseISO(appt.start_at), "EEEE d 'de' MMMM yyyy · HH:mm", { locale: es })}
                     </InfoItem>
                     <InfoItem icon={Stethoscope} label="Doctor">
                       <span>{appt.doctors?.full_name ?? "—"}</span>
@@ -279,7 +280,7 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
                     <span>
                       Informe enviado
                       {form.report_destination_type === "hospital" ? " al hospital" : form.report_destination_type === "laboratory" ? " al laboratorio" : ""}{" "}
-                      el {format(parseISO(form.report_sent_at), "d MMM yyyy · HH:mm", { locale: es })}.
+                      el {formatMx(parseISO(form.report_sent_at), "d MMM yyyy · HH:mm", { locale: es })}.
                     </span>
                   </div>
                 )}
@@ -291,7 +292,7 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
             <div className="flex flex-col-reverse gap-3 border-t bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock className="h-3.5 w-3.5" />
-                Enviado el {format(parseISO(form.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                Enviado el {formatMx(parseISO(form.created_at), "d MMM yyyy · HH:mm", { locale: es })}
               </p>
               {form.review_status !== "report_sent" && (
                 <div className="flex flex-wrap justify-end gap-2">

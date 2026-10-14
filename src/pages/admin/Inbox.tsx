@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, isThisYear, isToday, isYesterday, parseISO } from "date-fns";
-import { es } from "date-fns/locale";
+import { parseISO } from "date-fns";
+import { formatMx, mexicoDayLabel } from "@/lib/timezone";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -69,18 +69,13 @@ const TONE_ICON: Record<Tone, string> = {
 
 const PAGE_SIZE = 25;
 
-function dayLabel(d: Date) {
-  if (isToday(d)) return "Hoy";
-  if (isYesterday(d)) return "Ayer";
-  const s = format(d, isThisYear(d) ? "EEEE d 'de' MMMM" : "EEEE d 'de' MMMM yyyy", { locale: es });
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+const dayLabel = (d: Date) => mexicoDayLabel(d);
 
 function groupByDay<T extends { created_at: string }>(items: T[]) {
   const groups: { key: string; label: string; items: T[] }[] = [];
   for (const item of items) {
     const d = parseISO(item.created_at);
-    const key = format(d, "yyyy-MM-dd");
+    const key = formatMx(d, "yyyy-MM-dd");
     const last = groups[groups.length - 1];
     if (last && last.key === key) last.items.push(item);
     else groups.push({ key, label: dayLabel(d), items: [item] });
@@ -119,7 +114,7 @@ function NotificationItem({
             {unread && <span className="sr-only">Sin leer: </span>}
             {notif.title}
           </p>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{format(parseISO(notif.created_at), "HH:mm")}</span>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatMx(parseISO(notif.created_at), "HH:mm")}</span>
         </div>
         {notif.body && <p className="mt-0.5 line-clamp-2 whitespace-pre-line text-sm text-muted-foreground">{notif.body}</p>}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

@@ -14,6 +14,7 @@ import {
   pickerDateToYmd,
 } from "@/lib/timezone";
 import { CALENDAR_LABELS_ES } from "@/lib/calendar-labels";
+import { CONNECTION_ERROR, PATIENT_LINK_HELP, patientLinkError, readPatientResponse } from "@/lib/patient-link";
 
 // Los horarios (slots, fecha y hora de la cita) son siempre hora de CDMX,
 // aunque el paciente abra el enlace desde otra zona horaria.
@@ -60,7 +61,7 @@ export default function Reserva() {
   // Validate token on mount
   useEffect(() => {
     if (!token) {
-      setError("Enlace inválido. No se proporcionó un token.");
+      setError(patientLinkError(null));
       setLoading(false);
       return;
     }
@@ -70,15 +71,15 @@ export default function Reserva() {
       headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
       body: JSON.stringify({ token }),
     })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.error) {
-          setError(data.error);
+      .then((res) => readPatientResponse<SessionData>(res))
+      .then(({ data, error }) => {
+        if (error || !data?.session_id) {
+          setError(patientLinkError(error));
         } else {
           setSession(data);
         }
       })
-      .catch(() => setError("Error de conexión"))
+      .catch(() => setError(CONNECTION_ERROR))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -102,12 +103,17 @@ export default function Reserva() {
           : { doctor_id: session.doctor_id, date: dateStr }
       ),
     })
-      .then((res) => res.json())
-      .then((data) => {
-        setSlots(data.slots || []);
-        setDurationMinutes(data.duration_minutes || 30);
+      .then((res) => readPatientResponse<{ slots?: string[]; duration_minutes?: number }>(res))
+      .then(({ data, error }) => {
+        // Un error no es "no hay horarios": se avisa para que intente de nuevo.
+        if (error) toast.error("No pudimos cargar los horarios de ese día. Intenta de nuevo.");
+        setSlots(data?.slots || []);
+        setDurationMinutes(data?.duration_minutes || 30);
       })
-      .catch(() => setSlots([]))
+      .catch(() => {
+        toast.error(CONNECTION_ERROR);
+        setSlots([]);
+      })
       .finally(() => setLoadingSlots(false));
   }, [selectedDate, session]);
 
@@ -127,9 +133,9 @@ export default function Reserva() {
         }),
       });
 
-      const data = await res.json();
-      if (data.error) {
-        toast.error(data.error);
+      const { data, error } = await readPatientResponse<{ manage_url: string; doctor_name: string; start_at: string; end_at: string }>(res);
+      if (error || !data) {
+        toast.error(error ?? CONNECTION_ERROR);
       } else {
         setBooked({
           manage_url: data.manage_url,
@@ -158,7 +164,9 @@ export default function Reserva() {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">
           <CardContent className="pt-6 text-center">
-            <p className="text-destructive font-medium">{error}</p>
+            <p className="font-semibold text-foreground">No pudimos abrir tu enlace de reserva</p>
+            <p className="mt-2 text-destructive">{error}</p>
+            <p className="mt-3 text-sm text-muted-foreground">{PATIENT_LINK_HELP}</p>
           </CardContent>
         </Card>
       </div>

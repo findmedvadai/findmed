@@ -25,6 +25,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import OfficeFormDialog from "./OfficeFormDialog";
 import OfficeCalendarConnector from "./OfficeCalendarConnector";
+import { userErrorMessage } from "@/lib/edge-function-error";
+import { LoadError } from "@/components/app/LoadError";
 
 interface OfficeRow {
   id: string;
@@ -63,10 +65,10 @@ export default function OfficeManager({ doctorId }: Props) {
 
   const officesKey = ["doctor-offices", doctorId];
 
-  const { data: offices = [], isLoading } = useQuery<OfficeRow[]>({
+  const { data: offices = [], isLoading, isError, isFetching, refetch } = useQuery<OfficeRow[]>({
     queryKey: officesKey,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("doctor_offices")
         .select(
           "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, google_calendar_connected, google_calendar_id, google_calendar_name, outlook_calendar_connected, outlook_calendar_id, outlook_calendar_name, is_active"
@@ -74,6 +76,8 @@ export default function OfficeManager({ doctorId }: Props) {
         .eq("doctor_id", doctorId)
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
+      // Un error no es "aún no tienes consultorios".
+      if (error) throw error;
       return (data ?? []) as OfficeRow[];
     },
     // Keep previous data while refetching. Without this, every invalidate
@@ -132,7 +136,7 @@ export default function OfficeManager({ doctorId }: Props) {
       queryClient.invalidateQueries({ queryKey: officesKey });
       toast.success("Consultorio actualizado");
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   const handleDeleteRequest = async (office: OfficeRow) => {
@@ -166,11 +170,15 @@ export default function OfficeManager({ doctorId }: Props) {
       );
       setConfirmDelete(null);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Cargando consultorios…</p>;
+  }
+
+  if (isError && offices.length === 0) {
+    return <LoadError what="la lista de consultorios" onRetry={() => refetch()} retrying={isFetching} />;
   }
 
   return (

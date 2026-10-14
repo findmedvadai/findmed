@@ -29,6 +29,7 @@ import { SoftBadge } from "@/components/app/StatusBadge";
 import { EmptyState } from "@/components/app/EmptyState";
 import { triageAdmin, type SpecialtyCoverage, type TriageCondition, type TriageMapping } from "@/lib/triage-admin";
 import { invalidateTriage, useSpecialtyCoverage } from "./queries";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 interface SpecialtyMapViewProps {
   mappings: TriageMapping[] | undefined;
@@ -63,7 +64,7 @@ export function SpecialtyMapView({ mappings, loading, conditions }: SpecialtyMap
       toast({ title: "Especialidad quitada del mapeo" });
       setToDelete(null);
     },
-    onError: (e: Error) => toast({ title: "No se eliminó", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "No se eliminó", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const rows = mappings ?? [];
@@ -228,7 +229,7 @@ function MappingDialog({ mapping, coverage, onClose }: { mapping: TriageMapping 
       toast({ title: creating ? "Especialidad agregada" : "Mapeo actualizado", description: res.warnings?.length ? res.warnings.join(" ") : "El agente ya usa este mapeo." });
       onClose();
     },
-    onError: (e: Error) => toast({ title: "No se guardó", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "No se guardó", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const canSave = form.especialidad.trim() && form.patient_label.trim() && !save.isPending;

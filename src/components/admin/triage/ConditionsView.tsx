@@ -44,6 +44,7 @@ import {
 } from "@/lib/triage-admin";
 import { ConditionSheet } from "./ConditionSheet";
 import { invalidateTriage } from "./queries";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 interface ConditionsViewProps {
   conditions: TriageCondition[] | undefined;
@@ -67,7 +68,7 @@ export function ConditionsView({ conditions, loading, mappings, vocabulary }: Co
   const set = <K extends keyof ConditionFilters>(k: K, v: ConditionFilters[K]) => setFilters((f) => ({ ...f, [k]: v }));
   const open = (condition: TriageCondition | null) => setSheet({ key: Date.now(), condition });
 
-  const onError = (e: Error) => toast({ title: "No se guardó", description: e.message, variant: "destructive" });
+  const onError = (e: Error) => toast({ title: "No se guardó", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" });
 
   const toggleActive = useMutation({
     mutationFn: (c: TriageCondition) =>

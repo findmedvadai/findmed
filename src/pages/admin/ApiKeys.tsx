@@ -3,7 +3,8 @@
 // llave completa se muestra una sola vez al crearla.
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -40,6 +41,7 @@ import { EmptyState } from "@/components/app/EmptyState";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { cn } from "@/lib/utils";
 import { secureRandomString } from "@/lib/secure-random";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 function generateApiKey(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789";
@@ -54,7 +56,7 @@ async function hashKey(key: string): Promise<string> {
     .join("");
 }
 
-const fmtDate = (iso: string) => format(parseISO(iso), "d MMM yyyy", { locale: es });
+const fmtDate = (iso: string) => formatMx(parseISO(iso), "d MMM yyyy", { locale: es });
 
 export default function ApiKeys() {
   return (
@@ -102,7 +104,7 @@ function ApiKeysContent() {
       toast({ title: "API Key creada" });
     },
     onError: (err: Error) =>
-      toast({ title: "Error", description: err.message, variant: "destructive" }),
+      toast({ title: "Error", description: userErrorMessage(err, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const toggleMut = useMutation({

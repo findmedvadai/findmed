@@ -1,5 +1,6 @@
 import { format, startOfWeek, endOfWeek } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
+import { es } from "date-fns/locale";
 
 export const MEXICO_TZ = "America/Mexico_City";
 
@@ -84,4 +85,19 @@ export function buildMexicoIso(dateYmd: string, timeHm: string): string {
 export function toUtcIso(raw: string): string {
   const trimmed = raw.replace(/\.\d+$/, "");
   return /[Z+-]\d{2}:?\d{2}?$/.test(trimmed) ? trimmed : trimmed + "Z";
+}
+
+/**
+ * Etiqueta de día para listas agrupadas (notificaciones): "Hoy", "Ayer" o
+ * "Miércoles 14 de octubre", siempre con el día de CDMX (no el del navegador).
+ */
+export function mexicoDayLabel(date: Date, now: Date = new Date()): string {
+  const ymd = formatMx(date, "yyyy-MM-dd");
+  const today = mexicoTodayYmd(now);
+  // CDMX no tiene horario de verano: un día = 24 h.
+  const yesterday = formatMx(new Date(now.getTime() - 86_400_000), "yyyy-MM-dd");
+  if (ymd === today) return "Hoy";
+  if (ymd === yesterday) return "Ayer";
+  const s = formatMx(date, ymd.slice(0, 4) === today.slice(0, 4) ? "EEEE d 'de' MMMM" : "EEEE d 'de' MMMM yyyy", { locale: es });
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

@@ -25,6 +25,7 @@ import {
   type ManagementType,
 } from "@/lib/management-type";
 import { CalendarDays, CheckCircle2, Phone, Send, Pill, ScanLine, FlaskConical, UserRoundPlus, Building2 } from "lucide-react";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 const TOGGLE_FIELDS = [
   { key: "prescribed_medications", label: "Se recetaron medicamentos", placeholder: "Nombres, dosis y frecuencia...", icon: Pill },
@@ -328,7 +329,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
       onSaved();
     },
     onError: (err: Error) =>
-      toast({ title: "Error", description: err.message, variant: "destructive" }),
+      toast({ title: "Error", description: userErrorMessage(err, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const activeCount = TOGGLE_FIELDS.filter((f) => toggles[f.key]).length;

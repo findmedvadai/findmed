@@ -413,6 +413,7 @@ export type Database = {
           google_calendar_name: string | null
           google_connected_at: string | null
           google_refresh_token_ref: string | null
+          google_token_stored: boolean
           id: string
           is_active: boolean
           is_deleted: boolean
@@ -422,6 +423,7 @@ export type Database = {
           outlook_calendar_name: string | null
           outlook_connected_at: string | null
           outlook_refresh_token_ref: string | null
+          outlook_token_stored: boolean
           updated_at: string
           zone_id: string | null
         }
@@ -1006,17 +1008,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "message_deliveries_staff_recipient_id_fkey"
-            columns: ["staff_recipient_id"]
-            isOneToOne: false
-            referencedRelation: "staff_alert_recipients"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "message_deliveries_outbox_id_fkey"
             columns: ["outbox_id"]
             isOneToOne: false
             referencedRelation: "domain_outbox"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_deliveries_staff_recipient_id_fkey"
+            columns: ["staff_recipient_id"]
+            isOneToOne: false
+            referencedRelation: "staff_alert_recipients"
             referencedColumns: ["id"]
           },
         ]
@@ -1746,7 +1748,9 @@ export type Database = {
           extra: Json | null
           id: number
           imported_at: string
+          is_active: boolean
           keywords: string[]
+          notas: string | null
           origen: string | null
           padecimiento: string | null
           pregunta_diferencial: string | null
@@ -1756,11 +1760,9 @@ export type Database = {
           semaforo: string | null
           si_esto_aparece_subir_a_urgencias: string | null
           source: string
-          validado: boolean
-          is_active: boolean
-          notas: string | null
           updated_at: string
           updated_by: string | null
+          validado: boolean
           validated_at: string | null
           validated_by: string | null
           validated_by_email: string | null
@@ -1771,7 +1773,9 @@ export type Database = {
           extra?: Json | null
           id?: never
           imported_at?: string
+          is_active?: boolean
           keywords?: string[]
+          notas?: string | null
           origen?: string | null
           padecimiento?: string | null
           pregunta_diferencial?: string | null
@@ -1781,11 +1785,9 @@ export type Database = {
           semaforo?: string | null
           si_esto_aparece_subir_a_urgencias?: string | null
           source?: string
-          validado?: boolean
-          is_active?: boolean
-          notas?: string | null
           updated_at?: string
           updated_by?: string | null
+          validado?: boolean
           validated_at?: string | null
           validated_by?: string | null
           validated_by_email?: string | null
@@ -1796,7 +1798,9 @@ export type Database = {
           extra?: Json | null
           id?: never
           imported_at?: string
+          is_active?: boolean
           keywords?: string[]
+          notas?: string | null
           origen?: string | null
           padecimiento?: string | null
           pregunta_diferencial?: string | null
@@ -1806,11 +1810,9 @@ export type Database = {
           semaforo?: string | null
           si_esto_aparece_subir_a_urgencias?: string | null
           source?: string
-          validado?: boolean
-          is_active?: boolean
-          notas?: string | null
           updated_at?: string
           updated_by?: string | null
+          validado?: boolean
           validated_at?: string | null
           validated_by?: string | null
           validated_by_email?: string | null
@@ -2091,10 +2093,10 @@ export type Database = {
         | "postconsultation_submitted"
         | "appointment_rescheduled"
         | "appointment_cancelled_by_admin"
-        | "documents_received"
         | "case_opened"
         | "case_handoff"
         | "case_overdue"
+        | "documents_received"
       post_consultation_status: "pending" | "read" | "report_sent"
     }
     CompositeTypes: {
@@ -2236,10 +2238,10 @@ export const Constants = {
         "postconsultation_submitted",
         "appointment_rescheduled",
         "appointment_cancelled_by_admin",
-        "documents_received",
         "case_opened",
         "case_handoff",
         "case_overdue",
+        "documents_received",
       ],
       post_consultation_status: ["pending", "read", "report_sent"],
     },

@@ -6,7 +6,9 @@
 import { useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { format, formatDistanceToNow, parseISO } from "date-fns";
+import { formatDistanceToNow, parseISO } from "date-fns";
+import { formatMx, MEXICO_TZ } from "@/lib/timezone";
+import { fromZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
@@ -130,7 +132,7 @@ function shortAgo(iso: string) {
   if (hours < 24) return `hace ${hours} h`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `hace ${days} d`;
-  return format(parseISO(iso), "d MMM", { locale: es });
+  return formatMx(parseISO(iso), "d MMM", { locale: es });
 }
 
 const caseLocation = (c: PatientCase) => (c.city ? `${c.city}${c.zone ? `, ${c.zone}` : ""}` : null);
@@ -459,7 +461,7 @@ function CaseRow({
       </TableCell>
       <TableCell
         className="whitespace-nowrap py-2.5 text-right text-xs text-muted-foreground"
-        title={format(parseISO(c.created_at), "d MMM yyyy, HH:mm", { locale: es })}
+        title={formatMx(parseISO(c.created_at), "d MMM yyyy, HH:mm", { locale: es })}
       >
         {sla ? (
           <div className="flex flex-col items-end gap-1">
@@ -498,7 +500,7 @@ function eventDot(type: string) {
   return "bg-muted-foreground/40";
 }
 
-function CaseSheet({
+export function CaseSheet({
   caseRow,
   staff,
   me,
@@ -524,7 +526,7 @@ function CaseSheet({
   if (caseRow && loadedFor !== caseRow.id) {
     setLoadedFor(caseRow.id);
     setNextAction(caseRow.next_action ?? "");
-    setDueAt(caseRow.due_at ? format(parseISO(caseRow.due_at), "yyyy-MM-dd'T'HH:mm") : "");
+    setDueAt(caseRow.due_at ? formatMx(parseISO(caseRow.due_at), "yyyy-MM-dd'T'HH:mm") : "");
     setNote("");
     setReason("");
     setResumeAi(true);
@@ -595,7 +597,7 @@ function CaseSheet({
           <div className="space-y-0.5">
             <SheetTitle className="text-base font-semibold leading-tight">{caseRow.contact_name ?? "Sin nombre"}</SheetTitle>
             <SheetDescription className="text-xs">
-              Abierto {ago(caseRow.created_at)} · {format(parseISO(caseRow.created_at), "d MMM yyyy, HH:mm", { locale: es })}
+              Abierto {ago(caseRow.created_at)} · {formatMx(parseISO(caseRow.created_at), "d MMM yyyy, HH:mm", { locale: es })}
             </SheetDescription>
             {sla && (
               <p className={cn("text-xs", sla.state === "overdue" ? "font-medium text-destructive" : "text-muted-foreground")}>
@@ -632,11 +634,17 @@ function CaseSheet({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="awaiting_assignment">Sin asignar</SelectItem>
-                <SelectItem value="assigned">Asignado</SelectItem>
-                <SelectItem value="awaiting_patient">Esperando al paciente</SelectItem>
-                <SelectItem value="awaiting_provider">Esperando al proveedor</SelectItem>
+                {/* case-actions exige que alguien tome el caso antes (409 take_first). */}
+                <SelectItem value="assigned" disabled={!caseRow.assigned_user_id}>Asignado</SelectItem>
+                <SelectItem value="awaiting_patient" disabled={!caseRow.assigned_user_id}>Esperando al paciente</SelectItem>
+                <SelectItem value="awaiting_provider" disabled={!caseRow.assigned_user_id}>Esperando al proveedor</SelectItem>
               </SelectContent>
             </Select>
+            {!caseRow.assigned_user_id && (
+              <p className="w-full text-xs text-muted-foreground sm:text-right">
+                Toma el caso para cambiarlo a «Asignado» o «Esperando…».
+              </p>
+            )}
           </div>
         )}
 
@@ -725,7 +733,8 @@ function CaseSheet({
                         action.mutate({
                           action: "update",
                           next_action: nextAction.trim() || null,
-                          due_at: dueAt ? new Date(dueAt).toISOString() : null,
+                          // "Vence" se captura y se muestra en hora de CDMX.
+                          due_at: dueAt ? fromZonedTime(dueAt, MEXICO_TZ).toISOString() : null,
                         })}
                     >
                       Guardar seguimiento
@@ -814,7 +823,7 @@ function CaseSheet({
                           {e.actor_user_id && <span className="font-normal text-muted-foreground"> · {e.actor_user_id === me ? "tú" : staff[e.actor_user_id] ?? "equipo"}</span>}
                         </p>
                         {text && <p className="mt-1 whitespace-pre-wrap rounded-md bg-muted/60 px-2.5 py-1.5 text-sm text-foreground">{text}</p>}
-                        <p className="mt-0.5 text-xs text-muted-foreground">{format(parseISO(e.created_at), "d MMM yyyy, HH:mm", { locale: es })}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{formatMx(parseISO(e.created_at), "d MMM yyyy, HH:mm", { locale: es })}</p>
                       </div>
                     </li>
                   );

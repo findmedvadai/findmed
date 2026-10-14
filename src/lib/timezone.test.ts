@@ -4,6 +4,7 @@ import {
   formatMx,
   isBeforeMexicoToday,
   mexicoTodayPickerDate,
+  mexicoDayLabel,
   mexicoTodayYmd,
   pickerDateToYmd,
 } from "./timezone";
@@ -53,6 +54,15 @@ describe("isBeforeMexicoToday", () => {
     expect(isBeforeMexicoToday(new Date(2026, 9, 14), now)).toBe(true);
   });
 
+  // QA 2026-10-14: las notificaciones del admin/doctor se agrupaban por el día
+  // del navegador ("Ayer" a las 22:20 CDMX visto desde Madrid era "Hoy").
+  it("agrupa notificaciones por el día de CDMX", () => {
+    const now = new Date("2026-10-14T16:20:00Z"); // 10:20 del 14 en CDMX
+    expect(mexicoDayLabel(new Date("2026-10-14T04:20:00Z"), now)).toBe("Ayer"); // 22:20 del 13 en CDMX
+    expect(mexicoDayLabel(new Date("2026-10-14T07:00:00Z"), now)).toBe("Hoy"); // 01:00 del 14 en CDMX
+    expect(mexicoDayLabel(new Date("2026-10-12T18:00:00Z"), now)).toBe("Lunes 12 de octubre");
+  });
+
   it("bloquea ayer en CDMX aunque en el navegador (p. ej. Hawái) aún sea ese día", () => {
     // 02:00 del 16 en CDMX; en Hawái (UTC-10) siguen siendo las 22:00 del 15.
     const late = new Date("2026-10-16T08:00:00Z");
@@ -95,5 +105,14 @@ describe.each(["Europe/Madrid", "Pacific/Honolulu", "Asia/Tokyo"])("navegador en
     expect(isBeforeMexicoToday(picked15, now)).toBe(false);
     expect(pickerDateToYmd(picked15)).toBe("2026-10-15");
     expect(isBeforeMexicoToday(new Date(2026, 9, 14), now)).toBe(true);
+  });
+
+  // QA 2026-10-14: las notificaciones del admin/doctor se agrupaban por el día
+  // del navegador ("Ayer" a las 22:20 CDMX visto desde Madrid era "Hoy").
+  it("agrupa notificaciones por el día de CDMX", () => {
+    const now = new Date("2026-10-14T16:20:00Z"); // 10:20 del 14 en CDMX
+    expect(mexicoDayLabel(new Date("2026-10-14T04:20:00Z"), now)).toBe("Ayer"); // 22:20 del 13 en CDMX
+    expect(mexicoDayLabel(new Date("2026-10-14T07:00:00Z"), now)).toBe("Hoy"); // 01:00 del 14 en CDMX
+    expect(mexicoDayLabel(new Date("2026-10-12T18:00:00Z"), now)).toBe("Lunes 12 de octubre");
   });
 });

@@ -39,6 +39,9 @@ import { buildMexicoIso, formatMx } from "@/lib/timezone";
 import { weekdayLabel } from "@/lib/availability-check";
 import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import PatientAutocomplete, { type PatientLookupResult } from "./PatientAutocomplete";
+import { userErrorMessage } from "@/lib/edge-function-error";
+
+const NO_OFFICES: OfficeOption[] = [];
 
 interface Props {
   open: boolean;
@@ -134,7 +137,7 @@ export default function CreateAppointmentDialog({
   });
 
   // Active offices for the selected doctor.
-  const { data: offices = [] } = useQuery<OfficeOption[]>({
+  const { data: officesData } = useQuery<OfficeOption[]>({
     queryKey: ["admin-create-appt-offices", doctorId],
     queryFn: async () => {
       if (!doctorId) return [];
@@ -150,13 +153,18 @@ export default function CreateAppointmentDialog({
     enabled: !!doctorId,
   });
 
+  const offices = officesData ?? NO_OFFICES;
+
   // Auto-pick when the doctor has exactly one active office.
   useEffect(() => {
+    // Esperar la lista real: mientras carga, la lista vacía borraba el consultorio
+    // preseleccionado (filtro de la agenda) antes de que llegaran los datos.
+    if (!officesData) return;
     if (!officeId && offices.length === 1) setOfficeId(offices[0].id);
     // If the current office is no longer in the list (e.g. doctor changed),
     // clear the selection.
     if (officeId && !offices.find((o) => o.id === officeId)) setOfficeId("");
-  }, [offices, officeId]);
+  }, [officesData, offices, officeId]);
 
   // Sync duration with the SELECTED OFFICE (was doctor-level pre-mejora-2).
   useEffect(() => {
@@ -252,7 +260,7 @@ export default function CreateAppointmentDialog({
     onError: (err: Error) => {
       // Silenced sentinel: outside-availability is handled by AlertDialog.
       if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
-      toast.error(err.message);
+      toast.error(userErrorMessage(err, "No se pudo completar la acción."));
     },
   });
 
@@ -284,7 +292,7 @@ export default function CreateAppointmentDialog({
       setAvailabilityWarning(null);
       onClose();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   const onSelectPatient = (p: PatientLookupResult) => {

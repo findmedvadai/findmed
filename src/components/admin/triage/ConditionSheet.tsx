@@ -37,6 +37,7 @@ import {
 } from "@/lib/triage-admin";
 import { KeywordPicker } from "./KeywordPicker";
 import { invalidateTriage, useConditionHistory } from "./queries";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 interface ConditionSheetProps {
   open: boolean;
@@ -84,7 +85,7 @@ export function ConditionSheet({ open, onOpenChange, condition, mappings, vocabu
     onError: (e: Error) => {
       if (e instanceof TriageAdminError && e.problems.length) setServerProblems(e.problems);
       if (e instanceof TriageAdminError && e.code === "concurrent_change") invalidateTriage(qc);
-      toast({ title: "No se guardó", description: e.message, variant: "destructive" });
+      toast({ title: "No se guardó", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" });
     },
   });
 

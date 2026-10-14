@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 interface OfficeRow {
   id: string;
@@ -158,7 +159,7 @@ export default function OfficeFormDialog({ open, onClose, doctorId, office, onSa
       onSaved();
       onClose();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   const errors: Record<string, string> = {};

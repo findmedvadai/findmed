@@ -21,8 +21,15 @@ export interface EdgeFunctionError {
  * un error capturado del SDK de Supabase. Maneja tanto FunctionsHttpError
  * (con context: Response) como errores genéricos.
  */
+/** Caída de red o función inalcanzable (supabase-js: FunctionsFetchError; fetch: TypeError). */
+const NETWORK_ERROR = /Failed to send a request|Failed to fetch|NetworkError|Load failed|network request failed/i;
+
 export async function extractEdgeFunctionError(err: unknown): Promise<EdgeFunctionError> {
-  const e = err as { message?: string; context?: Response };
+  const e = err as { message?: string; name?: string; context?: Response };
+  if (e?.name === "FunctionsFetchError" || (e?.message && NETWORK_ERROR.test(e.message))) {
+    // El mensaje del SDK está en inglés: se traduce con el código network_error.
+    return { code: "network_error", message: null, status: null };
+  }
   const ctx = e?.context;
   if (ctx && typeof ctx.clone === "function") {
     try {
@@ -117,4 +124,28 @@ export function toastFromEdgeFunctionError(
       ? "Ocurrió un error inesperado. Intenta de nuevo en unos segundos."
       : err.message,
   };
+}
+
+/** Mensajes técnicos (en inglés) de Postgres, PostgREST, el SDK o JavaScript. */
+const TECHNICAL_ERROR =
+  /non-2xx|violates|duplicate key|permission denied|row-level security|JSON|Unexpected token|syntax error|null value|invalid input|does not exist|PGRST|TypeError|undefined is not|Cannot read|is not a function/i;
+
+/**
+ * Texto para el usuario a partir de cualquier error de una acción (escritura
+ * directa por RLS, `fetch` a una Edge Function o error de la Edge Function).
+ * - Los mensajes en español (guardas de la base como SQLSTATE 42501, o el
+ *   `error`/`message` que devuelven las funciones) se muestran tal cual.
+ * - La caída de red se explica; duplicados y dependencias tienen su texto.
+ * - Cualquier mensaje técnico en inglés se reemplaza por `fallback`.
+ */
+export function userErrorMessage(err: unknown, fallback: string): string {
+  const e = err as { code?: string; message?: string; name?: string } | null;
+  const message = (e?.message ?? "").trim();
+  if (e?.name === "FunctionsFetchError" || NETWORK_ERROR.test(message)) {
+    return `${fallback} Verifica tu conexión a internet y vuelve a intentar.`;
+  }
+  if (e?.code === "23505") return "Ya existe un registro con esos datos.";
+  if (e?.code === "23503") return "No se puede: hay otros registros que dependen de este.";
+  if (!message || e?.name === "SyntaxError" || TECHNICAL_ERROR.test(message)) return fallback;
+  return message;
 }

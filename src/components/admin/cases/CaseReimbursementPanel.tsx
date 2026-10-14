@@ -5,7 +5,8 @@
 // Escrituras vía case-actions; lectura por RLS (solo admins).
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { Pencil, Plus, Receipt } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,7 +46,7 @@ import {
 
 const CURRENCIES = ["MXN", "USD"];
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
-const day = (iso: string) => format(parseISO(iso), "d MMM yyyy", { locale: es });
+const day = (iso: string) => formatMx(parseISO(iso), "d MMM yyyy", { locale: es });
 
 interface Props {
   caseRow: PatientCase;

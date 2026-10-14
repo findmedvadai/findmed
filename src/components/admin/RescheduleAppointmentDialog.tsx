@@ -30,6 +30,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
 import { weekdayLabel } from "@/lib/availability-check";
 import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 interface Props {
   open: boolean;
@@ -147,7 +148,7 @@ export default function RescheduleAppointmentDialog({
     },
     onError: (err: Error) => {
       if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
-      toast.error(err.message);
+      toast.error(userErrorMessage(err, "No se pudo reagendar la cita."));
     },
   });
 
@@ -172,7 +173,7 @@ export default function RescheduleAppointmentDialog({
       onRescheduled?.();
       onClose();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo reagendar la cita.")),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

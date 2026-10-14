@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { addHours, format, startOfDay, addDays, subDays } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import {
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/app/PageHeader";
+import { LoadError } from "@/components/app/LoadError";
 import { StatCard, type Tone } from "@/components/app/StatCard";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -288,7 +290,7 @@ function BrowserAlertsReminder() {
 
 export default function Inicio() {
   const now = new Date();
-  const { data: o, isLoading } = useOverview();
+  const { data: o, isLoading, isError, isFetching, refetch } = useOverview();
   const { data: health, isError: healthError } = useQuery({
     queryKey: ["integration-health"],
     queryFn: () => messagingAdmin<IntegrationHealth>({ action: "health" }),
@@ -300,16 +302,30 @@ export default function Inicio() {
   const pending = o ? buildPending(o, slaSettings, now.getTime()) : [];
   const whaapyOk = health?.whaapy_api.ok === true;
 
+  const header = (
+    <PageHeader
+      title={`${greeting(now)} 👋`}
+      description={`${format(toZonedTime(now, TZ), "EEEE d 'de' MMMM", { locale: es })} · lo de hoy y lo que falta resolver.`}
+    />
+  );
+
+  // Sin datos y con error: decirlo (antes quedaban skeletons para siempre).
+  if (isError && !o) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <LoadError what="el resumen del día" onRetry={() => refetch()} retrying={isFetching} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={`${greeting(now)} 👋`}
-        description={`${format(toZonedTime(now, TZ), "EEEE d 'de' MMMM", { locale: es })} · lo de hoy y lo que falta resolver.`}
-      />
+      {header}
 
       <BrowserAlertsReminder />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {isLoading || !o ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[84px] rounded-lg" />)
         ) : (
@@ -322,7 +338,7 @@ export default function Inicio() {
         )}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
             <CardTitle className="text-sm font-semibold">Por resolver</CardTitle>
@@ -387,7 +403,7 @@ export default function Inicio() {
               to="/admin/configuracion/agente-ia"
               status={!o ? "…" : o.agentErrors ? `${plural(o.agentErrors, "error", "errores")} en 24 h` : o.lastAgentRequestAt ? "Activo" : "Sin actividad"}
               tone={!o ? "neutral" : o.agentErrors ? "warning" : o.lastAgentRequestAt ? "success" : "neutral"}
-              detail={o?.lastAgentRequestAt ? `Última actividad ${format(new Date(o.lastAgentRequestAt), "d MMM, HH:mm", { locale: es })}` : undefined}
+              detail={o?.lastAgentRequestAt ? `Última actividad ${formatMx(new Date(o.lastAgentRequestAt), "d MMM, HH:mm", { locale: es })}` : undefined}
             />
             <ConnectionRow
               icon={Workflow}

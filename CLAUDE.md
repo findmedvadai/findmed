@@ -30,7 +30,7 @@ Guía de contexto para Claude Code al trabajar en este repositorio. Todo lo aqu�
 | Notificaciones UI | `sonner` (toasts) + `@/components/ui/toaster` (shadcn) |
 | Backend | [Supabase](src/integrations/supabase/client.ts): Postgres + Auth + Row Level Security + Edge Functions (Deno) + Realtime |
 | Auth | Supabase Auth con email/password, persistencia en `localStorage` |
-| Hosting | **Vercel** (producción). El proyecto migró de Lovable al proyecto Supabase `jyzvdowflblxmlahlupo`. El `APP_URL` en producción es la URL de Vercel; en desarrollo local es `http://localhost:5173`. Actualizar la env var `APP_URL` en Supabase al hacer cada deploy. |
+| Hosting | **Vercel** (producción). El proyecto migró de Lovable al proyecto Supabase `jyzvdowflblxmlahlupo`. El `APP_URL` en producción es la URL de Vercel; en desarrollo local, el dev server de Vite corre en `http://localhost:8080` (ver `server.port` en [vite.config.ts](vite.config.ts)). Actualizar la env var `APP_URL` en Supabase al hacer cada deploy. |
 | Testing | `vitest` + `@testing-library/react` + `jsdom` |
 | APIs externas | Google Calendar API, Microsoft Graph (Outlook Calendar), webhooks firmados con HMAC‑SHA‑256 para WhatsApp/n8n |
 
@@ -41,7 +41,7 @@ Guía de contexto para Claude Code al trabajar en este repositorio. Todo lo aqu�
 ```
 findmed/
 ├── src/
-│   ├── App.tsx                     # Rutas principales + providers globales
+│   ├── App.tsx                     # Rutas principales + providers globales. Code-splitting por ruta: Landing/Login/NotFound van en el bundle principal; layouts y páginas con `lazyWithReload` (src/lib/lazy-with-reload.ts) + `Suspense` ("Cargando…")
 │   ├── main.tsx                    # Entry point (createRoot)
 │   ├── index.css                   # Tokens de diseño (CSS variables HSL)
 │   ├── content/
@@ -51,12 +51,14 @@ findmed/
 │   │   ├── Footer.tsx              # Footer global público con links a /privacidad y /terminos
 │   │   ├── LegalDocument.tsx       # Renderer de docs legales (react-markdown + remark-gfm) para rutas públicas
 │   │   ├── ProtectedRoute.tsx      # HOC: gate por rol, redirige a login o al home del rol
-│   │   ├── admin/                  # Diálogos específicos del admin (AppointmentDetailDialog, PasswordGate, PostConsultationDetailDialog, SendReportModal)
-│   │   ├── doctor/                 # Diálogos del doctor (AppointmentDetailDialog, CreateEventDialog, DayHeaderPopover, DoctorProfileCard)
-│   │   ├── layouts/                # AdminLayout, DoctorLayout (sidebar + Outlet)
+│   │   ├── admin/                  # Diálogos del admin (AppointmentDetailDialog, Create/RescheduleAppointmentDialog, PatientAutocomplete, PasswordGate, PostConsultationDetailDialog, SendReportModal, MessageStepDialog, CoordinateFields, ExternalEventDetailDialog) + cases/ (Casos) + triage/ (Catálogos → Triaje)
+│   │   ├── app/                    # Piezas compartidas del panel (PageHeader, FilterBar, StatCard, EmptyState, StatusBadge, PatientInsurance)
+│   │   ├── doctor/                 # Diálogos del doctor (AppointmentDetailDialog, CreateEventDialog, DoctorCreateAppointmentDialog, DayHeaderPopover, DoctorProfileCard)
+│   │   ├── layouts/                # AppShell (barra lateral + engrane), AdminLayout, DoctorLayout (+ Outlet)
 │   │   └── ui/                     # Componentes shadcn/ui generados (accordion, button, dialog, table, sidebar, …)
 │   ├── hooks/
 │   │   ├── useAuth.tsx             # AuthProvider + useAuth() — expone user, session, role, doctorId, signOut
+│   │   ├── useCaseAlertListener.ts / useBrowserAlerts.ts / useStaffAlertSettings.ts  # Alertas de casos en el panel
 │   │   ├── use-mobile.tsx
 │   │   └── use-toast.ts
 │   ├── integrations/supabase/
@@ -64,20 +66,30 @@ findmed/
 │   │   └── types.ts                # Tipos generados automáticamente (Database, enums, tables)
 │   ├── lib/
 │   │   ├── utils.ts                # cn() = clsx + tailwind-merge
+│   │   ├── timezone.ts             # Fechas de negocio en hora CDMX (formatMx, "hoy" de México para calendarios)
+│   │   ├── edge-function-error.ts  # extractEdgeFunctionError / toast amable para errores de EFs
+│   │   ├── admin-appointment-queries.ts  # invalidateAdminAppointmentViews (todas las vistas de citas)
+│   │   ├── lazy-with-reload.ts     # React.lazy que recarga una vez si el chunk ya no existe tras un deploy
+│   │   ├── *-labels.ts, plural.ts  # Etiquetas en español (casos, mensajes, calendario) y plurales
+│   │   ├── case-*.ts, staff-alerts.ts, messaging-admin.ts, triage-admin.ts  # Clientes/reglas de Casos, Alertas, Automatización y Triaje
 │   │   └── specialty-colors.ts     # Paleta de colores para especialidades
 │   ├── pages/
 │   │   ├── Landing.tsx             # Landing pública en la raíz "/" (sin login). Homepage para verificación OAuth de Google.
 │   │   ├── Login.tsx               # Punto de entrada de doctores/admins en "/login"
 │   │   ├── NotFound.tsx            # Catch-all 404 (en español); su CTA lleva a la landing "/"
 │   │   ├── GoogleCalendarSuccess.tsx / OutlookCalendarSuccess.tsx  # Popups de OAuth
-│   │   ├── admin/                  # Calendario, Reservas, Doctores, Catalogos, Inbox, Webhooks, ApiKeys
-│   │   ├── doctor/                 # Agenda, Configuracion, PorCompletar, DoctorInbox
+│   │   ├── admin/                  # Módulos: Inicio, Agenda (embebe Calendario y Reservas), Doctores, Casos, WhatsApp, Automatizacion; Configuracion (pestañas AgenteIA, Alertas, Catalogos, Webhooks, ApiKeys); Inbox embebido en Inicio
+│   │   ├── doctor/                 # Inicio (embebe DoctorInbox), Agenda, PorCompletar, Configuracion
 │   │   ├── patient/                # Reserva, Gestionar (acceso por token, sin login)
 │   │   └── legal/                  # Privacidad, Terminos (rutas públicas /privacidad y /terminos, sin login)
-│   └── test/                       # Setup de vitest
+│   └── test/                       # Setup de vitest + prueba de humo de rutas (app-routes.test.tsx)
 ├── supabase/
+│   ├── config.toml                 # project_id + `verify_jwt` declarado para CADA función (debe coincidir con `functions list`)
 │   ├── functions/                  # Edge Functions (Deno) — ver sección 7
-│   └── migrations/                 # SQL migrations versionadas por timestamp
+│   ├── migrations/                 # SQL migrations versionadas por timestamp
+│   └── tests/                      # Pruebas Deno (`npm run test:edge`), incluidas migraciones en PGlite
+├── scripts/                        # sb.sh (CLI de Supabase con el token de .env.local), import-triage.mjs, n8n-inventory.mjs
+├── docs/findmed-migration/         # Estado de ejecución, decisiones, hallazgos, cobertura y pruebas de la migración n8n → WHAAPY
 ├── public/                         # Estáticos (favicon, og-image, robots.txt)
 ├── .env                            # Variables VITE_* (cliente)
 ├── components.json                 # Config shadcn/ui
@@ -199,6 +211,7 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 | `case_events` | **B6.** Historial interno append-only de cada caso (quién, qué, resultado del proveedor). Nunca se muestra al paciente. |
 | `case_alerts` / `staff_alert_recipients` / `staff_alert_settings` | **Alertas al equipo** (migración `20261014110000`). `case_alerts`: una fila por alerta (caso, `opened`/`handoff`/`overdue`, nivel) — compuerta de idempotencia (`dedupe_key`) y cola de WhatsApp (`claim_case_alerts`). `staff_alert_recipients`: números de guardia (teléfono canónico, `all`/`urgent_only`). `staff_alert_settings` (una fila): SLA por prioridad (10/30/120 min), re-avisos máximos (3), WhatsApp on/off y plantilla (`alerta_caso_findmed_utility` en producción; el default del código es `alerta_caso_findmed`). `patient_cases.last_alert_at`/`alert_level` guardan el escalamiento. RLS: SELECT admins; escrituras solo Edge Functions. |
 | `operation_requests` / `whaapy_events` | Acciones preparadas idempotentes (confirmar/cancelar) y eventos recibidos de WHAAPY (retención 12 meses). Ver `docs/findmed-migration/`. |
+| `mcp_requests` | Bitácora de cada petición del agente a `findmed-mcp` (tipo, tool, argumentos, resultado, error, duración, `trace_id`); alimenta Configuración → Agente IA. Contiene datos de pacientes. Escribe solo la EF (`findmed-mcp/recorder.ts`); RLS: SELECT admins; purga a 12 meses por cron (`purge-mcp-requests`). Migración `20261013150000`. |
 | `triage_findmed` / `triage_specialty_map` | Catálogo de triaje que usa `suggest_specialty` (`_shared/triage.ts`): una fila por condición (especialidad, `padecimiento` interno, `semaforo`, `primera_parada`, `keywords`/`requiere_todos`/`requiere_alguno` del vocabulario cerrado `KEYWORDS`, señales de alarma, pregunta diferencial, acción operativa, `notas`, `origen`) y el mapeo especialidad → etiqueta para el paciente + especialidades de búsqueda en orden. Migración `20261014150000`: `is_active` (el motor ignora las inactivas), `validado` + `validated_by`/`validated_by_email`/`validated_at`, `updated_at`/`updated_by` (control de concurrencia). Se edita desde Catálogos → Triaje vía `triage-admin`; el contenido clínico **no** se versiona (repo público; respaldo en `triage.local/`). `scripts/import-triage.mjs` reemplaza la tabla completa (borra cambios del panel): solo para recargas acordadas. RLS: SELECT admins. |
 | `triage_changes` | Bitácora append-only de cambios al catálogo de triaje: `entity` (`condition`/`specialty_map`), `action`, `condition_id` (sin FK, sobrevive al borrado), `especialidad`, `actor_user_id`/`actor_email`, `before`/`after` jsonb. La escribe solo `triage-admin`; se muestra en el detalle de cada condición. RLS: SELECT admins. Nunca se borra. |
 | `message_routes` / `message_route_steps` | **B7.** Dueño de cada evento (`n8n` default, `findmed`, `none`) y plantillas que envía cada evento, en orden, con sus variables y botones. Editables desde `/admin/mensajeria`. |
@@ -243,6 +256,7 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `update-appointment-status` | Endpoint con API key para cambiar estado (p. ej. confirmaciones/cancelaciones por WhatsApp). |
 | `generate-manage-link` | Genera/reusa un token para enviar al paciente el link `/gestionar`. Requiere API key `fm_` o service key. |
 | `create-doctor` | Admin crea usuario auth + fila en `doctors` + `users` + `doctor_schedule_settings`. |
+| `update-doctor-credentials` | Admin cambia correo y/o contraseña de un doctor: actualiza `public.users` y `auth.users` juntos y revierte `public.users` si Auth falla (ERRORES.md 2026-05-01). `verify_jwt = true`. |
 | `search-doctors` | Endpoint público con API key para buscar doctores (usado por el triaje externo). |
 
 ### Gestión de citas por admin (Mejora 1)
@@ -281,9 +295,12 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `supabase-keys.ts` | `getServiceKey()` / `getPublishableKey()` — **único** lugar que lee las llaves. Prefiere las nuevas (`SUPABASE_SECRET_KEYS` / `SUPABASE_PUBLISHABLE_KEYS`, diccionarios JSON inyectados por el runtime) y cae a las legacy (`SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`) solo mientras existan. Nunca hacer `Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")` en una función. |
 | `mx-time.ts` | Hora de pared CDMX ↔ instantes: `mxLocalToMs(date, "HH:mm")`, `msToMxIso(ms)` (maneja el cruce de medianoche), `mxDayBoundsMs(date)`, `mxToday()`, `isValidLocalDate/Time`. Toda comparación de horarios se hace en epoch ms, nunca por "minutos del día" ni con strings `-06:00` armados a mano. |
 | `phone.ts` | `normalizeMxPhone` (canonicaliza `+52XXXXXXXXXX`) y `mxPhoneLookupVariants` (variantes para lookup). |
-| `manage-token.ts` | `createManageToken` — genera token + URL `/gestionar` e inserta en `appointment_manage_tokens`. |
+| `manage-token.ts` | `createManageToken` — genera token + URL `/gestionar` e inserta en `appointment_manage_tokens`. `repointManageTokens` mueve todos los enlaces de una cita a otra (compare-and-swap): es el "claim" de `manage-reschedule` contra doble clic. |
+| `staff-reschedule.ts` | `moveAppointment` — único UPDATE de reagenda de staff (admin/doctor): solo `scheduled`/`confirmed`, guarda de estado, limpia marcadores de recordatorio, `scheduled` a < 48 h → `confirmed`, extiende los enlaces vigentes. |
+| `reminders.ts` | `releaseReminderClaim` — libera el marcador de un cron de recordatorio si el despacho falló (el outbox deduplica el reintento). |
+| `http-timeout.ts` | `externalTimeout()` (10 s) — `signal` obligatorio en toda llamada a Google, Microsoft u OAuth. |
 | `slot-validation.ts` | `validateSlotAvailable` — verifica que un slot no colisione con citas existentes en el mismo office. |
-| `calendar-busy.ts` | Lectura de ocupación de Google/Outlook para disponibilidad: pagina (`nextPageToken` / `@odata.nextLink`, hasta 10 páginas), bloquea el día CDMX completo con eventos de todo el día, ignora eventos libres/cancelados/rechazados y devuelve "no verificado" si el proveedor falla. Lo usan `day-slots` y `slot-validation`. |
+| `calendar-busy.ts` | Lectura de ocupación de Google/Outlook para disponibilidad: pagina (`nextPageToken` / `@odata.nextLink`, hasta 10 páginas), bloquea el día CDMX completo con eventos de todo el día, ignora eventos libres/cancelados/rechazados y devuelve "no verificado" si el proveedor falla. `withoutFindMedEvents` descarta los eventos que son citas de FindMed (cualquier estado): las vivas ya bloquean desde `appointments` y las canceladas no deben bloquear. Lo usan `day-slots` y `slot-validation`. |
 | `oauth-state.ts` | `state` firmado (HMAC-SHA256 con clave derivada de `getServiceKey()`, nonce, expira en 15 min) para `google/outlook-calendar-auth` y sus callbacks, más la lista de orígenes permitidos para redirigir. Las cuatro funciones se despliegan juntas. |
 | `availability-check.ts` | `checkAvailability` — verifica si un slot cae dentro de la disponibilidad semanal configurada del office. |
 | `office-resolver.ts` | Helpers para resolver el office a partir de doctor_id (p. ej. office primario para backwards-compat). |
@@ -304,6 +321,12 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `postconsult-routes.ts` | **Etapa 2.** `routePostConsultation(supabase, appointmentId)`: lee el último formulario de la cita y abre (vía `openCase`) un caso por ruta — urgente → `urgency`; procedimiento/hospitalización → `procedure`; estudios/laboratorio → `studies`; referencia → `referral`; conservador → `follow_up` a 7 días. Idempotente por formulario. No envía nada al paciente. La regla de sugerencia vive también en `src/lib/management-type.ts` (mantenerlas iguales). |
 | `reimbursements.ts` | **Etapa 2.** Validación, alta y cambios de reembolsos (solo hacia adelante, bloqueo en estados finales, `case_events`). |
 | `triage.ts` | Motor de orientación por síntomas (`suggestSpecialty`, `rank`, `eligible`, vocabulario `KEYWORDS`, `HALF_WEIGHT_KEYWORDS`). Lee `triage_findmed` (solo `is_active`) y el mapeo **en cada llamada, sin caché**: un cambio guardado en el panel aplica a la siguiente consulta del agente sin redeploy. Cambiar el vocabulario sí requiere redeploy de `findmed-mcp` y `triage-admin`. |
+| `appointment-actions.ts` | `applyPatientAction` (confirmar/cancelar iniciado por el paciente, siempre sobre UN `appointment_id`) y `findUpcomingAppointmentsByPhone`. Lo comparten `manage-cancel`, `confirm-appointment`, `update-appointment-status`, los botones de WhatsApp y el MCP. |
+| `booking-session.ts` | `createReservationSession`: sesión de 72 h + link `/reserva` para un par (doctor, consultorio) explícito. Lo usan `triage-webhook` y la tool `create_booking_link`. Un link es una invitación, no una cita. |
+| `calendar-sync.ts` | `deleteAppointmentEvents`: borra los eventos Google/Outlook de una cita y reporta el resultado por proveedor (`deleted`/`already_gone`/`skipped`/`failed`). La creación/edición de eventos sigue inline en cada función (ver riesgos en `docs/findmed-migration/estado-ejecucion.md`). |
+| `operations.ts` | **B4.** `prepareAction` / `commitAction` / `getOperation`: acciones preparadas e idempotentes (`operation_requests`) con evidencia de confirmación. |
+| `staff-reschedule-webhook.ts` | `dispatchStaffRescheduleWebhook`: evento `appointment.rescheduled_by_staff` (con `manage_url` y `office_address`) para `admin-` y `doctor-reschedule-appointment`. |
+| `whaapy-signature.ts` | `verifyWhaapySignature`: HMAC-SHA256 de los webhooks de WHAAPY (acepta `X-Webhook-Signature` y `X-Whaapy-Signature`). |
 
 ### Triaje / recordatorios / webhooks
 
@@ -414,10 +437,13 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
 
 - Cada función exporta con `Deno.serve(...)`, responde a `OPTIONS` con `corsHeaders` y valida `method === "POST"` cuando aplica.
 - Autenticación por tipo:
-  - **Service‑role** (interno): `createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)`.
+  - **Service‑role** (interno): `createClient(SUPABASE_URL, getServiceKey())` (`_shared/supabase-keys.ts`).
   - **Usuario autenticado**: verificar el JWT con `auth.getClaims` o cliente anon con el header `Authorization`.
   - **API Key externa**: header `Authorization: Bearer fm_…`, validar contra `api_keys.key_hash` (SHA‑256 hex).
 - El CORS header `Access-Control-Allow-Headers` incluye los propios de supabase‑js v2 (`x-supabase-client-*`); mantenerlos al copiar a funciones nuevas.
+- Toda función nueva lleva su entrada `[functions.<nombre>]` con `verify_jwt` explícito en `supabase/config.toml` (hoy las 49 la tienen y coinciden con producción).
+- `.select()` siempre con **un solo literal** de columnas (nunca `"a, " + "b"` ni una constante armada por concatenación): supabase-js deduce el tipo de la fila del literal; una concatenación lo vuelve `GenericStringError` y `deno check` falla (N15).
+- Imports remotos: hoy `https://esm.sh/@supabase/supabase-js@2` (rango flotante: cada deploy empaqueta la última 2.x), salvo `create-doctor` fijado a `@2.49.4`, y `deno.land/std@0.168.0` (`serve`) en las 14 funciones de calendario. No agregar más versiones distintas; ver riesgos en `docs/findmed-migration/estado-ejecucion.md`.
 - **Ninguna función con `verify_jwt = false` puede quedar sin auth en código.** Elegir explícitamente: token de paciente, `verifyApiKey`, `isServiceRequest` o `verifyJwtClaims`/`requireAdmin*`. Nunca decodificar un JWT con `atob` sin verificar firma.
 - Tokens y secretos se generan con `crypto.getRandomValues` (`generateSecureToken` en `_shared/manage-token.ts`, `secureRandomString` en `src/lib/secure-random.ts`). Nunca `Math.random`.
 - **Nunca commitear llaves, passwords ni scripts con credenciales** (el repo es público). Scripts operativos que necesiten la service key la reciben por variable de entorno desde `.env.local` (gitignored por `*.local`).
@@ -465,7 +491,7 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
 | `GOOGLE_OAUTH_REDIRECT_URI` | **Opcional.** Override del redirect URI de Google Calendar. Si no se define, usa `https://app.findmed.com.mx/oauth/google/callback` (proxeado por Vercel a `google-calendar-callback`). Debe ser el mismo en `google-calendar-auth` y `google-calendar-callback` (es project-level, ambas lo leen). |
 | `OAUTH_ALLOWED_ORIGINS` | **Opcional, no secreto.** Orígenes extra (separados por coma) a los que pueden volver los flujos de conexión de calendario, p. ej. previews de Vercel. Siempre permitidos: `https://app.findmed.com.mx`, localhost y el origen de `APP_URL`. |
 | `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` | App registration de Microsoft (Azure AD) para Outlook Calendar. |
-| `APP_URL` | URL pública de la app (producción: URL de Vercel; desarrollo: `http://localhost:5173`); se usa para construir links `/reserva?token=…` y `/gestionar?token=…`. Actualizar en Supabase al hacer deploy. |
+| `APP_URL` | URL pública de la app (producción: URL de Vercel; desarrollo: `http://localhost:8080`, el `server.port` de Vite); se usa para construir links `/reserva?token=…` y `/gestionar?token=…`. Actualizar en Supabase al hacer deploy. |
 | `FINDMED_MCP_TOKEN` | Bearer que WHAAPY envía al MCP `findmed-mcp`. |
 | `FINDMED_GEOCODER` | **Opcional, no secreto.** `off` apaga el geocodificador Nominatim de `search_care_options` (queda solo catálogo + nomenclátor local). Por defecto encendido. |
 | `MCP_CHAT_ACTIONS_ENABLED` | `true` publica `commit_appointment_action` (default apagado). |
@@ -489,7 +515,7 @@ No commitear claves nuevas al repo. El `.env` actual sólo contiene las variable
 5. Mantener los **patrones existentes** del archivo que estás tocando (convención de imports, uso de `cn()`, forma de manejar errores, tipo de toast, estructura de `queryKey`).
 6. Para flujos con paciente sin login, usar siempre **tokens** (`reservation_sessions.token` o `appointment_manage_tokens.token`) y Edge Functions; nunca exponer queries directas a Postgres sin RLS.
 7. Para endpoints externos (bots, n8n), autenticar con API keys con prefijo `fm_` validando el hash SHA‑256 contra `api_keys`.
-8. Tras cada cambio funcional **verificar que el build pasa**: `npm run build` (o `bun run build`) y `npm run lint`. Si el cambio toca tipos o RLS, correr además `npm run test`. **Build pasando ≠ feature funcionando.** Cuando el prompt pide verificación manual, hacer la verificación o reconocer explícitamente cuando no se puede (ej. sin acceso a navegador headless).
+8. Tras cada cambio funcional **verificar que el build pasa**: `npm run build` (o `bun run build`), `npm run lint` (0 errores; `*.local/` está ignorado) y `npx tsc -p tsconfig.app.json --noEmit`. Si el cambio toca Edge Functions: `npx -y deno check --no-lock --node-modules-dir=none supabase/functions` (0 errores) y `npm run test:edge`. Si toca tipos o RLS, correr además `npm run test`. Los tipos se regeneran contra producción con `bash scripts/sb.sh gen types typescript --project-id jyzvdowflblxmlahlupo --schema public > src/integrations/supabase/types.ts` (después de aplicar la migración). **Build pasando ≠ feature funcionando.** Cuando el prompt pide verificación manual, hacer la verificación o reconocer explícitamente cuando no se puede (ej. sin acceso a navegador headless).
 8b. Cuando un cambio afecta a múltiples Edge Functions (ej. "todas las que crean citas"), enumerarlas explícitamente y verificar cobertura una por una. No asumir cobertura por implicación.
 9. Hacer **git commit después de cada cambio funcional** con mensaje descriptivo del *porqué*. Commits pequeños y atómicos; no mezclar features.
 10. Al añadir una tabla o columna: crear una **migración SQL nueva** en `supabase/migrations/` con el timestamp correcto, incluir RLS + policies, y regenerar `src/integrations/supabase/types.ts`.
@@ -502,7 +528,7 @@ No commitear claves nuevas al repo. El `.env` actual sólo contiene las variable
 2. No crear componentes desde cero si shadcn/ui ya lo tiene.
 3. No introducir nuevas librerías sin necesidad (hay recharts, embla, sonner, cmdk, etc. ya disponibles).
 4. No llamar `fetch` a Supabase desde el frontend autenticado — usar el cliente tipado.
-5. No omitir RLS en tablas nuevas. Nunca usar service role key desde el cliente.
+5. No omitir RLS en tablas nuevas. Nunca usar service role key desde el cliente. Desde `20261014160000_security_hardening.sql`: `anon` no tiene privilegios en `public` (si una tabla nueva debe ser pública, `GRANT` explícito); `doctor_offices` y `doctors` usan `SELECT` por columna sin los refresh tokens — **una columna nueva ahí necesita `GRANT SELECT (columna) TO authenticated`** — y el panel usa `google_token_stored`/`outlook_token_stored`; los doctores solo editan notas/completan citas y su nombre/teléfono (triggers `guard_client_*`); `users`, `user_roles` y `doctor_offices` solo se escriben por Edge Functions.
 6. No guardar secretos en `.env` cliente ni en el repo. Si una función nueva necesita un secret, documentarlo en este archivo y pedir al usuario que lo configure en Supabase.
 7. No asumir timezone UTC ni local del usuario — usar `America/Mexico_City` para todo lo relacionado con horarios de doctor/paciente.
 8. No deshabilitar RLS ni hacer `--no-verify` en git.

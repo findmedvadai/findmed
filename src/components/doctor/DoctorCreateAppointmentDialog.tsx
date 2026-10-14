@@ -38,6 +38,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
 import { weekdayLabel } from "@/lib/availability-check";
+import { userErrorMessage } from "@/lib/edge-function-error";
+
+const NO_OFFICES: OfficeOption[] = [];
 
 interface Props {
   open: boolean;
@@ -107,7 +110,7 @@ export default function DoctorCreateAppointmentDialog({
     setDurationManuallyEdited(false);
   }, [open, defaultOfficeId, defaultDate, defaultTime]);
 
-  const { data: offices = [] } = useQuery<OfficeOption[]>({
+  const { data: officesData } = useQuery<OfficeOption[]>({
     queryKey: ["doctor-create-appt-offices", doctorId],
     queryFn: async () => {
       if (!doctorId) return [];
@@ -123,11 +126,16 @@ export default function DoctorCreateAppointmentDialog({
     enabled: !!doctorId && open,
   });
 
+  const offices = officesData ?? NO_OFFICES;
+
   // Auto-pick when doctor has exactly one office.
   useEffect(() => {
+    // Esperar la lista real: mientras carga, la lista vacía borraba el consultorio
+    // preseleccionado (filtro de la agenda) antes de que llegaran los datos.
+    if (!officesData) return;
     if (!officeId && offices.length === 1) setOfficeId(offices[0].id);
     if (officeId && !offices.find((o) => o.id === officeId)) setOfficeId("");
-  }, [offices, officeId]);
+  }, [officesData, offices, officeId]);
 
   // Sync duration with selected office.
   useEffect(() => {
@@ -212,7 +220,7 @@ export default function DoctorCreateAppointmentDialog({
     },
     onError: (err: Error) => {
       if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
-      toast.error(err.message);
+      toast.error(userErrorMessage(err, "No se pudo completar la acción."));
     },
   });
 
@@ -239,7 +247,7 @@ export default function DoctorCreateAppointmentDialog({
       setAvailabilityWarning(null);
       onClose();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   const canSubmit =

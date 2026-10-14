@@ -52,6 +52,7 @@ import { InsuranceDocumentsSection } from "@/components/app/PatientInsurance";
 import { cn } from "@/lib/utils";
 import type { Database } from "@/integrations/supabase/types";
 import CreateEventDialog from "./CreateEventDialog";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -154,7 +155,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       invalidate();
       onClose();
     },
-    onError: (err: Error) => toast.error(err.message || "Error al cancelar la cita"),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo cancelar la cita.")),
   });
 
   const completeMutation = useMutation({
@@ -170,7 +171,9 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       invalidate();
       onClose();
     },
-    onError: () => toast.error("Error al completar la cita"),
+    // La guarda de la base (20261014160000) solo deja al doctor completar una cita
+    // agendada/confirmada o editar sus notas; su mensaje viene en español.
+    onError: (err) => toast.error(userErrorMessage(err, "No se pudo completar la cita.")),
   });
 
   const notesMutation = useMutation({
@@ -187,7 +190,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       invalidate();
       setEditingNotes(false);
     },
-    onError: () => toast.error("Error al guardar notas"),
+    onError: (err) => toast.error(userErrorMessage(err, "No se pudieron guardar las notas.")),
   });
 
   const handleDeleteExternalEvent = async () => {
@@ -221,7 +224,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       invalidateExternal();
       onClose();
     } catch (err) {
-      toast.error((err instanceof Error && err.message) || "Error al eliminar evento");
+      toast.error(userErrorMessage(err, "No se pudo eliminar el evento."));
     } finally {
       setDeleting(false);
     }
@@ -275,7 +278,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     },
     onError: (err: Error) => {
       if (err.message === "__OUTSIDE_AVAILABILITY_HANDLED__") return;
-      toast.error(err.message);
+      toast.error(userErrorMessage(err, "No se pudo reagendar la cita."));
     },
   });
 
@@ -293,7 +296,7 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
       setRescheduling(false);
       onClose();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo reagendar la cita.")),
   });
 
   const openRescheduleForm = () => {

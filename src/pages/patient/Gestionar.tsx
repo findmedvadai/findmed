@@ -27,6 +27,7 @@ import {
 } from "@/lib/timezone";
 import { CALENDAR_LABELS_ES } from "@/lib/calendar-labels";
 import { APPOINTMENT_STATUS } from "@/lib/appointment-status";
+import { CONNECTION_ERROR, PATIENT_LINK_HELP, patientLinkError, readPatientResponse } from "@/lib/patient-link";
 
 // Fecha y hora de la cita y los horarios para reagendar son siempre hora de
 // CDMX, aunque el paciente abra el enlace desde otra zona horaria.
@@ -78,7 +79,7 @@ export default function Gestionar() {
 
   useEffect(() => {
     if (!token) {
-      setError("Enlace inválido. No se proporcionó un token.");
+      setError(patientLinkError(null));
       setLoading(false);
       return;
     }
@@ -88,16 +89,16 @@ export default function Gestionar() {
       headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
       body: JSON.stringify({ token }),
     })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.error) {
-          setError(data.error);
+      .then((res) => readPatientResponse<AppointmentData>(res))
+      .then(({ data, error }) => {
+        if (error || !data?.start_at) {
+          setError(patientLinkError(error));
         } else {
           setAppointment(data);
           if (data.status === "cancelled") setCancelled(true);
         }
       })
-      .catch(() => setError("Error de conexión"))
+      .catch(() => setError(CONNECTION_ERROR))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -121,9 +122,16 @@ export default function Gestionar() {
           : { doctor_id: appointment.doctor_id, date: dateStr }
       ),
     })
-      .then((res) => res.json())
-      .then((data) => setSlots(data.slots || []))
-      .catch(() => setSlots([]))
+      .then((res) => readPatientResponse<{ slots?: string[] }>(res))
+      .then(({ data, error }) => {
+        // Un error no es "no hay horarios": se avisa para que intente de nuevo.
+        if (error) toast.error("No pudimos cargar los horarios de ese día. Intenta de nuevo.");
+        setSlots(data?.slots || []);
+      })
+      .catch(() => {
+        toast.error(CONNECTION_ERROR);
+        setSlots([]);
+      })
       .finally(() => setLoadingSlots(false));
   }, [selectedDate, appointment]);
 
@@ -139,9 +147,9 @@ export default function Gestionar() {
         body: JSON.stringify({ token }),
       });
 
-      const data = await res.json();
-      if (data.error) {
-        toast.error(data.error);
+      const { error } = await readPatientResponse(res);
+      if (error) {
+        toast.error(error);
       } else {
         setCancelled(true);
         toast.success("Cita cancelada exitosamente");
@@ -165,9 +173,9 @@ export default function Gestionar() {
         body: JSON.stringify({ token, slot_start: selectedSlot, date: dateStr }),
       });
 
-      const data = await res.json();
-      if (data.error) {
-        toast.error(data.error);
+      const { data, error } = await readPatientResponse<Partial<AppointmentData>>(res);
+      if (error || !data) {
+        toast.error(error ?? CONNECTION_ERROR);
       } else {
         setAppointment((prev) =>
           prev
@@ -207,7 +215,9 @@ export default function Gestionar() {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">
           <CardContent className="pt-6 text-center">
-            <p className="text-destructive font-medium">{error}</p>
+            <p className="font-semibold text-foreground">No pudimos abrir tu cita</p>
+            <p className="mt-2 text-destructive">{error}</p>
+            <p className="mt-3 text-sm text-muted-foreground">{PATIENT_LINK_HELP}</p>
           </CardContent>
         </Card>
       </div>
@@ -222,9 +232,10 @@ export default function Gestionar() {
   const statusKey = isCancelled ? "cancelled" : appointment.status;
   const status = STATUS_STYLE[statusKey] ?? { className: "text-muted-foreground", Icon: Clock };
   const statusLabel = APPOINTMENT_STATUS[statusKey]?.label ?? statusKey;
-  const canReschedule =
-    appointment.status !== "completed" &&
-    (isCancelled || new Date(appointment.start_at).getTime() > Date.now());
+  const isFuture = new Date(appointment.start_at).getTime() > Date.now();
+  const canReschedule = appointment.status !== "completed" && (isCancelled || isFuture);
+  // manage-cancel solo cancela citas agendadas/confirmadas que no han pasado (409 si no).
+  const canCancel = !isCancelled && (appointment.status === "scheduled" || appointment.status === "confirmed") && isFuture;
 
   // "Hoy" es el de CDMX, no el del navegador (ver Reserva.tsx).
   const mxToday = mexicoTodayPickerDate();
@@ -292,8 +303,16 @@ export default function Gestionar() {
                 </p>
               )}
 
-              {/* Confirm and Cancel — only when NOT cancelled */}
-              {!cancelled && appointment.status !== "cancelled" && (
+              {!isCancelled && !canCancel && (
+                <p className="text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+                  {appointment.status === "completed"
+                    ? "Esta consulta ya se realizó."
+                    : "Esta cita ya pasó, por eso ya no se puede cancelar ni reagendar desde aquí."}
+                </p>
+              )}
+
+              {/* Cancelar — solo citas vigentes */}
+              {canCancel && (
                 <>
 
                   {/* Cancel button */}

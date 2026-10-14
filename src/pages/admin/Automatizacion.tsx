@@ -6,7 +6,8 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
@@ -39,6 +40,7 @@ import type { Tone } from "@/components/app/StatCard";
 import { messagingAdmin } from "@/lib/messaging-admin";
 import { CANCEL_REASON_LABEL, EVENT_INFO, PARAM_LABEL, STATUS_LABEL } from "@/lib/messaging-labels";
 import { AlertTriangle, CheckCircle2, Link2, MessageSquare, MousePointerClick, Pencil, Plus, RefreshCw, Send, Trash2, Zap } from "lucide-react";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 type Route = Tables<"message_routes">;
 type Step = Tables<"message_route_steps">;
@@ -57,7 +59,7 @@ const DELIVERY: Record<string, { label: string; tone: Tone }> = {
 
 const OUTBOX_LABEL: Record<string, string> = { pending: "En cola", processing: "Procesando", failed: "Falló", uncertain: "Incierto" };
 
-const fmt = (iso: string) => format(parseISO(iso), "d MMM yyyy, HH:mm", { locale: es });
+const fmt = (iso: string) => formatMx(parseISO(iso), "d MMM yyyy, HH:mm", { locale: es });
 const eventOrder = (e: string) => {
   const i = Object.keys(EVENT_INFO).indexOf(e);
   return i < 0 ? 99 : i;
@@ -76,7 +78,7 @@ export default function Automatizacion() {
       queryClient.invalidateQueries({ queryKey: ["whaapy-templates"] });
       toast({ title: "Plantillas sincronizadas con Meta" });
     },
-    onError: (e: Error) => toast({ title: "No se pudo sincronizar", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "No se pudo sincronizar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   return (
@@ -203,7 +205,7 @@ function EventsTab() {
   const byName = useMemo(() => new Map((templates ?? []).map((t) => [t.name, t])), [templates]);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["message-routes"] });
-  const onError = (e: Error) => toast({ title: "No se pudo guardar", description: e.message, variant: "destructive" });
+  const onError = (e: Error) => toast({ title: "No se pudo guardar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" });
 
   const setOwner = useMutation({
     mutationFn: (v: { event_type: string; owner: string }) => messagingAdmin({ action: "set_owner", ...v }),
@@ -272,7 +274,7 @@ function EventsTab() {
         <p className="text-sm text-destructive">No se pudo leer el catálogo de WHAAPY: {(templatesError as Error).message}</p>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {routes.map((route) => {
           const info = EVENT_INFO[route.event_type];
           const routeSteps = steps
@@ -441,7 +443,7 @@ function DeliveriesTab() {
     queryClient.invalidateQueries({ queryKey: ["outbox-stuck"] });
     queryClient.invalidateQueries({ queryKey: ["admin-home-overview"] });
   };
-  const onError = (e: Error) => toast({ title: "No se pudo completar", description: e.message, variant: "destructive" });
+  const onError = (e: Error) => toast({ title: "No se pudo completar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" });
 
   const resend = useMutation({
     mutationFn: (d: Delivery) => messagingAdmin({ action: "resend", delivery_id: d.id, confirm_duplicate_risk: acceptRisk }),
@@ -629,9 +631,9 @@ function TemplatesTab() {
       </FilterBar>
       {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
       {isLoading ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-lg" />)}</div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-lg" />)}</div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {rows.map((t) => {
             const approved = t.status.toUpperCase() === "APPROVED";
             const stale = t.buttons.some((b) => b.type === "URL" && /lovable\.app/i.test(b.url ?? ""));

@@ -3,7 +3,8 @@
 // y al formulario. Si el caso solo tiene una cita relacionada, muestra esa.
 import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { CalendarDays, ClipboardList, Stethoscope } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -100,7 +101,7 @@ export default function CaseOriginCard({ caseRow }: { caseRow: PatientCase }) {
                   {o.startAt && (
                     <span className="flex items-center gap-1">
                       <CalendarDays className="h-3 w-3" />
-                      {format(parseISO(o.startAt), "d MMM yyyy · HH:mm", { locale: es })}
+                      {formatMx(parseISO(o.startAt), "d MMM yyyy · HH:mm", { locale: es })}
                     </span>
                   )}
                 </p>

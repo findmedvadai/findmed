@@ -110,3 +110,20 @@ Estados: pendiente · en revisión · en implementación · implementado sin val
 | X11 | Un dueño por conversación y evento durante la migración | A5 `event_owner`, R38 | pendiente |
 | X13 | FindMed gestiona plantillas, envíos y su estado desde su frontend, sin entrar a WHAAPY (D8) | B7b: catálogo vía API WHAAPY (crear plantillas sigue siendo en Meta: la API solo lista/sincroniza), mapeo evento→plantilla editable y validado, dueño por evento, historial con recibos, reenvío | implementado sin validar |
 | X12 | Enlace ≠ cita; etiqueta ≠ asignación; HTTP 200 ≠ entrega | Contratos MCP, outbox, R13, R31, R34 | en implementación (`link_created`/`appointment_created:false` en MCP) |
+
+## Cobertura de pruebas automatizadas por área (14-oct, auditoría de construcción)
+
+`npm run test` (vitest): 18 archivos, 80 pruebas. `npm run test:edge` (Deno, 25 archivos en `supabase/tests/`): 270 pruebas. No hay medición de cobertura por líneas; la tabla es por flujo.
+
+| Área | Cubierto por pruebas | Sin pruebas automatizadas (riesgo) |
+|---|---|---|
+| Agente / MCP | `findmed-mcp_test`, `triage_test`, `triage-admin_test`, `care-search_test`, `geo-proximity_test`, `insurance-network-documents_test` | — |
+| Mensajería WHAAPY | `messaging_test`, `messaging-admin_test`, `whaapy-inbound_test`, `staff-alerts_test` | Llamadas reales a la API (solo IR manual) |
+| Casos / post-consulta | `cases_test`, `postconsult-routes_test`, `operations_test`, `appointment-actions_test`; UI `cases-ui.test`, `PorCompletar.test` | `case-actions` (handler HTTP) |
+| Disponibilidad | `day-slots_test`, `calendar-busy_test`, `booking-constraint_test` (PGlite: exclusión por doctor) | `reserve-slots` (handler), `checkAvailability` |
+| Reserva del paciente | `Gestionar.test` (UI), constraint en BD | **`reserve-create`**, **`manage-reschedule`**, `manage-cancel`, `reserve-validate`/`manage-validate` (handlers sin pruebas; la lógica vive en `index.ts`) |
+| Citas por staff | — | **`admin-/doctor-create-appointment`**, **`admin-/doctor-reschedule-appointment`**, `admin-cancel-appointment`, `cancel-by-doctor` (código casi duplicado, sin pruebas) |
+| Calendarios externos | `calendar-tokens_test`, `oauth-state_test` | `google/outlook-calendar-*` (create/update/delete/events/list/callback) |
+| Crons | `cron-url-migration_test` (migración) | Los 4 handlers (`send-*-reminders`, `auto-cancel-unconfirmed`, `auto-complete-appointments`) |
+| Doctores / consultorios | `create-doctor_test` | `doctor-office-create/update/delete`, `update-doctor-credentials` |
+| Frontend | `timezone`, `plural`, `case-sla`, `management-type`, `geo-coords`, `settings-unlock`, `admin-appointment-queries`, `triage-admin`, `PasswordGate`, `PatientInsurance`, `Alertas`, `Legal`, `lazy-with-reload`, humo de rutas (`app-routes.test`) | `Reserva.tsx`, Agenda (admin y doctor), Doctores, `useAuth`/`ProtectedRoute`/`Login` |

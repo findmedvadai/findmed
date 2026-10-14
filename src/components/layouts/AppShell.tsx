@@ -2,7 +2,7 @@
 // principales, perfil abajo con el engrane de configuración, barra superior con
 // el nombre del módulo y área de trabajo. Los submódulos viven dentro de su
 // módulo (pestañas) y la configuración se abre desde el engrane.
-import { useEffect, type ComponentType, type ReactNode } from "react";
+import { forwardRef, useEffect, type ComponentProps, type ComponentType, type ReactNode } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { LogOut, Settings, Stethoscope } from "lucide-react";
 import {
@@ -20,6 +20,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
+import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 export interface ShellNavItem {
@@ -71,6 +73,49 @@ const initials = (text: string) =>
 
 const isActive = (pathname: string, url: string) => pathname === url || pathname.startsWith(`${url}/`);
 
+/**
+ * En el celular la barra lateral es una hoja (Sheet) que no se cierra sola al
+ * elegir un módulo: quedaba tapando la pantalla nueva. Se cierra al cambiar de ruta.
+ */
+function CloseMobileSidebarOnNavigate() {
+  const { pathname, search } = useLocation();
+  const { isMobile, setOpenMobile } = useSidebar();
+  useEffect(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [pathname, search, isMobile, setOpenMobile]);
+  return null;
+}
+
+/** Enlace del menú: en el celular cierra la hoja aunque el módulo sea el actual. */
+const ShellNavLink = forwardRef<HTMLAnchorElement, ComponentProps<typeof Link>>(function ShellNavLink({ onClick, ...props }, ref) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  return (
+    <Link
+      ref={ref}
+      {...props}
+      onClick={(e) => {
+        onClick?.(e);
+        if (isMobile) setOpenMobile(false);
+      }}
+    />
+  );
+});
+
+/**
+ * En el celular la barra lateral se abre como diálogo (Sheet) y Radix exige un
+ * título accesible (sin él avisa en consola). Solo existe dentro del Sheet móvil.
+ */
+function MobileSidebarTitle() {
+  const { isMobile } = useSidebar();
+  if (!isMobile) return null;
+  return (
+    <SheetHeader className="sr-only">
+      <SheetTitle>Menú</SheetTitle>
+      <SheetDescription>Módulos del panel, configuración y cierre de sesión.</SheetDescription>
+    </SheetHeader>
+  );
+}
+
 export default function AppShell({ subtitle, nav, settings, profile, onSignOut, topbarRight }: AppShellProps) {
   const { pathname } = useLocation();
 
@@ -87,10 +132,12 @@ export default function AppShell({ subtitle, nav, settings, profile, onSignOut, 
 
   return (
     <SidebarProvider>
+      <CloseMobileSidebarOnNavigate />
       <div className="app-shell flex min-h-screen w-full bg-canvas">
         <Sidebar collapsible="icon" className="border-r">
+          <MobileSidebarTitle />
           <SidebarHeader className="px-3 py-4">
-            <Link to={nav[0]?.url ?? "/"} className="flex items-center gap-2.5 overflow-hidden">
+            <ShellNavLink to={nav[0]?.url ?? "/"} className="flex items-center gap-2.5 overflow-hidden">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
                 <Stethoscope className="h-4 w-4" />
               </div>
@@ -98,7 +145,7 @@ export default function AppShell({ subtitle, nav, settings, profile, onSignOut, 
                 <p className="text-sm font-semibold leading-tight text-primary">FindMed</p>
                 <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
               </div>
-            </Link>
+            </ShellNavLink>
           </SidebarHeader>
 
           <SidebarContent>
@@ -109,10 +156,10 @@ export default function AppShell({ subtitle, nav, settings, profile, onSignOut, 
                   {nav.map((item) => (
                     <SidebarMenuItem key={item.url}>
                       <SidebarMenuButton asChild isActive={isActive(pathname, item.url)} tooltip={item.title} className="h-9">
-                        <Link to={item.url}>
+                        <ShellNavLink to={item.url}>
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
-                        </Link>
+                        </ShellNavLink>
                       </SidebarMenuButton>
                       {!!item.badge && (
                         <SidebarMenuBadge className="rounded-full bg-destructive px-1.5 text-[11px] font-semibold text-destructive-foreground peer-data-[active=true]/menu-button:text-destructive-foreground">

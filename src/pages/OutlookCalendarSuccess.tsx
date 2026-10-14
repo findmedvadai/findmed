@@ -40,7 +40,7 @@ const OutlookCalendarSuccess = () => {
             </svg>
           </div>
           <h1 className="text-xl font-semibold text-destructive mb-2">Error</h1>
-          <p className="text-muted-foreground text-sm">{decodeURIComponent(error)}</p>
+          <p className="text-muted-foreground text-sm">{error}</p>
           <button
             onClick={() => window.close()}
             className="mt-6 px-6 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"

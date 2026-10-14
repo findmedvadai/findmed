@@ -9,6 +9,7 @@ import { AlertTriangle, CalendarClock, CalendarDays, CheckCircle2, ChevronRight,
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeader } from "@/components/app/PageHeader";
+import { LoadError } from "@/components/app/LoadError";
 import { StatCard } from "@/components/app/StatCard";
 import { AppointmentStatusBadge } from "@/components/app/StatusBadge";
 import { EmptyState } from "@/components/app/EmptyState";
@@ -28,7 +29,7 @@ export default function DoctorInicio() {
   const { doctorId } = useAuth();
   const now = new Date();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ["doctor-home", doctorId],
     enabled: !!doctorId,
     refetchInterval: 60_000,
@@ -109,14 +110,28 @@ export default function DoctorInicio() {
       ].filter(Boolean) as { id: string; tone: "warning" | "info"; title: string; detail: string; to: string; cta: string }[]
     : [];
 
+  const header = (
+    <PageHeader
+      title={`${greeting(now)} 👋`}
+      description={`${format(toZonedTime(now, TZ), "EEEE d 'de' MMMM", { locale: es })} · tu día en FindMed.`}
+    />
+  );
+
+  // Sin datos y con error: decirlo (antes quedaban skeletons para siempre).
+  if (isError && !data) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <LoadError what="tu resumen del día" onRetry={() => refetch()} retrying={isFetching} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={`${greeting(now)} 👋`}
-        description={`${format(toZonedTime(now, TZ), "EEEE d 'de' MMMM", { locale: es })} · tu día en FindMed.`}
-      />
+      {header}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {isLoading || !data ? (
           Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-[84px] rounded-lg" />)
         ) : (
@@ -128,7 +143,7 @@ export default function DoctorInicio() {
         )}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
             <CardTitle className="text-sm font-semibold">Citas de hoy</CardTitle>

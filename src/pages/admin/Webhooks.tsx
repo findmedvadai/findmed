@@ -5,7 +5,8 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json, Tables } from "@/integrations/supabase/types";
@@ -60,6 +61,7 @@ import { EmptyState } from "@/components/app/EmptyState";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { cn } from "@/lib/utils";
 import { secureRandomString } from "@/lib/secure-random";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 const EVENT_GROUPS = [
   {
@@ -691,7 +693,7 @@ function WebhooksContent() {
       toast({ title: "Webhook creado" });
     },
     onError: (err: Error) =>
-      toast({ title: "Error", description: err.message, variant: "destructive" }),
+      toast({ title: "Error", description: userErrorMessage(err, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const updateMut = useMutation({
@@ -715,7 +717,7 @@ function WebhooksContent() {
       toast({ title: "Webhook actualizado" });
     },
     onError: (err: Error) =>
-      toast({ title: "Error", description: err.message, variant: "destructive" }),
+      toast({ title: "Error", description: userErrorMessage(err, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const regenerateMut = useMutation({
@@ -737,7 +739,7 @@ function WebhooksContent() {
       toast({ title: "Secret regenerado" });
     },
     onError: (err: Error) =>
-      toast({ title: "Error", description: err.message, variant: "destructive" }),
+      toast({ title: "Error", description: userErrorMessage(err, "No se pudo completar la acción."), variant: "destructive" }),
   });
 
   const toggleMut = useMutation({
@@ -866,7 +868,7 @@ function WebhooksContent() {
                       <EventsCountBadge events={wh.events as string[]} />
                     </TableCell>
                     <TableCell className="hidden whitespace-nowrap py-2.5 text-xs text-muted-foreground lg:table-cell">
-                      {format(parseISO(wh.updated_at ?? wh.created_at), "d MMM yyyy", { locale: es })}
+                      {formatMx(parseISO(wh.updated_at ?? wh.created_at), "d MMM yyyy", { locale: es })}
                     </TableCell>
                     <TableCell className="py-2.5">
                       <div className="flex items-center gap-2">
@@ -991,7 +993,7 @@ function WebhooksContent() {
               )}
             </DialogTitle>
             <DialogDescription>
-              Creado el {selectedWebhook ? format(new Date(selectedWebhook.created_at), "d 'de' MMMM yyyy", { locale: es }) : ""}
+              Creado el {selectedWebhook ? formatMx(new Date(selectedWebhook.created_at), "d 'de' MMMM yyyy", { locale: es }) : ""}
             </DialogDescription>
           </DialogHeader>
 

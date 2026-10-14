@@ -6,7 +6,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { AlertTriangle, Bell, BellRing, Pencil, Plus, Send, Trash2, Volume2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -40,12 +41,13 @@ import { useStaffAlertSettings } from "@/hooks/useStaffAlertSettings";
 import { playAlertSound, showBrowserAlert } from "@/lib/browser-alerts";
 import { alertAction, casePath, DELIVERY_STATUS, RECEIVES_LABEL } from "@/lib/staff-alerts";
 import { cn } from "@/lib/utils";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 type Recipient = Tables<"staff_alert_recipients">;
 type Settings = Tables<"staff_alert_settings">;
 
-const fmt = (iso: string) => format(parseISO(iso), "d MMM, HH:mm", { locale: es });
-const onError = (e: Error) => toast({ title: "No se pudo completar", description: e.message, variant: "destructive" });
+const fmt = (iso: string) => formatMx(parseISO(iso), "d MMM, HH:mm", { locale: es });
+const onError = (e: Error) => toast({ title: "No se pudo completar", description: userErrorMessage(e, "No se pudo completar la acción."), variant: "destructive" });
 
 export default function Alertas() {
   return (

@@ -39,6 +39,7 @@ import { InsuranceDocumentsSection } from "@/components/app/PatientInsurance";
 import { formatMx } from "@/lib/timezone";
 import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import RescheduleAppointmentDialog from "./RescheduleAppointmentDialog";
+import { userErrorMessage } from "@/lib/edge-function-error";
 
 const CANCEL_REASON_LABELS: Record<string, string> = {
   patient: "Cancelada por el paciente",
@@ -122,9 +123,12 @@ export default function AppointmentDetailDialog({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ appointment_id: appointmentId }),
+      }).catch(() => {
+        throw new Error("No se pudo cancelar la cita. Verifica tu conexión a internet y vuelve a intentar.");
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "Error al cancelar");
+      // admin-cancel-appointment responde { error: "<mensaje en español>" }.
+      const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) throw new Error(body.message || body.error || "No se pudo cancelar la cita.");
     },
     onSuccess: () => {
       toast.success("Cita cancelada");
@@ -133,12 +137,14 @@ export default function AppointmentDetailDialog({
       onAfterAction?.();
       onOpenChange(false);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
     onSettled: () => setCancelling(false),
   });
 
   const isCancelled = data?.status === "cancelled";
-  const showActions = enableActions && data && !isCancelled;
+  // Una cita atendida o cancelada ya no se cancela ni se reagenda (el backend responde 409).
+  const isFinal = isCancelled || data?.status === "completed";
+  const showActions = enableActions && data && !isFinal;
   const start = data?.start_at ? new Date(data.start_at) : null;
   const end = data?.end_at ? new Date(data.end_at) : null;
 
@@ -225,6 +231,13 @@ export default function AppointmentDetailDialog({
                 </section>
               </div>
 
+              {enableActions && isFinal && (
+                <p className="border-t pt-4 text-xs text-muted-foreground">
+                  {isCancelled
+                    ? "Esta cita está cancelada: ya no se puede reagendar ni volver a cancelar."
+                    : "Esta cita ya se atendió: ya no se puede reagendar ni cancelar."}
+                </p>
+              )}
               {showActions && (
                 <DialogFooter className="gap-2 border-t pt-4 sm:justify-between sm:space-x-0">
                   <AlertDialog>

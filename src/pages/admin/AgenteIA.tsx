@@ -9,7 +9,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { format, formatDistanceToNow, parseISO } from "date-fns";
+import { formatDistanceToNow, parseISO } from "date-fns";
+import { formatMx } from "@/lib/timezone";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -819,7 +820,7 @@ function ActivityLog({ errorsOnly }: { errorsOnly: boolean }) {
                     )}
                   >
                     <TableCell className="whitespace-nowrap py-2.5 align-top text-xs tabular-nums text-muted-foreground">
-                      {format(parseISO(i.at), "d MMM, HH:mm:ss", { locale: es })}
+                      {formatMx(parseISO(i.at), "d MMM, HH:mm:ss", { locale: es })}
                     </TableCell>
                     <TableCell className="hidden py-2.5 align-top md:table-cell">
                       <span className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -871,7 +872,7 @@ function ActivityLog({ errorsOnly }: { errorsOnly: boolean }) {
               <DialogDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 <span>{SOURCE[selected.source].label}</span>
                 <span aria-hidden>·</span>
-                <span>{format(parseISO(selected.at), "d MMM yyyy, HH:mm:ss", { locale: es })}</span>
+                <span>{formatMx(parseISO(selected.at), "d MMM yyyy, HH:mm:ss", { locale: es })}</span>
                 {selected.phone && (
                   <>
                     <span aria-hidden>·</span>

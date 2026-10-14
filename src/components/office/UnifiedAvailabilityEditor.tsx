@@ -22,6 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { TimePicker } from "@/components/ui/time-picker";
 import { supabase } from "@/integrations/supabase/client";
+import { userErrorMessage } from "@/lib/edge-function-error";
+import { LoadError } from "@/components/app/LoadError";
 
 interface OfficeRow {
   id: string;
@@ -96,12 +98,13 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
   const { data: offices } = useQuery<OfficeRow[]>({
     queryKey: offKey,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("doctor_offices")
         .select("id, name, display_color, is_active")
         .eq("doctor_id", doctorId)
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
+      if (error) throw error;
       return (data ?? []) as OfficeRow[];
     },
     placeholderData: keepPreviousData,
@@ -112,15 +115,18 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
     [offices]
   );
 
-  const { data: existing, isLoading } = useQuery<AvailabilityRow[]>({
+  const { data: existing, isLoading, isError, isFetching, refetch } = useQuery<AvailabilityRow[]>({
     queryKey: avKey,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("doctor_weekly_availability")
         .select("*")
         .eq("doctor_id", doctorId)
         .order("weekday", { ascending: true })
         .order("start_time", { ascending: true });
+      // Si la lectura falla no se muestra un editor vacío: guardar desde ahí
+      // agregaría bloques encima de los que ya existen.
+      if (error) throw error;
       return (data ?? []) as AvailabilityRow[];
     },
     placeholderData: keepPreviousData,
@@ -213,11 +219,15 @@ export default function UnifiedAvailabilityEditor({ doctorId }: Props) {
       toast.success("Disponibilidad guardada");
       queryClient.invalidateQueries({ queryKey: avKey });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   if (isLoading && rows.length === 0) {
     return <p className="text-sm text-muted-foreground">Cargando…</p>;
+  }
+
+  if (isError && !existing) {
+    return <LoadError what="tu horario de atención" onRetry={() => refetch()} retrying={isFetching} />;
   }
 
   // Build (weekday → [{row, originalIndex}]) once for stable rendering.

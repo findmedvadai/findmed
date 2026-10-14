@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SoftBadge } from "@/components/app/StatusBadge";
-import { extractEdgeFunctionError } from "@/lib/edge-function-error";
+import { extractEdgeFunctionError, userErrorMessage } from "@/lib/edge-function-error";
 import { DOCUMENTS_STATUS, documentsStatus, insuranceChoice, type InsuranceChoice } from "@/lib/patient-documents";
 import { cn } from "@/lib/utils";
 
@@ -108,7 +108,7 @@ function InsuranceEditor({
       toast.success("Seguro actualizado");
       onDone();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(userErrorMessage(err, "No se pudo completar la acción.")),
   });
 
   return (
