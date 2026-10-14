@@ -95,18 +95,19 @@ export default function OfficeCalendarConnector({ office }: Props) {
   const outlookCalendarName = office.outlook_calendar_name;
 
   // Detect "we have a refresh_token but no calendar_id yet" — that's the
-  // post-OAuth, pre-pick state.
+  // post-OAuth, pre-pick state. The token itself is not readable from the
+  // browser (migration 20261014160000); only its presence flag is.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const { data } = await supabase
         .from("doctor_offices")
-        .select("google_refresh_token_ref, outlook_refresh_token_ref")
+        .select("google_token_stored, outlook_token_stored")
         .eq("id", office.id)
         .maybeSingle();
       if (cancelled || !data) return;
-      setHasGoogleToken(Boolean(data.google_refresh_token_ref) && !office.google_calendar_connected);
-      setHasOutlookToken(Boolean(data.outlook_refresh_token_ref) && !office.outlook_calendar_connected);
+      setHasGoogleToken(Boolean(data.google_token_stored) && !office.google_calendar_connected);
+      setHasOutlookToken(Boolean(data.outlook_token_stored) && !office.outlook_calendar_connected);
     })();
     return () => {
       cancelled = true;
