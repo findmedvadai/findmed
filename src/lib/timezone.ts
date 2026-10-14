@@ -18,6 +18,35 @@ export function getMexicoMinutes(date: Date): number {
   return toZonedTime(date, MEXICO_TZ).getMinutes();
 }
 
+/** Today's calendar date in CDMX as "yyyy-MM-dd", whatever the browser's timezone. */
+export function mexicoTodayYmd(now: Date = new Date()): string {
+  return formatMx(now, "yyyy-MM-dd");
+}
+
+/**
+ * Date pickers (react-day-picker) work with local midnights: the cell the user
+ * clicks comes back as local midnight of that day, so its *local* components are
+ * the calendar day chosen. In patient flows that day is a CDMX date label.
+ */
+export function pickerDateToYmd(date: Date): string {
+  return format(date, "yyyy-MM-dd");
+}
+
+/**
+ * CDMX "today" as a local-midnight Date, for a date picker's `today`,
+ * `defaultMonth` and past-day check. A patient abroad (e.g. Madrid at 1 a.m.,
+ * still the previous evening in CDMX) sees the same "today" as the clinic.
+ */
+export function mexicoTodayPickerDate(now: Date = new Date()): Date {
+  const [y, m, d] = mexicoTodayYmd(now).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** True when a picked calendar day is before today in CDMX. */
+export function isBeforeMexicoToday(pickedDay: Date, now: Date = new Date()): boolean {
+  return pickerDateToYmd(pickedDay) < mexicoTodayYmd(now);
+}
+
 /** Compares two instants by their CDMX calendar day, regardless of the browser's TZ. */
 export function isSameMexicoDay(a: Date, b: Date): boolean {
   return formatMx(a, "yyyy-MM-dd") === formatMx(b, "yyyy-MM-dd");

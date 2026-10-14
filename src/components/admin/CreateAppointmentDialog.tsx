@@ -37,6 +37,7 @@ import { TimePicker } from "@/components/ui/time-picker";
 import { supabase } from "@/integrations/supabase/client";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
 import { weekdayLabel } from "@/lib/availability-check";
+import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import PatientAutocomplete, { type PatientLookupResult } from "./PatientAutocomplete";
 
 interface Props {
@@ -245,9 +246,7 @@ export default function CreateAppointmentDialog({
           `Cita creada, pero no se pudo sincronizar con ${provider}. Crea el evento manualmente o reintenta más tarde.`
         );
       }
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      invalidateAdminAppointmentViews(queryClient);
       onClose();
     },
     onError: (err: Error) => {
@@ -281,9 +280,7 @@ export default function CreateAppointmentDialog({
           : "Outlook";
         toast.warning(`Cita creada, pero no se pudo sincronizar con ${provider}.`);
       }
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      invalidateAdminAppointmentViews(queryClient);
       setAvailabilityWarning(null);
       onClose();
     },

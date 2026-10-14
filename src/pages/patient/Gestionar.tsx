@@ -18,6 +18,16 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import {
+  formatMx,
+  isBeforeMexicoToday,
+  mexicoTodayPickerDate,
+  pickerDateToYmd,
+} from "@/lib/timezone";
+
+// Fecha y hora de la cita y los horarios para reagendar son siempre hora de
+// CDMX, aunque el paciente abra el enlace desde otra zona horaria.
+const MX_TIME_NOTE = "Horarios en hora del centro de México.";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -92,7 +102,8 @@ export default function Gestionar() {
     setLoadingSlots(true);
     setSelectedSlot(null);
 
-    const dateStr = format(selectedDate, "yyyy-MM-dd");
+    // Fecha de CDMX ("yyyy-MM-dd"); los slots que vuelven son horas de CDMX.
+    const dateStr = pickerDateToYmd(selectedDate);
     fetch(`${SUPABASE_URL}/functions/v1/reserve-slots`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
@@ -142,7 +153,7 @@ export default function Gestionar() {
     setRescheduling(true);
 
     try {
-      const dateStr = format(selectedDate, "yyyy-MM-dd");
+      const dateStr = pickerDateToYmd(selectedDate);
       const res = await fetch(`${SUPABASE_URL}/functions/v1/manage-reschedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
@@ -207,8 +218,10 @@ export default function Gestionar() {
     appointment.status !== "completed" &&
     (isCancelled || new Date(appointment.start_at).getTime() > Date.now());
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // "Hoy" es el de CDMX, no el del navegador (ver Reserva.tsx).
+  const mxToday = mexicoTodayPickerDate();
+  const startAt = new Date(appointment.start_at);
+  const endAt = new Date(appointment.end_at);
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -245,14 +258,15 @@ export default function Gestionar() {
               <div>
                 <span className="font-medium text-muted-foreground">Fecha:</span>{" "}
                 <span className="text-foreground">
-                  {format(new Date(appointment.start_at), "EEEE d 'de' MMMM, yyyy", { locale: es })}
+                  {formatMx(startAt, "EEEE d 'de' MMMM, yyyy", { locale: es })}
                 </span>
               </div>
               <div>
                 <span className="font-medium text-muted-foreground">Horario:</span>{" "}
                 <span className="text-foreground">
-                  {format(new Date(appointment.start_at), "HH:mm")} - {format(new Date(appointment.end_at), "HH:mm")}
+                  {formatMx(startAt, "HH:mm")} - {formatMx(endAt, "HH:mm")}
                 </span>
+                <p className="text-xs text-muted-foreground">{MX_TIME_NOTE}</p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-muted-foreground">Estado:</span>
@@ -302,8 +316,8 @@ export default function Gestionar() {
                         <AlertDialogTitle>¿Cancelar cita?</AlertDialogTitle>
                         <AlertDialogDescription>
                           Esta acción no se puede deshacer. Tu cita con {appointment.doctor_name} el{" "}
-                          {format(new Date(appointment.start_at), "d 'de' MMMM", { locale: es })} a las{" "}
-                          {format(new Date(appointment.start_at), "HH:mm")} será cancelada.
+                          {formatMx(startAt, "d 'de' MMMM", { locale: es })} a las{" "}
+                          {formatMx(startAt, "HH:mm")} (hora del centro de México) será cancelada.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
@@ -345,7 +359,9 @@ export default function Gestionar() {
                   mode="single"
                   selected={selectedDate}
                   onSelect={setSelectedDate}
-                  disabled={(date) => date < today}
+                  disabled={(date) => isBeforeMexicoToday(date)}
+                  today={mxToday}
+                  defaultMonth={mxToday}
                   locale={es}
                 />
               </CardContent>
@@ -358,6 +374,7 @@ export default function Gestionar() {
                     <Clock className="h-4 w-4" />
                     Horarios disponibles — {format(selectedDate, "d 'de' MMMM", { locale: es })}
                   </CardTitle>
+                  <p className="text-xs text-muted-foreground">{MX_TIME_NOTE}</p>
                 </CardHeader>
                 <CardContent>
                   {loadingSlots ? (

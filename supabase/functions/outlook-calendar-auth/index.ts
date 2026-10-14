@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyJwtClaims } from "../_shared/auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { resolveOAuthRedirectOrigin, signOAuthState } from "../_shared/oauth-state.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,12 +10,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function encodeState(doctorId: string, officeId: string, origin?: string | null): string {
-  const base = `${doctorId}:${officeId}`;
-  if (!origin) return base;
-  const b64 = btoa(origin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `${base}:${b64}`;
-}
+// State: signed + expiring token (_shared/oauth-state.ts). Only allow-listed
+// origins are signed; anything else is replaced by the APP_URL origin.
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -97,7 +94,13 @@ serve(async (req) => {
     }
 
     const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/outlook-calendar-callback`;
-    const state = encodeState(office.doctor_id, office.id, origin);
+    const state = await signOAuthState({
+      provider: "outlook",
+      doctorId: office.doctor_id,
+      officeId: office.id,
+      origin: resolveOAuthRedirectOrigin(origin),
+      userId,
+    });
 
     const params = new URLSearchParams({
       client_id: OUTLOOK_CLIENT_ID,

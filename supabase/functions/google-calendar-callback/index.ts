@@ -2,30 +2,19 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleCalendarRedirectUri } from "../_shared/oauth-redirect.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { appOrigin, resolveOAuthRedirectOrigin, verifyOAuthState } from "../_shared/oauth-state.ts";
 
-// State decoder counterpart of google-calendar-auth. Two formats accepted:
-//   * `${doctorId}:${officeId}`                — legacy
-//   * `${doctorId}:${officeId}:${b64(origin)}` — current
-function decodeState(
-  raw: string
-): { doctorId: string; officeId: string; origin: string | null } | null {
-  const parts = raw.split(":");
-  if (parts.length < 2) return null;
-  const [doctorId, officeId, b64Origin] = parts;
-  if (!doctorId || !officeId) return null;
-  let origin: string | null = null;
-  if (b64Origin) {
-    try {
-      const padded = b64Origin.replace(/-/g, "+").replace(/_/g, "/");
-      origin = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
-    } catch {
-      origin = null;
-    }
-  }
-  return { doctorId, officeId, origin };
-}
-
+// Counterpart of google-calendar-auth. The state is a signed, expiring token
+// (_shared/oauth-state.ts); a state that fails verification never touches the
+// database, and the popup is only redirected to allow-listed origins (until
+// the state is verified, only the APP_URL origin is trusted).
 serve(async (req) => {
+  let redirectOrigin = appOrigin();
+  const redirectTo = (path: string) =>
+    new Response(null, { status: 302, headers: { Location: `${redirectOrigin}${path}` } });
+  const fail = (message: string) =>
+    redirectTo(`/google-calendar-success?error=${encodeURIComponent(message)}`);
+
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
@@ -36,39 +25,33 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = getServiceKey();
     const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-    const SITE_URL_FALLBACK = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
     // MUST match the redirect_uri sent by google-calendar-auth exactly, or
     // Google rejects the exchange with redirect_uri_mismatch. Both import the
     // same shared constant to guarantee that.
     const REDIRECT_URI = getGoogleCalendarRedirectUri();
 
-    // Resolve which origin to redirect to: prefer the one encoded in `state`
-    // by the frontend that initiated this flow; fall back to SITE_URL.
-    let redirectOrigin = SITE_URL_FALLBACK;
-    if (state) {
-      const decodedState = decodeState(state);
-      if (decodedState?.origin) redirectOrigin = decodedState.origin;
+    const verified = state ? await verifyOAuthState(state, "google") : null;
+    // A correctly signed state (even if expired) says where the popup came
+    // from; the allow-list is applied again before redirecting there.
+    if (verified && (verified.ok || verified.reason === "expired")) {
+      redirectOrigin = resolveOAuthRedirectOrigin(verified.data.origin);
     }
-
-    const redirectTo = (path: string) =>
-      new Response(null, { status: 302, headers: { Location: `${redirectOrigin}${path}` } });
 
     if (error) {
-      return redirectTo(`/google-calendar-success?error=${encodeURIComponent(`Google rechazó la conexión: ${error}`)}`);
+      return fail(`Google rechazó la conexión: ${error}`);
     }
     if (!code || !state) {
-      return redirectTo(`/google-calendar-success?error=${encodeURIComponent("Faltan parámetros")}`);
+      return fail("Faltan parámetros");
     }
-
-    const decoded = decodeState(state);
-    if (!decoded) {
-      // Could be a stale OAuth flow started before the multi-office migration.
-      return redirectTo(
-        `/google-calendar-success?error=${encodeURIComponent(
-          "Sesión OAuth caducada por actualización del sistema. Inténtalo de nuevo desde Configuración."
-        )}`
+    if (!verified?.ok) {
+      console.warn("[google-calendar-callback] state rejected:", verified?.reason ?? "missing");
+      return fail(
+        verified?.reason === "expired"
+          ? "La conexión tardó demasiado y expiró. Inténtalo de nuevo desde Configuración."
+          : "El enlace de conexión no es válido. Inténtalo de nuevo desde Configuración."
       );
     }
+    const decoded = verified.data;
 
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -84,16 +67,12 @@ serve(async (req) => {
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) {
       console.error("Token exchange failed:", tokenData);
-      return redirectTo(`/google-calendar-success?error=${encodeURIComponent("No se pudo obtener el token de Google")}`);
+      return fail("No se pudo obtener el token de Google");
     }
     const { refresh_token } = tokenData;
     if (!refresh_token) {
       console.error("No refresh_token returned.");
-      return redirectTo(
-        `/google-calendar-success?error=${encodeURIComponent(
-          "No se recibió refresh token. Revoca el acceso en tu cuenta de Google e inténtalo de nuevo."
-        )}`
-      );
+      return fail("No se recibió refresh token. Revoca el acceso en tu cuenta de Google e inténtalo de nuevo.");
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -113,16 +92,12 @@ serve(async (req) => {
 
     if (updateError) {
       console.error("DB update error:", updateError);
-      return redirectTo(`/google-calendar-success?error=${encodeURIComponent("Error al guardar la conexión en la base de datos")}`);
+      return fail("Error al guardar la conexión en la base de datos");
     }
 
     return redirectTo("/google-calendar-success");
   } catch (err) {
     console.error("Callback error:", err);
-    const SITE_URL = Deno.env.get("SITE_URL") || "https://findmed.lovable.app";
-    return new Response(null, {
-      status: 302,
-      headers: { Location: `${SITE_URL}/google-calendar-success?error=${encodeURIComponent("Ocurrió un error inesperado")}` },
-    });
+    return fail("Ocurrió un error inesperado");
   }
 });

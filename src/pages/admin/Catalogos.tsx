@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,47 @@ import { FilterBar, SearchInput } from "@/components/app/FilterBar";
 import { EmptyState } from "@/components/app/EmptyState";
 
 type IconType = ComponentType<{ className?: string }>;
+
+/* ═══════ Query keys ═══════
+ * Una llave = una forma de dato (ERRORES.md 2026-10-13). Las ciudades y zonas se
+ * leen con varias formas, cada una con su llave:
+ *   ["catalog-cities"]               todas, todas las columnas (pestaña Ciudades)
+ *   ["catalog-cities-active"]        activas, id + name (selects de Zonas, Hospitales, Laboratorios)
+ *   ["catalog-zones"]                todas + nombre de la ciudad (pestaña Zonas)
+ *   ["catalog-zones-active", city]   activas, id + name (selects de Hospitales, Laboratorios)
+ *   ["catalog-hospitals"] / ["catalog-laboratories"]  muestran nombre de ciudad y zona
+ * Fuera de Catálogos hay otras listas de ciudades/zonas (alta de doctor,
+ * consultorios, filtros de la Agenda); también se marcan como viejas para que no
+ * ofrezcan una ciudad borrada o desactivada. invalidateQueries compara por
+ * prefijo: ["catalog-zones-active"] alcanza todas las ciudades.
+ */
+const CITY_DEPENDENT_KEYS = [
+  ["catalog-cities"],
+  ["catalog-cities-active"],
+  ["catalog-zones"],
+  ["catalog-hospitals"],
+  ["catalog-laboratories"],
+  ["cities"],
+  ["all-cities"],
+  ["admin-cities"],
+] as const;
+
+const ZONE_DEPENDENT_KEYS = [
+  ["catalog-zones"],
+  ["catalog-zones-active"],
+  ["catalog-hospitals"],
+  ["catalog-laboratories"],
+  ["zones"],
+  ["zones-for-city"],
+  ["admin-zones"],
+] as const;
+
+function invalidateKeys(qc: QueryClient, keys: readonly (readonly string[])[]) {
+  for (const queryKey of keys) qc.invalidateQueries({ queryKey: [...queryKey] });
+}
+
+const invalidateCities = (qc: QueryClient) => invalidateKeys(qc, CITY_DEPENDENT_KEYS);
+const invalidateZones = (qc: QueryClient) => invalidateKeys(qc, ZONE_DEPENDENT_KEYS);
 
 /* ═══════ Delete Confirm Dialog ═══════ */
 
@@ -290,6 +331,7 @@ function CitiesTab() {
       if (error) throw error;
       return data ?? [];
     },
+    placeholderData: keepPreviousData,
   });
 
   const addMut = useMutation({
@@ -297,7 +339,7 @@ function CitiesTab() {
       const { error } = await supabase.from("cities").insert({ name: n });
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-cities"] }); toast({ title: "Ciudad creada" }); setShowAdd(false); setName(""); },
+    onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad creada" }); setShowAdd(false); setName(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -306,7 +348,7 @@ function CitiesTab() {
       const { error } = await supabase.from("cities").update({ name }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-cities"] }); toast({ title: "Ciudad actualizada" }); setEditItem(null); setName(""); },
+    onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad actualizada" }); setEditItem(null); setName(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -315,7 +357,7 @@ function CitiesTab() {
       const { error } = await supabase.from("cities").update({ is_active }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["catalog-cities"] }),
+    onSuccess: () => invalidateCities(qc),
     onError: () => toast({ title: "Error al cambiar estado", variant: "destructive" }),
   });
 
@@ -324,7 +366,7 @@ function CitiesTab() {
       const { error } = await supabase.from("cities").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-cities"] }); toast({ title: "Ciudad eliminada" }); setDeleteItem(null); },
+    onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad eliminada" }); setDeleteItem(null); },
     onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
   });
 
@@ -399,8 +441,11 @@ function ZonesTab() {
   const [newZoneCityId, setNewZoneCityId] = useState("");
   const [search, setSearch] = useState("");
 
+  // Solo ciudades activas (id + name): misma forma y llave que en Hospitales y
+  // Laboratorios. Antes compartía ["catalog-cities"] con la pestaña Ciudades,
+  // que lee todas las columnas de todas las ciudades.
   const { data: cities } = useQuery({
-    queryKey: ["catalog-cities"],
+    queryKey: ["catalog-cities-active"],
     queryFn: async () => {
       const { data } = await supabase.from("cities").select("id, name").eq("is_active", true).order("name");
       return data ?? [];
@@ -414,6 +459,7 @@ function ZonesTab() {
       if (error) throw error;
       return data ?? [];
     },
+    placeholderData: keepPreviousData,
   });
 
   const addMut = useMutation({
@@ -421,7 +467,7 @@ function ZonesTab() {
       const { error } = await supabase.from("zones").insert({ name, city_id });
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-zones"] }); toast({ title: "Zona creada" }); setShowAdd(false); setName(""); },
+    onSuccess: () => { invalidateZones(qc); toast({ title: "Zona creada" }); setShowAdd(false); setName(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -430,7 +476,7 @@ function ZonesTab() {
       const { error } = await supabase.from("zones").update({ name }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-zones"] }); toast({ title: "Zona actualizada" }); setEditItem(null); setName(""); },
+    onSuccess: () => { invalidateZones(qc); toast({ title: "Zona actualizada" }); setEditItem(null); setName(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -439,7 +485,7 @@ function ZonesTab() {
       const { error } = await supabase.from("zones").update({ is_active }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["catalog-zones"] }),
+    onSuccess: () => invalidateZones(qc),
     onError: () => toast({ title: "Error al cambiar estado", variant: "destructive" }),
   });
 
@@ -448,7 +494,7 @@ function ZonesTab() {
       const { error } = await supabase.from("zones").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["catalog-zones"] }); toast({ title: "Zona eliminada" }); setDeleteItem(null); },
+    onSuccess: () => { invalidateZones(qc); toast({ title: "Zona eliminada" }); setDeleteItem(null); },
     onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
   });
 

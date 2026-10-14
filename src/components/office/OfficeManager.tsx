@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import OfficeFormDialog from "./OfficeFormDialog";
 import OfficeCalendarConnector from "./OfficeCalendarConnector";
 
@@ -155,7 +156,8 @@ export default function OfficeManager({ doctorId }: Props) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: officesKey });
       queryClient.invalidateQueries({ queryKey: ["doctor-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
+      // Borrar un consultorio cancela sus citas futuras: calendario, lista e Inicio del admin.
+      invalidateAdminAppointmentViews(queryClient);
       const cancelled = data?.cancelled ?? 0;
       toast.success(
         cancelled > 0

@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleCalendarRedirectUri } from "../_shared/oauth-redirect.ts";
 import { verifyJwtClaims } from "../_shared/auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { resolveOAuthRedirectOrigin, signOAuthState } from "../_shared/oauth-state.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,17 +11,10 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// State format: `${doctor_id}:${office_id}` plus an optional URL-safe base64
-// origin tail (`:b64(origin)`). The origin is the frontend URL that initiated
-// the OAuth flow — we'll redirect there on the callback so it works across
-// localhost / staging / production without depending on a single SITE_URL env.
-function encodeState(doctorId: string, officeId: string, origin?: string | null): string {
-  const base = `${doctorId}:${officeId}`;
-  if (!origin) return base;
-  // base64url-encode the origin so it survives the OAuth round-trip.
-  const b64 = btoa(origin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `${base}:${b64}`;
-}
+// State: signed + expiring token from _shared/oauth-state.ts carrying the
+// doctor, office and frontend origin (the callback redirects the popup there
+// so the flow works on localhost / staging / production). Only allow-listed
+// origins are signed; anything else is replaced by the APP_URL origin.
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -122,7 +116,13 @@ serve(async (req) => {
     // callback Edge Function). Shared with google-calendar-callback so the
     // value sent to Google is byte-identical in both steps.
     const REDIRECT_URI = getGoogleCalendarRedirectUri();
-    const state = encodeState(office.doctor_id, office.id, origin);
+    const state = await signOAuthState({
+      provider: "google",
+      doctorId: office.doctor_id,
+      officeId: office.id,
+      origin: resolveOAuthRedirectOrigin(origin),
+      userId,
+    });
 
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,

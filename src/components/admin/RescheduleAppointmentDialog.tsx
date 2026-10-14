@@ -29,6 +29,7 @@ import { TimePicker } from "@/components/ui/time-picker";
 import { supabase } from "@/integrations/supabase/client";
 import { buildMexicoIso, formatMx } from "@/lib/timezone";
 import { weekdayLabel } from "@/lib/availability-check";
+import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 
 interface Props {
   open: boolean;
@@ -140,9 +141,7 @@ export default function RescheduleAppointmentDialog({
           : "Outlook";
         toast.warning(`Cita reagendada, pero no se pudo sincronizar con ${provider}.`);
       }
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      invalidateAdminAppointmentViews(queryClient);
       onRescheduled?.();
       onClose();
     },
@@ -168,9 +167,7 @@ export default function RescheduleAppointmentDialog({
       const warnings = data.sync_warnings ?? [];
       if (warnings.length === 0) toast.success("Cita reagendada (fuera de disponibilidad)");
       else toast.warning("Cita reagendada con sincronización parcial.");
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      invalidateAdminAppointmentViews(queryClient);
       setAvailabilityWarning(null);
       onRescheduled?.();
       onClose();

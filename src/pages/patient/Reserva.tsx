@@ -1,12 +1,22 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { format, addDays } from "date-fns";
+import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Calendar } from "@/components/ui/calendar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MapPin, Clock, CheckCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  formatMx,
+  isBeforeMexicoToday,
+  mexicoTodayPickerDate,
+  pickerDateToYmd,
+} from "@/lib/timezone";
+
+// Los horarios (slots, fecha y hora de la cita) son siempre hora de CDMX,
+// aunque el paciente abra el enlace desde otra zona horaria.
+const MX_TIME_NOTE = "Horarios en hora del centro de México.";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -77,7 +87,9 @@ export default function Reserva() {
     setLoadingSlots(true);
     setSelectedSlot(null);
 
-    const dateStr = format(selectedDate, "yyyy-MM-dd");
+    // El día elegido es una fecha de CDMX ("yyyy-MM-dd"); reserve-slots devuelve
+    // horas "HH:mm" de CDMX para ese día.
+    const dateStr = pickerDateToYmd(selectedDate);
     fetch(`${SUPABASE_URL}/functions/v1/reserve-slots`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
@@ -103,7 +115,7 @@ export default function Reserva() {
     setBooking(true);
 
     try {
-      const dateStr = format(selectedDate, "yyyy-MM-dd");
+      const dateStr = pickerDateToYmd(selectedDate);
       const res = await fetch(`${SUPABASE_URL}/functions/v1/reserve-create`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
@@ -163,12 +175,13 @@ export default function Reserva() {
               <p><span className="font-medium text-foreground">Doctor:</span> {booked.doctor_name}</p>
               <p>
                 <span className="font-medium text-foreground">Fecha:</span>{" "}
-                {format(new Date(booked.start_at), "EEEE d 'de' MMMM, yyyy", { locale: es })}
+                {formatMx(new Date(booked.start_at), "EEEE d 'de' MMMM, yyyy", { locale: es })}
               </p>
               <p>
                 <span className="font-medium text-foreground">Horario:</span>{" "}
-                {format(new Date(booked.start_at), "HH:mm")} - {format(new Date(booked.end_at), "HH:mm")}
+                {formatMx(new Date(booked.start_at), "HH:mm")} - {formatMx(new Date(booked.end_at), "HH:mm")}
               </p>
+              <p className="text-xs">{MX_TIME_NOTE}</p>
             </div>
             <a
               href={booked.manage_url}
@@ -184,8 +197,9 @@ export default function Reserva() {
 
   if (!session) return null;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // "Hoy" es el de CDMX, no el del navegador: así el calendario no se recorre
+  // un día para quien abre el enlace desde otra zona horaria.
+  const mxToday = mexicoTodayPickerDate();
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -216,7 +230,9 @@ export default function Reserva() {
               mode="single"
               selected={selectedDate}
               onSelect={setSelectedDate}
-              disabled={(date) => date < today}
+              disabled={(date) => isBeforeMexicoToday(date)}
+              today={mxToday}
+              defaultMonth={mxToday}
               locale={es}
             />
           </CardContent>
@@ -230,6 +246,7 @@ export default function Reserva() {
                 <Clock className="h-4 w-4" />
                 Horarios disponibles — {format(selectedDate, "d 'de' MMMM", { locale: es })}
               </CardTitle>
+              <p className="text-xs text-muted-foreground">{MX_TIME_NOTE}</p>
             </CardHeader>
             <CardContent>
               {loadingSlots ? (
