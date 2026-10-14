@@ -1,4 +1,4 @@
-# Prompt del agente FINDI — v2.5 (WHAAPY nativo + MCP de FindMed)
+# Prompt del agente FINDI — v2.6 (WHAAPY nativo + MCP de FindMed)
 
 > Versión 2.1 · 12-oct-2026 · Bloque B8. Estructura tomada del prompt de MENNA (Daniela v11), que funciona
 > con herramientas, más lo que sí servía de FINDI v1 (n8n): ruta de seguridad, recolección de síntomas y tono.
@@ -12,6 +12,11 @@ El prompt vive en `FINDI-prompt.txt`. Cualquier cambio se hace ahí y se sube la
 
 v2.5 (14-oct-2026): ver las últimas filas de la tabla (necesidad primero, nunca "no tenemos médicos en tu zona",
 seguro con aseguradora y póliza, hospitales de la red en urgencias del día, documentos recibidos).
+
+v2.6 (14-oct-2026): opciones más cercanas con distancia y horarios cuando no hay consultorio en la zona del paciente
+(queja del cliente: "no tengo médicos en Chimalhuacán, te canalizo con alguien"). Requiere la migración
+`20261014140000_geo_proximity.sql` y desplegar `findmed-mcp`; no hay herramientas nuevas (siguen 13), pero hay que
+**re-sincronizar** las tools en WHAAPY para que tome el esquema y la descripción nuevos de `search_care_options`.
 
 | Antes | v2.1 | Motivo |
 |---|---|---|
@@ -33,3 +38,5 @@ seguro con aseguradora y póliza, hospitales de la red en urgencias del día, do
 | v2.4: `urgencias_hoy` → "ve a urgencias" + persona, sin decir a dónde | v2.5: `find_network_hospitals` con la ciudad del paciente, 1–3 hospitales de la red con dirección y teléfono (solo si el catálogo lo tiene), caso `urgency` con prioridad `urgent` + `request_handoff`. `urgencias_inmediato`: primero 911 / urgencia más cercana, sin buscar hospitales | Decisión FindMed (c) |
 | v2.4: "Recibido, gracias" | v2.5: al recibir foto/PDF tras la solicitud, agradece y confirma que sus documentos ya quedaron con el equipo. FindMed marca la cita "Documentos recibidos" y avisa al admin (sin guardar archivos) | Decisión FindMed (b) |
 | — | v2.5: herramientas nuevas en la referencia, mapa de triggers y errores: `save_patient_insurance`, `find_network_hospitals`, `find_network_laboratories` (re-sincronizar herramientas en WHAAPY: 13) | — |
+| v2.5: sin consultorio en la zona → "other_zones" de la misma ciudad u "other_cities" sin noción de cercanía; un municipio fuera del catálogo (Chimalhuacán, Neza) terminaba en "te canalizo con alguien" | v2.6: `search_care_options` ubica al paciente (zona del catálogo con coordenadas → nomenclátor local de alcaldías, municipios conurbados y colonias → geocodificador opcional) y devuelve las opciones más cercanas de cualquier ciudad (CDMX y Edomex son una sola zona metropolitana, radio 60 km) con `distance_km`, `next_slots` (2–3 horarios de los próximos 7 días) y `nearest=true` + `note`. PASO 5: presentarlas directamente y preguntar cuál le queda mejor; persona solo si las rechaza todas, la pide o no hay ninguna. FALLO 8, prohibiciones y referencia actualizados | Queja del cliente (14-oct): "lo que queremos es que el bot diga no tengo en Chimalhuacán pero tengo en la Roma, en Naucalpan… y los horarios disponibles son estos" |
+| v2.5: "zona o colonia" | v2.6: PASO 4 pide "colonia o municipio" y lo pasa tal cual como zone; si no entiende dónde está, pregunta (nunca escala por eso) | Pacientes de municipios conurbados |

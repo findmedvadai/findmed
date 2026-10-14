@@ -343,18 +343,24 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          latitude: number | null
+          longitude: number | null
           name: string
         }
         Insert: {
           created_at?: string
           id?: string
           is_active?: boolean
+          latitude?: number | null
+          longitude?: number | null
           name: string
         }
         Update: {
           created_at?: string
           id?: string
           is_active?: boolean
+          latitude?: number | null
+          longitude?: number | null
           name?: string
         }
         Relationships: []
@@ -715,6 +721,39 @@ export type Database = {
           processed_at?: string | null
           status?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      geo_cache: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          found: boolean
+          latitude: number | null
+          longitude: number | null
+          provider: string
+          query: string
+          query_key: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          found: boolean
+          latitude?: number | null
+          longitude?: number | null
+          provider?: string
+          query: string
+          query_key: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          found?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          provider?: string
+          query?: string
+          query_key?: string
         }
         Relationships: []
       }
@@ -1661,6 +1700,45 @@ export type Database = {
         }
         Relationships: []
       }
+      triage_changes: {
+        Row: {
+          action: string
+          actor_email: string | null
+          actor_user_id: string | null
+          after: Json | null
+          before: Json | null
+          condition_id: number | null
+          created_at: string
+          entity: string
+          especialidad: string | null
+          id: number
+        }
+        Insert: {
+          action: string
+          actor_email?: string | null
+          actor_user_id?: string | null
+          after?: Json | null
+          before?: Json | null
+          condition_id?: number | null
+          created_at?: string
+          entity: string
+          especialidad?: string | null
+          id?: never
+        }
+        Update: {
+          action?: string
+          actor_email?: string | null
+          actor_user_id?: string | null
+          after?: Json | null
+          before?: Json | null
+          condition_id?: number | null
+          created_at?: string
+          entity?: string
+          especialidad?: string | null
+          id?: never
+        }
+        Relationships: []
+      }
       triage_findmed: {
         Row: {
           accion_operativa: string | null
@@ -1679,6 +1757,13 @@ export type Database = {
           si_esto_aparece_subir_a_urgencias: string | null
           source: string
           validado: boolean
+          is_active: boolean
+          notas: string | null
+          updated_at: string
+          updated_by: string | null
+          validated_at: string | null
+          validated_by: string | null
+          validated_by_email: string | null
         }
         Insert: {
           accion_operativa?: string | null
@@ -1697,6 +1782,13 @@ export type Database = {
           si_esto_aparece_subir_a_urgencias?: string | null
           source?: string
           validado?: boolean
+          is_active?: boolean
+          notas?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          validated_at?: string | null
+          validated_by?: string | null
+          validated_by_email?: string | null
         }
         Update: {
           accion_operativa?: string | null
@@ -1715,6 +1807,13 @@ export type Database = {
           si_esto_aparece_subir_a_urgencias?: string | null
           source?: string
           validado?: boolean
+          is_active?: boolean
+          notas?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          validated_at?: string | null
+          validated_by?: string | null
+          validated_by_email?: string | null
         }
         Relationships: []
       }
@@ -1879,6 +1978,8 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          latitude: number | null
+          longitude: number | null
           name: string
         }
         Insert: {
@@ -1886,6 +1987,8 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          latitude?: number | null
+          longitude?: number | null
           name: string
         }
         Update: {
@@ -1893,6 +1996,8 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          latitude?: number | null
+          longitude?: number | null
           name?: string
         }
         Relationships: [

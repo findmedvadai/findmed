@@ -7,14 +7,24 @@
 // The server normalizes it and scopes every read/write to that patient.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { type CareOption, citiesWithSpecialty, searchCareOptions } from "../_shared/care-search.ts";
+import {
+  type CareOption,
+  citiesWithSpecialty,
+  NEARBY_LIMIT,
+  NEARBY_MAX_KM,
+  type NearbyCareOption,
+  resolveSearchOrigin,
+  searchCareOptions,
+  searchNearbyCareOptions,
+} from "../_shared/care-search.ts";
+import { nextAvailableSlots } from "../_shared/day-slots.ts";
 import { findNetworkPlaces, type NetworkKind, NETWORK_DEFAULT_LIMIT, NETWORK_MAX_LIMIT } from "../_shared/network-search.ts";
 import { INSURER_MAX, POLICY_MAX, savePatientInsuranceById, savePatientInsuranceByPhone } from "../_shared/patient-insurance.ts";
 import { computeDaySlots } from "../_shared/day-slots.ts";
 import { createReservationSession } from "../_shared/booking-session.ts";
 import { findUpcomingAppointmentsByPhone } from "../_shared/appointment-actions.ts";
 import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "../_shared/phone.ts";
-import { msToMxIso } from "../_shared/mx-time.ts";
+import { formatMxLongDateTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { commitAction, getOperation, prepareAction } from "../_shared/operations.ts";
 import { getMyCases, openCase, PRIORITIES, REQUEST_TYPES, requestHandoff, type Priority, type RequestType } from "../_shared/cases.ts";
@@ -82,19 +92,54 @@ const optionOut = (o: CareOption) => ({
   zone: o.zone,
 });
 
+// Nearest-options search: an option with distance and its next free slots.
+type RankedOption = CareOption & Partial<Pick<NearbyCareOption, "distance_km" | "distance_basis" | "in_requested_zone">>;
+
+const pickDistance = (o: NearbyCareOption | undefined) =>
+  o ? { distance_km: o.distance_km, distance_basis: o.distance_basis } : {};
+
+const SLOT_DAYS = 7;
+const SLOTS_PER_OPTION = 3;
+// WHAAPY cuts tools/call at 30 s (server answers at 25 s): slots get what fits in this budget.
+const SLOTS_BUDGET_MS = 12_000;
+
+async function rankedOptionsOut(supabase: SupabaseClient, options: RankedOption[], startedAt: number) {
+  const deadlineMs = startedAt + SLOTS_BUDGET_MS;
+  return await Promise.all(options.map(async (o) => {
+    const next = await nextAvailableSlots(supabase, o.office_id, { days: SLOT_DAYS, max: SLOTS_PER_OPTION, deadlineMs });
+    return {
+      ...optionOut(o),
+      distance_km: o.distance_km ?? null,
+      distance_basis: o.distance_basis ?? null,
+      in_requested_zone: o.in_requested_zone ?? null,
+      next_slots: next.slots.map((s) => ({
+        date: s.date,
+        time: s.time,
+        label: formatMxLongDateTime(mxLocalToMs(s.date, s.time)),
+        por_confirmar: s.unverified,
+      })),
+      // verified | external_calendar_unverified ("por confirmar") | none_in_range (sin horarios en 7 días) | not_checked
+      slots_status: next.status,
+    };
+  }));
+}
+
 const searchCareOptionsTool: ToolDef = {
   name: "search_care_options",
   safety: "read_only",
   description: [
-    "Busca médicos y consultorios de FindMed por especialidad y ubicación.",
-    "When to use: SOLO cuando ya sabes QUÉ necesita el paciente (la especialidad que pidió, o la que devolvió suggest_specialty) Y su ciudad (zona/colonia opcional). Si solo dijo 'quiero una cita', primero pregunta qué necesita.",
+    "Busca médicos y consultorios de FindMed por especialidad y ubicación, y cuando el paciente da su colonia, municipio o alcaldía devuelve las opciones MÁS CERCANAS con distancia y próximos horarios.",
+    "When to use: SOLO cuando ya sabes QUÉ necesita el paciente (la especialidad que pidió, o la que devolvió suggest_specialty) Y dónde está: ciudad y, si la dijo, zona/colonia/municipio (p. ej. city='Estado de México', zone='Chimalhuacán'; también sirve city='Neza'). Si solo dijo 'quiero una cita', primero pregunta qué necesita.",
     "Never use for: diagnosticar, adivinar la especialidad, ni para decidir que FindMed no puede ayudar.",
-    "Result: data.result es 'none', 'one' o 'many'. Con 'many' presenta las opciones (médico + consultorio + zona) y pide que el paciente elija; NUNCA elijas tú la primera. Con 'one' confirma la sede con el paciente. Guarda doctor_id y office_id de la opción elegida para create_booking_link.",
+    "Result: data.result es 'none', 'one' o 'many'. Con 'many' presenta las opciones y pide que el paciente elija; NUNCA elijas tú la primera. Con 'one' confirma la sede con el paciente. Guarda doctor_id y office_id de la opción elegida para create_booking_link.",
+    "Cercanía: cada opción puede traer distance_km (km aproximados en línea recta; si distance_basis='city' di solo la ciudad, sin km), in_requested_zone y next_slots (hasta 3 horarios de los próximos 7 días con label listo para el paciente; por_confirmar=true → di 'por confirmar'; slots_status='none_in_range' → sin horarios esta semana, el enlace muestra más fechas).",
+    "Si data.nearest=true (data.requested_location_has_options=false): no hay consultorio en el lugar que dijo (data.requested_location), pero estas SÍ son las más cercanas y se pueden agendar. Sigue data.note: preséntalas directamente (médico · consultorio · zona · ~km · 2–3 horarios) y pregunta cuál le queda mejor. NO pases a una persona como primera respuesta.",
     "Si result='none' NUNCA digas que FindMed no tiene médicos en su zona o ciudad. Revisa data.reason y data.alternatives:",
     "- ambiguous_city / unknown_city / unknown_specialty → haz la nextQuestion (unknown_city trae data.available_cities: ciudades donde sí hay opciones). Si la especialidad no se reconoce y el paciente no sabe cuál necesita, usa suggest_specialty con sus síntomas.",
     "- unknown_zone / no_active_offices con data.alternatives.scope='other_zones' → en su ciudad sí hay opciones en otras zonas: preséntalas (data.alternatives.options, máximo 3, médico · consultorio · zona) o haz la nextQuestion. Las opciones traen doctor_id y office_id válidos.",
-    "- data.alternatives.scope='other_cities' → hay opciones en otras ciudades (data.alternatives.cities): ofrécelas con la nextQuestion; si no le sirven, abre caso appointment_help + request_handoff.",
+    "- data.alternatives.scope='other_cities' → no hay opciones a menos de ~60 km; data.alternatives.cities trae las ciudades con opciones (con distance_km cuando se conoce): ofrécelas con la nextQuestion; si no le sirven, abre caso appointment_help + request_handoff.",
     "- data.escalate=true (sin alternativas) → abre caso appointment_help + request_handoff y di que una persona de FindMed le ayudará a encontrar opción.",
+    "Pasa a una persona solo si el paciente rechaza todas las opciones, la pide, o data.escalate=true.",
     "Side effects: ninguno.",
   ].join("\n"),
   inputSchema: {
@@ -104,14 +149,16 @@ const searchCareOptionsTool: ToolDef = {
     properties: {
       specialty: { type: "string", minLength: 2, maxLength: 80, description: "Especialidad o especialista, p. ej. 'Ortopedia' u 'ortopedista'." },
       city: { type: "string", minLength: 2, maxLength: 80, description: "Ciudad tal como la dijo el paciente (se aceptan abreviaturas como CDMX)." },
-      zone: { type: "string", maxLength: 80, description: "Zona o colonia, opcional." },
+      zone: { type: "string", maxLength: 80, description: "Zona, colonia, alcaldía o municipio tal como lo dijo el paciente (p. ej. 'Chimalhuacán', 'Roma', 'Neza'), opcional pero recomendado: con él se ordenan las opciones por cercanía." },
     },
   },
   async handler(supabase, args) {
+    const startedAt = Date.now();
     const especialidad = String(args.specialty);
     const ciudad = String(args.city);
     const zoneAsked = typeof args.zone === "string" && args.zone.trim() !== "";
-    const r = await searchCareOptions(supabase, { especialidad, ciudad, zona: zoneAsked ? String(args.zone) : null });
+    const zoneText = zoneAsked ? String(args.zone).trim() : null;
+    const r = await searchCareOptions(supabase, { especialidad, ciudad, zona: zoneText });
     if (!r.ok) return fail("temporarily_unavailable", "No pude consultar el catálogo en este momento.");
 
     const data: Record<string, unknown> & { city: string | null; city_candidates: string[] } = {
@@ -124,22 +171,88 @@ const searchCareOptionsTool: ToolDef = {
       options: r.options.map(optionOut),
       alternatives: null,
       escalate: false,
+      requested_location: zoneText,
+      requested_location_has_options: null,
+      nearest: false,
+      max_distance_km: NEARBY_MAX_KM,
+      note: null,
     };
-    if (r.result !== "none") return { ok: true, status: "success", data };
 
     const ask = (nextQuestion: string): ToolOutcome => ({ ok: true, status: "needs_more_info", data, nextQuestion });
     const label = (matched: string[]) => matched[0] ?? especialidad;
+    const temporarilyUnavailable = () => fail("temporarily_unavailable", "No pude consultar el catálogo en este momento.");
 
     if (r.reason === "ambiguous_city") return ask(`¿En cuál de estas ciudades quieres atenderte: ${data.city_candidates.join(", ")}?`);
     if (r.reason === "unknown_specialty") return ask("¿Me confirmas qué especialista buscas o qué te está pasando?");
+
+    // Options in the exact zone the patient named: those first, then (when
+    // there are fewer than 3) the nearest others, each with its next slots.
+    if (r.result !== "none") {
+      if (!zoneText || r.zones.length === 0) return { ok: true, status: "success", data };
+      data.requested_location_has_options = true;
+      const zoneIds = r.zones.map((z) => z.id);
+      const origin = await resolveSearchOrigin(supabase, { zoneText, cityText: ciudad, city: r.city });
+      let ranked: RankedOption[] = r.options.map((o) => ({ ...o, in_requested_zone: true }));
+      if (origin) {
+        data.requested_location = origin.label;
+        const near = await searchNearbyCareOptions(supabase, { especialidad, origin: origin.point, requestedZoneIds: zoneIds, limit: NEARBY_LIMIT + r.options.length });
+        if (near.ok) {
+          const byOffice = new Map(near.options.map((o) => [o.office_id, o]));
+          ranked = ranked.map((o) => ({ ...o, ...pickDistance(byOffice.get(o.office_id)) }));
+          const fill = near.options.filter((o) => !r.options.some((x) => x.office_id === o.office_id));
+          ranked = [...ranked, ...fill.slice(0, Math.max(0, 3 - ranked.length))];
+        }
+      }
+      if (ranked.length <= NEARBY_LIMIT) data.options = await rankedOptionsOut(supabase, ranked, startedAt);
+      data.result = ranked.length === 1 ? "one" : "many";
+      return { ok: true, status: "success", data };
+    }
+
+    // Nothing in the city/zone as named: rank by distance to where the
+    // patient is (zone, municipality or the city itself), across cities.
+    const origin = await resolveSearchOrigin(supabase, { zoneText, cityText: ciudad, city: r.city });
+    if (origin) {
+      data.requested_location = origin.label;
+      const near = await searchNearbyCareOptions(supabase, { especialidad, origin: origin.point, requestedZoneIds: origin.zone_ids });
+      if (!near.ok) return temporarilyUnavailable();
+      if (near.options.length > 0) {
+        const inPlace = near.options.some((o) => o.in_requested_zone);
+        data.result = near.options.length === 1 ? "one" : "many";
+        data.reason = null;
+        data.matched_specialties = near.matched_specialties;
+        data.requested_location_has_options = inPlace;
+        data.nearest = !inPlace;
+        data.options = await rankedOptionsOut(supabase, near.options, startedAt);
+        if (!inPlace) {
+          data.note = `No hay consultorio de ${label(near.matched_specialties)} en ${origin.label}; estas son las opciones más cercanas (distancia aproximada en línea recta) y se pueden agendar. ` +
+            "Preséntalas directamente con zona, distancia y 2–3 horarios de cada una, y pregunta cuál le queda mejor. " +
+            "Pasa a una persona solo si las rechaza todas o la pide.";
+        }
+        return { ok: true, status: "success", data };
+      }
+      if (near.nearest_cities_beyond.length > 0) {
+        const [first, ...rest] = near.nearest_cities_beyond;
+        data.alternatives = {
+          scope: "other_cities",
+          cities: near.nearest_cities_beyond.map((c) => ({ city: c.city, options: c.options, distance_km: c.distance_km })),
+        };
+        const others = rest.length > 0 ? ` También tengo en ${rest.map((c) => c.city).join(", ")}.` : "";
+        return ask(
+          `Cerca de ${origin.label} no tengo consultorio de ${label(near.matched_specialties)}. La opción más cercana está en ${first.city} (a unos ${first.distance_km} km).${others} ¿Te queda bien o prefieres que una persona de FindMed te busque una alternativa más cerca?`,
+        );
+      }
+      // No office of the specialty has coordinates yet: fall back to the
+      // catalog-only alternatives below.
+    }
+
     if (r.reason === "unknown_city") {
       // Help the patient place themselves instead of looping on "¿en qué ciudad?".
       const cities = (await citiesWithSpecialty(supabase, especialidad)) ?? [];
       data.available_cities = cities.map((c) => c.city);
       return ask(
         cities.length > 0
-          ? `¿En qué ciudad quieres atenderte? Tengo opciones en: ${cities.map((c) => c.city).join(", ")}.`
-          : "¿En qué ciudad quieres atenderte?",
+          ? `¿En qué ciudad y colonia o municipio quieres atenderte? Tengo opciones en: ${cities.map((c) => c.city).join(", ")}.`
+          : "¿En qué ciudad y colonia o municipio quieres atenderte?",
       );
     }
 

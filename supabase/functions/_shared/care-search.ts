@@ -14,6 +14,8 @@
 // reported as ambiguous when it hits more than one city.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { type GeoPoint, geocodeMx, haversineKm, roundKm, toPoint } from "./geo.ts";
+import { findMxPlace, normalizePlace } from "./mx-places.ts";
 
 export function normalizeText(s: string): string {
   return s
@@ -284,4 +286,265 @@ export async function citiesWithSpecialty(
     .filter(([id]) => names[id])
     .map(([id, n]) => ({ city_id: id, city: names[id], options: n }))
     .sort((a, b) => b.options - a.options || a.city.localeCompare(b.city));
+}
+
+// --- Nearest options (14-oct-2026) --------------------------------------------
+//
+// Client complaint: "no tengo médicos en Chimalhuacán, te canalizo con alguien"
+// sends the patient back to manual work. With coordinates on zones/cities
+// (migration 20261014140000), the local gazetteer (mx-places.ts) and an
+// optional geocoder (geo.ts), the search ranks the bookable offices of the
+// specialty by straight-line distance to where the patient is — across
+// catalog cities (CDMX and Estado de México are one metro area) — so the
+// agent can offer "no tengo en Chimalhuacán, pero tengo en Roma, Naucalpan…".
+
+/** Metro-area radius: beyond this an office is not "nearby", the nearest city is offered instead. */
+export const NEARBY_MAX_KM = 60;
+export const NEARBY_LIMIT = 5;
+/** A gazetteer hit farther than this from the city the patient named is ignored (homonyms). */
+const GAZETTEER_CITY_GUARD_KM = 150;
+/** Catalog zones that name a direction, not a place: never matched from free text. */
+const GENERIC_ZONE_NAMES = new Set(["norte", "sur", "oriente", "poniente", "centro", "centro poniente", "centro norte", "centro sur"]);
+
+export type OriginSource = "catalog_zone" | "catalog_city" | "gazetteer" | "geocoder";
+
+export interface SearchOrigin {
+  point: GeoPoint;
+  /** Human name of the place ("Chimalhuacán", "Roma"). */
+  label: string;
+  source: OriginSource;
+  /** Catalog zones that ARE the requested place (any city), to mark in_requested_zone. */
+  zone_ids: string[];
+}
+
+interface ZoneGeoRow {
+  id: string;
+  name: string;
+  city_id: string | null;
+  latitude: unknown;
+  longitude: unknown;
+}
+
+interface CityGeoRow {
+  id: string;
+  name: string;
+  latitude: unknown;
+  longitude: unknown;
+}
+
+/** Catalog zones named by free text: exact name, or a specific (non-directional) zone name inside the text. */
+export function matchCatalogZones<T extends { name: string }>(text: string, zones: T[]): T[] {
+  const q = normalizePlace(text).replace(/^(colonia|col|alcaldia|municipio de|municipio|zona) /, "");
+  if (!q) return [];
+  const exact = zones.filter((z) => normalizePlace(z.name) === q);
+  if (exact.length > 0) return exact;
+  const padded = ` ${q} `;
+  return zones.filter((z) => {
+    const n = normalizePlace(z.name);
+    // "Observatorio (poniente)" is also found as "observatorio".
+    const head = n.split(" ")[0];
+    const keys = [n, head].filter((k) => k.length >= 5 && !GENERIC_ZONE_NAMES.has(k));
+    return keys.some((k) => padded.includes(` ${k} `));
+  });
+}
+
+/**
+ * Where is the patient? Zone text first (catalog zone with coordinates →
+ * gazetteer → geocoder), else the resolved city's coordinates, else the city
+ * text itself as a place (a municipality said as "city": "Neza"). null when
+ * nothing gives a point: the caller asks instead of guessing.
+ */
+export async function resolveSearchOrigin(
+  supabase: SupabaseClient,
+  input: { zoneText?: string | null; cityText?: string | null; city?: Place | null; geocode?: boolean },
+): Promise<SearchOrigin | null> {
+  const [{ data: zr }, { data: cr }] = await Promise.all([
+    supabase.from("zones").select("id, name, city_id, latitude, longitude"),
+    supabase.from("cities").select("id, name, latitude, longitude"),
+  ]);
+  const zones = (zr ?? []) as ZoneGeoRow[];
+  const cities = (cr ?? []) as CityGeoRow[];
+  const city = input.city ?? null;
+  const cityRow = city ? cities.find((c) => c.id === city.id) ?? null : null;
+  const cityPoint = cityRow ? toPoint(cityRow.latitude, cityRow.longitude) : null;
+  const useGeocoder = input.geocode !== false;
+
+  const fromText = async (text: string, contextCity: string | null): Promise<SearchOrigin | null> => {
+    const matched = matchCatalogZones(text, zones);
+    const inCity = city ? matched.filter((z) => z.city_id === city.id) : [];
+    const ordered = [...inCity, ...matched.filter((z) => !inCity.includes(z))];
+    const zoneIds = matched.map((z) => z.id);
+    for (const z of ordered) {
+      const p = toPoint(z.latitude, z.longitude);
+      if (p) return { point: p, label: z.name, source: "catalog_zone", zone_ids: zoneIds };
+    }
+    const gaz = findMxPlace(text);
+    if (gaz && (!cityPoint || haversineKm(cityPoint, gaz) <= GAZETTEER_CITY_GUARD_KM)) {
+      return { point: { lat: gaz.lat, lon: gaz.lon }, label: gaz.name, source: "gazetteer", zone_ids: zoneIds };
+    }
+    if (useGeocoder) {
+      const q = contextCity ? `${text}, ${contextCity}` : text;
+      const hit = await geocodeMx(supabase, q, { near: cityPoint });
+      if (hit) return { point: { lat: hit.lat, lon: hit.lon }, label: text.trim(), source: "geocoder", zone_ids: zoneIds };
+    }
+    return null;
+  };
+
+  const zoneText = input.zoneText?.trim();
+  if (zoneText) return await fromText(zoneText, city?.name ?? input.cityText ?? null);
+  if (city) return cityPoint ? { point: cityPoint, label: city.name, source: "catalog_city", zone_ids: [] } : null;
+  const cityText = input.cityText?.trim();
+  return cityText ? await fromText(cityText, null) : null;
+}
+
+export interface NearbyCareOption extends CareOption {
+  /** Rounded straight-line km. */
+  distance_km: number;
+  /** "zone": the office zone has coordinates; "city": only its city's (approximate). */
+  distance_basis: "zone" | "city";
+  in_requested_zone: boolean;
+}
+
+export type NearbySearchResult =
+  | {
+    ok: true;
+    matched_specialties: string[];
+    /** Within maxKm: requested zone first, then precise (zone) before approximate (city), nearest first. */
+    options: NearbyCareOption[];
+    /** Offices of the specialty that could / could not be placed on the map. */
+    located_offices: number;
+    unlocated_offices: number;
+    /** Cities with options beyond maxKm, nearest first (only when nothing is within maxKm). */
+    nearest_cities_beyond: { city_id: string; city: string; distance_km: number; options: number }[];
+  }
+  | { ok: false; error: "query_error"; message: string };
+
+type OfficeRow = {
+  id: string;
+  doctor_id: string;
+  name: string;
+  address: string | null;
+  city_id: string | null;
+  zone_id: string | null;
+  doctors: { id: string; full_name: string; phone: string | null };
+};
+
+/**
+ * Bookable offices (active office of an active doctor) of a specialty ranked
+ * by distance to `origin`, in any catalog city.
+ */
+export async function searchNearbyCareOptions(
+  supabase: SupabaseClient,
+  input: { especialidad: string; origin: GeoPoint; requestedZoneIds?: string[]; maxKm?: number; limit?: number },
+): Promise<NearbySearchResult> {
+  const maxKm = input.maxKm ?? NEARBY_MAX_KM;
+  const limit = input.limit ?? NEARBY_LIMIT;
+  const requested = new Set(input.requestedZoneIds ?? []);
+  const isRequested = (o: OfficeRow) => o.zone_id !== null && requested.has(o.zone_id);
+
+  const stem = specialtyStem(input.especialidad);
+  const { data: specRows, error: specErr } = await supabase
+    .from("doctor_specialties")
+    .select("doctor_id, specialties!inner(name)")
+    .ilike("specialties.name", `%${stem}%`);
+  if (specErr) return { ok: false, error: "query_error", message: "specialties" };
+  const specMatches = (specRows ?? []) as unknown as { doctor_id: string; specialties: { name: string } }[];
+  const matched = [...new Set(specMatches.map((m) => m.specialties?.name).filter(Boolean))];
+  const doctorIds = [...new Set(specMatches.map((m) => m.doctor_id))];
+  const empty: NearbySearchResult = { ok: true, matched_specialties: matched, options: [], located_offices: 0, unlocated_offices: 0, nearest_cities_beyond: [] };
+  if (doctorIds.length === 0) return empty;
+
+  const { data: officeRows, error: officeErr } = await supabase
+    .from("doctor_offices")
+    .select("id, doctor_id, name, address, city_id, zone_id, doctors!inner(id, full_name, phone, is_active, is_deleted)")
+    .eq("is_active", true)
+    .eq("is_deleted", false)
+    .in("doctor_id", doctorIds)
+    .eq("doctors.is_active", true)
+    .eq("doctors.is_deleted", false);
+  if (officeErr) return { ok: false, error: "query_error", message: "offices" };
+  const offices = (officeRows ?? []) as unknown as OfficeRow[];
+  if (offices.length === 0) return empty;
+
+  const zoneIds = [...new Set(offices.map((o) => o.zone_id).filter((z): z is string => !!z))];
+  const cityIds = [...new Set(offices.map((o) => o.city_id).filter((c): c is string => !!c))];
+  const [zq, cq] = await Promise.all([
+    zoneIds.length > 0 ? supabase.from("zones").select("id, name, city_id, latitude, longitude").in("id", zoneIds) : null,
+    cityIds.length > 0 ? supabase.from("cities").select("id, name, latitude, longitude").in("id", cityIds) : null,
+  ]);
+  if (zq?.error || cq?.error) return { ok: false, error: "query_error", message: "catalog" };
+  const zoneById = new Map(((zq?.data ?? []) as ZoneGeoRow[]).map((z) => [z.id, z]));
+  const cityById = new Map(((cq?.data ?? []) as CityGeoRow[]).map((c) => [c.id, c]));
+
+  const placed: { o: OfficeRow; km: number; basis: "zone" | "city" }[] = [];
+  let unlocated = 0;
+  for (const o of offices) {
+    const z = o.zone_id ? zoneById.get(o.zone_id) : undefined;
+    const c = o.city_id ? cityById.get(o.city_id) : undefined;
+    const zp = z ? toPoint(z.latitude, z.longitude) : null;
+    const cp = c ? toPoint(c.latitude, c.longitude) : null;
+    const p = zp ?? cp;
+    if (!p) {
+      unlocated++;
+      continue;
+    }
+    placed.push({ o, km: haversineKm(input.origin, p), basis: zp ? "zone" : "city" });
+  }
+
+  const within = placed
+    .filter((x) => x.km <= maxKm || isRequested(x.o))
+    .sort((a, b) =>
+      Number(isRequested(b.o)) - Number(isRequested(a.o)) ||
+      (a.basis === b.basis ? 0 : a.basis === "zone" ? -1 : 1) ||
+      a.km - b.km ||
+      a.o.doctors.full_name.localeCompare(b.o.doctors.full_name)
+    )
+    .slice(0, limit);
+
+  let beyond: { city_id: string; city: string; distance_km: number; options: number }[] = [];
+  if (within.length === 0) {
+    const byCity = new Map<string, { km: number; n: number }>();
+    for (const x of placed) {
+      if (!x.o.city_id) continue;
+      const cur = byCity.get(x.o.city_id);
+      byCity.set(x.o.city_id, { km: Math.min(cur?.km ?? Infinity, x.km), n: (cur?.n ?? 0) + 1 });
+    }
+    beyond = [...byCity.entries()]
+      .filter(([id]) => cityById.has(id))
+      .map(([id, v]) => ({ city_id: id, city: cityById.get(id)!.name, distance_km: roundKm(v.km), options: v.n }))
+      .sort((a, b) => a.distance_km - b.distance_km || b.options - a.options)
+      .slice(0, 3);
+  }
+
+  const specsByDoctor: Record<string, string[]> = {};
+  const usedDoctors = [...new Set(within.map((x) => x.o.doctor_id))];
+  if (usedDoctors.length > 0) {
+    const { data: allSpecs } = await supabase.from("doctor_specialties").select("doctor_id, specialties(name)").in("doctor_id", usedDoctors);
+    for (const row of (allSpecs ?? []) as unknown as { doctor_id: string; specialties: { name: string } | null }[]) {
+      if (!row.specialties?.name) continue;
+      (specsByDoctor[row.doctor_id] ??= []).push(row.specialties.name);
+    }
+  }
+
+  return {
+    ok: true,
+    matched_specialties: matched,
+    options: within.map(({ o, km, basis }) => ({
+      doctor_id: o.doctors.id,
+      doctor_name: o.doctors.full_name,
+      doctor_phone: o.doctors.phone,
+      specialties: specsByDoctor[o.doctors.id] ?? [],
+      office_id: o.id,
+      office_name: o.name,
+      office_address: o.address,
+      city: o.city_id ? cityById.get(o.city_id)?.name ?? null : null,
+      zone: o.zone_id ? zoneById.get(o.zone_id)?.name ?? null : null,
+      distance_km: roundKm(km),
+      distance_basis: basis,
+      in_requested_zone: isRequested(o),
+    })),
+    located_offices: placed.length,
+    unlocated_offices: unlocated,
+    nearest_cities_beyond: beyond,
+  };
 }

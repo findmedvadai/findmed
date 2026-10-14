@@ -24,6 +24,8 @@ import { FakeDb } from "./fake-supabase.ts";
 Deno.env.set("SUPABASE_URL", "https://example.supabase.co");
 Deno.env.set("SUPABASE_SECRET_KEYS", JSON.stringify({ default: "sb_secret_test" }));
 Deno.env.set("APP_URL", "https://app.example.test");
+// search_care_options may try the geocoder for unknown places: never from tests.
+Deno.env.set("FINDMED_GEOCODER", "off");
 
 const TOKEN = "test-mcp-token-0123456789";
 const H = 3_600_000;

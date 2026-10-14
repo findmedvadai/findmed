@@ -35,7 +35,7 @@ Desde v2.5 (14-oct-2026) hay 3 tools nuevas: `save_patient_insurance`, `find_net
 | Tool | Seguridad | Campo | Valor en "Configurar tool" |
 |---|---|---|---|
 | `suggest_specialty` | lectura | keywords | vacío |
-| `search_care_options` | lectura | specialty, city, zone | vacío (la IA los toma de la conversación) |
+| `search_care_options` | lectura | specialty, city, zone | vacío (la IA los toma de la conversación). v2.6: misma firma, descripción nueva (opciones más cercanas con distancia y horarios): **re-sincronizar** |
 | `list_available_slots` | lectura | office_id, date, days | vacío |
 | `create_booking_link` | escritura limitada (crea sesión de reserva) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
 | | | patient_name, doctor_id, office_id, symptoms, has_insurance, insurer, policy_number | vacío |
@@ -81,5 +81,6 @@ agente en el equipo de WHAAPY. No crear en WHAAPY otra automatización que pause
 | "Quiero una cita" vs. "Busco ortopedista" (v2.5) | la primera recibe "¿Qué especialista buscas o qué te está pasando?"; la segunda reconoce ortopedia y pregunta el seguro. Ninguna busca sin ciudad |
 | "Sí, GNP, póliza 12345" (v2.5) | `save_patient_insurance` con has_insurance/insurer/policy_number; el detalle de la cita muestra la aseguradora y la póliza |
 | Ortopedista en una zona sin consultorio (v2.5) | `search_care_options` devuelve `alternatives` (otras zonas u otras ciudades); el agente las ofrece y nunca dice "no tenemos especialistas en tu zona"; sin alternativas → caso `appointment_help` + handoff |
+| "Ortopedista, vivo en Chimalhuacán" (v2.6) | `search_care_options` con `nearest=true`: el agente lista 2–3 opciones más cercanas (Roma, Naucalpan…) con "a unos N km" y 2–3 horarios cada una, y pregunta cuál le queda mejor. No abre caso ni pasa a una persona; solo si el paciente rechaza todas o lo pide |
 | Síntomas con routing `urgencias_hoy` (v2.5) | `find_network_hospitals` con la ciudad → 1–3 hospitales con dirección (teléfono solo si existe) + caso `urgency`/`urgent` + handoff |
 | Foto o PDF después de "pedir_documentos" (v2.5) | el agente agradece y confirma; la cita queda "Documentos recibidos" y llega la notificación al admin |

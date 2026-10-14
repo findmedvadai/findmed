@@ -166,3 +166,62 @@ export async function computeDaySlots(supabase: SupabaseClient, officeId: string
     },
   };
 }
+
+// --- Next free slots of an office (nearest-options search) ---------------------
+
+export interface NextSlot {
+  date: string; // YYYY-MM-DD, CDMX
+  time: string; // HH:mm, CDMX
+  /** true when the office calendar could not be read that day → "por confirmar". */
+  unverified: boolean;
+}
+
+export type NextSlotsStatus =
+  | "verified" // every slot returned was checked against the connected calendar (if any)
+  | "external_calendar_unverified" // at least one returned slot is "por confirmar"
+  | "none_in_range" // the whole range was checked and there is no free slot
+  | "not_checked"; // the time budget ran out before finding anything (or office unavailable)
+
+export interface NextSlotsResult {
+  slots: NextSlot[];
+  status: NextSlotsStatus;
+  days_checked: number;
+}
+
+function addDaysLocal(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * First `max` bookable slots of an office over `days` CDMX days starting at
+ * `fromDate` (default today), day by day with the same rules as
+ * computeDaySlots. Stops at `deadlineMs` (epoch ms) and reports what it has.
+ */
+export async function nextAvailableSlots(
+  supabase: SupabaseClient,
+  officeId: string,
+  opts: { fromDate?: string; days?: number; max?: number; deadlineMs?: number } = {},
+): Promise<NextSlotsResult> {
+  const from = opts.fromDate ?? mxToday();
+  const days = Math.min(Math.max(opts.days ?? 7, 1), 14);
+  const max = Math.min(Math.max(opts.max ?? 3, 1), 10);
+  const slots: NextSlot[] = [];
+  let checked = 0;
+  for (let i = 0; i < days && slots.length < max; i++) {
+    if (opts.deadlineMs && Date.now() > opts.deadlineMs) break;
+    const date = addDaysLocal(from, i);
+    const r = await computeDaySlots(supabase, officeId, date);
+    if (!r.ok) break;
+    checked++;
+    if (r.value.availability_status === "office_unavailable") return { slots: [], status: "not_checked", days_checked: checked };
+    const unverified = r.value.availability_status === "external_calendar_unverified";
+    for (const time of r.value.slots) {
+      if (slots.length >= max) break;
+      slots.push({ date, time, unverified });
+    }
+  }
+  if (slots.length === 0) return { slots, status: checked >= days ? "none_in_range" : "not_checked", days_checked: checked };
+  return { slots, status: slots.some((s) => s.unverified) ? "external_calendar_unverified" : "verified", days_checked: checked };
+}

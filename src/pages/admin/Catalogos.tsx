@@ -44,12 +44,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, FlaskConical, Landmark, MapPin, Pencil, Plus, Search, Stethoscope, Trash2 } from "lucide-react";
+import { Building2, FlaskConical, Landmark, ListChecks, MapPin, Pencil, Plus, Search, Stethoscope, Trash2 } from "lucide-react";
+import { TriageCatalogTab } from "@/components/admin/triage/TriageCatalogTab";
 import { SPECIALTY_COLORS } from "@/lib/specialty-colors";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/app/PageHeader";
 import { FilterBar, SearchInput } from "@/components/app/FilterBar";
 import { EmptyState } from "@/components/app/EmptyState";
+import { CoordinateFields, CoordinatesCell, MissingCoordinatesFilter } from "@/components/admin/CoordinateFields";
+import { coordinateText, type CoordsPatch, hasCoordinates, toCoordsPatch } from "@/lib/geo-coords";
 
 type IconType = ComponentType<{ className?: string }>;
 
@@ -322,7 +325,10 @@ function CitiesTab() {
   const [editItem, setEditItem] = useState<{ id: string; name: string } | null>(null);
   const [deleteItem, setDeleteItem] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
+  const [coords, setCoords] = useState({ latitude: "", longitude: "" });
+  const [onlyMissing, setOnlyMissing] = useState(false);
   const [search, setSearch] = useState("");
+  const coordsPatch = toCoordsPatch(coords);
 
   const { data: cities, isLoading } = useQuery({
     queryKey: ["catalog-cities"],
@@ -335,8 +341,8 @@ function CitiesTab() {
   });
 
   const addMut = useMutation({
-    mutationFn: async (n: string) => {
-      const { error } = await supabase.from("cities").insert({ name: n });
+    mutationFn: async ({ name, ...point }: { name: string } & CoordsPatch) => {
+      const { error } = await supabase.from("cities").insert({ name, ...point });
       if (error) throw error;
     },
     onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad creada" }); setShowAdd(false); setName(""); },
@@ -344,8 +350,8 @@ function CitiesTab() {
   });
 
   const editMut = useMutation({
-    mutationFn: async ({ id, name }: { id: string; name: string }) => {
-      const { error } = await supabase.from("cities").update({ name }).eq("id", id);
+    mutationFn: async ({ id, name, ...point }: { id: string; name: string } & CoordsPatch) => {
+      const { error } = await supabase.from("cities").update({ name, ...point }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => { invalidateCities(qc); toast({ title: "Ciudad actualizada" }); setEditItem(null); setName(""); },
@@ -370,20 +376,25 @@ function CitiesTab() {
     onError: (e: Error) => toast({ title: "Error al eliminar", description: e.message, variant: "destructive" }),
   });
 
-  const all = (cities ?? []).map((c) => ({ id: c.id, name: c.name, is_active: c.is_active }));
+  const all = (cities ?? []).map((c) => ({ id: c.id, name: c.name, is_active: c.is_active, latitude: c.latitude, longitude: c.longitude }));
   const term = search.trim().toLowerCase();
-  const rows = all.filter((c) => !term || c.name.toLowerCase().includes(term));
+  const missing = all.filter((c) => !hasCoordinates(c)).length;
+  const rows = all.filter((c) => (!term || c.name.toLowerCase().includes(term)) && (!onlyMissing || !hasCoordinates(c)));
+  const saveAdd = () => { if (name.trim() && coordsPatch) addMut.mutate({ name: name.trim(), ...coordsPatch }); };
+  const saveEdit = () => { if (editItem && name.trim() && coordsPatch) editMut.mutate({ id: editItem.id, name: name.trim(), ...coordsPatch }); };
+  const coordFields = <CoordinateFields latitude={coords.latitude} longitude={coords.longitude} onChange={setCoords} />;
 
   return (
     <>
       <CatalogPanel
         title="Ciudades"
-        description="Ciudades donde opera la red. Zonas, consultorios, hospitales y laboratorios se ubican en una ciudad."
+        description="Ciudades donde opera la red. Zonas, consultorios, hospitales y laboratorios se ubican en una ciudad. Su ubicación aproximada sirve para ofrecer al paciente los consultorios más cercanos."
         addLabel="Agregar ciudad"
-        onAdd={() => { setShowAdd(true); setName(""); }}
+        onAdd={() => { setShowAdd(true); setName(""); setCoords({ latitude: "", longitude: "" }); }}
         toolbar={
           <>
             <SearchInput value={search} onChange={setSearch} placeholder="Buscar ciudad…" />
+            <MissingCoordinatesFilter count={missing} active={onlyMissing} onToggle={() => setOnlyMissing((v) => !v)} />
             <ResultCount shown={rows.length} total={all.length} loading={isLoading} />
           </>
         }
@@ -392,9 +403,14 @@ function CitiesTab() {
           loading={isLoading}
           items={rows}
           total={all.length}
-          filtered={!!term}
+          filtered={!!term || onlyMissing}
           empty={{ icon: Landmark, title: "Aún no hay ciudades", description: "Agrega la primera ciudad para poder ubicar zonas y consultorios." }}
-          onEdit={(item) => { setEditItem(item); setName(item.name); }}
+          columns={[{ header: "Ubicación", className: "w-[150px]", render: (c) => <CoordinatesCell latitude={c.latitude} longitude={c.longitude} /> }]}
+          onEdit={(item) => {
+            setEditItem(item);
+            setName(item.name);
+            setCoords({ latitude: coordinateText(item.latitude), longitude: coordinateText(item.longitude) });
+          }}
           onToggle={(item, active) => toggleMut.mutate({ id: item.id, is_active: active })}
           onDelete={(item) => setDeleteItem(item)}
         />
@@ -405,18 +421,24 @@ function CitiesTab() {
         title="Agregar ciudad"
         name={name}
         setName={setName}
-        onSave={() => { if (name.trim()) addMut.mutate(name.trim()); }}
+        onSave={saveAdd}
         saving={addMut.isPending}
-      />
+        saveDisabled={!coordsPatch}
+      >
+        {coordFields}
+      </CatalogFormDialog>
       <CatalogFormDialog
         open={!!editItem}
         onClose={() => setEditItem(null)}
         title="Editar ciudad"
         name={name}
         setName={setName}
-        onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim() }); }}
+        onSave={saveEdit}
         saving={editMut.isPending}
-      />
+        saveDisabled={!coordsPatch}
+      >
+        {coordFields}
+      </CatalogFormDialog>
       <DeleteConfirmDialog
         open={!!deleteItem}
         onClose={() => setDeleteItem(null)}
@@ -440,6 +462,9 @@ function ZonesTab() {
   const [cityFilter, setCityFilter] = useState("all");
   const [newZoneCityId, setNewZoneCityId] = useState("");
   const [search, setSearch] = useState("");
+  const [coords, setCoords] = useState({ latitude: "", longitude: "" });
+  const [onlyMissing, setOnlyMissing] = useState(false);
+  const coordsPatch = toCoordsPatch(coords);
 
   // Solo ciudades activas (id + name): misma forma y llave que en Hospitales y
   // Laboratorios. Antes compartía ["catalog-cities"] con la pestaña Ciudades,
@@ -463,8 +488,8 @@ function ZonesTab() {
   });
 
   const addMut = useMutation({
-    mutationFn: async ({ name, city_id }: { name: string; city_id: string }) => {
-      const { error } = await supabase.from("zones").insert({ name, city_id });
+    mutationFn: async ({ name, city_id, ...point }: { name: string; city_id: string } & CoordsPatch) => {
+      const { error } = await supabase.from("zones").insert({ name, city_id, ...point });
       if (error) throw error;
     },
     onSuccess: () => { invalidateZones(qc); toast({ title: "Zona creada" }); setShowAdd(false); setName(""); },
@@ -472,8 +497,8 @@ function ZonesTab() {
   });
 
   const editMut = useMutation({
-    mutationFn: async ({ id, name }: { id: string; name: string }) => {
-      const { error } = await supabase.from("zones").update({ name }).eq("id", id);
+    mutationFn: async ({ id, name, ...point }: { id: string; name: string } & CoordsPatch) => {
+      const { error } = await supabase.from("zones").update({ name, ...point }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => { invalidateZones(qc); toast({ title: "Zona actualizada" }); setEditItem(null); setName(""); },
@@ -504,19 +529,24 @@ function ZonesTab() {
     is_active: z.is_active,
     city_id: z.city_id,
     city: (z as { cities?: { name: string } | null }).cities?.name ?? null,
+    latitude: z.latitude,
+    longitude: z.longitude,
   }));
   const term = search.trim().toLowerCase();
+  const missing = all.filter((z) => !hasCoordinates(z)).length;
   const filtered = all.filter(
-    (z) => (cityFilter === "all" || z.city_id === cityFilter) && (!term || z.name.toLowerCase().includes(term)),
+    (z) => (cityFilter === "all" || z.city_id === cityFilter) && (!term || z.name.toLowerCase().includes(term)) &&
+      (!onlyMissing || !hasCoordinates(z)),
   );
+  const coordFields = <CoordinateFields latitude={coords.latitude} longitude={coords.longitude} onChange={setCoords} />;
 
   return (
     <>
       <CatalogPanel
         title="Zonas"
-        description="Zonas dentro de cada ciudad. Cada consultorio se ubica en una zona y un doctor no puede tener dos consultorios activos en la misma."
+        description="Zonas dentro de cada ciudad. Cada consultorio se ubica en una zona y un doctor no puede tener dos consultorios activos en la misma. Con su ubicación aproximada el agente ofrece al paciente los consultorios más cercanos."
         addLabel="Agregar zona"
-        onAdd={() => { setShowAdd(true); setName(""); setNewZoneCityId(""); }}
+        onAdd={() => { setShowAdd(true); setName(""); setNewZoneCityId(""); setCoords({ latitude: "", longitude: "" }); }}
         toolbar={
           <>
             <SearchInput value={search} onChange={setSearch} placeholder="Buscar zona…" />
@@ -527,6 +557,7 @@ function ZonesTab() {
                 {(cities ?? []).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
               </SelectContent>
             </Select>
+            <MissingCoordinatesFilter count={missing} active={onlyMissing} onToggle={() => setOnlyMissing((v) => !v)} />
             <ResultCount shown={filtered.length} total={all.length} loading={isLoading} />
           </>
         }
@@ -535,11 +566,18 @@ function ZonesTab() {
           loading={isLoading}
           items={filtered}
           total={all.length}
-          filtered={!!term || cityFilter !== "all"}
+          filtered={!!term || cityFilter !== "all" || onlyMissing}
           empty={{ icon: MapPin, title: "Aún no hay zonas", description: "Agrega zonas dentro de una ciudad para ubicar los consultorios." }}
           subtitle={(z) => <span className="sm:hidden">{z.city ?? "Sin ciudad"}</span>}
-          columns={[{ header: "Ciudad", className: "hidden sm:table-cell", render: (z) => z.city ?? "—" }]}
-          onEdit={(z) => { setEditItem({ id: z.id, name: z.name }); setName(z.name); }}
+          columns={[
+            { header: "Ciudad", className: "hidden sm:table-cell", render: (z) => z.city ?? "—" },
+            { header: "Ubicación", className: "w-[150px]", render: (z) => <CoordinatesCell latitude={z.latitude} longitude={z.longitude} /> },
+          ]}
+          onEdit={(z) => {
+            setEditItem({ id: z.id, name: z.name });
+            setName(z.name);
+            setCoords({ latitude: coordinateText(z.latitude), longitude: coordinateText(z.longitude) });
+          }}
           onToggle={(z, active) => toggleMut.mutate({ id: z.id, is_active: active })}
           onDelete={(z) => setDeleteItem({ id: z.id, name: z.name })}
         />
@@ -566,10 +604,11 @@ function ZonesTab() {
               <Label htmlFor={`${fieldId}-name`} className="text-sm">Nombre *</Label>
               <Input id={`${fieldId}-name`} className="h-9 text-sm" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
+            {coordFields}
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button size="sm" variant="outline" onClick={() => setShowAdd(false)}>Cancelar</Button>
-            <Button size="sm" onClick={() => { if (name.trim() && newZoneCityId) addMut.mutate({ name: name.trim(), city_id: newZoneCityId }); }} disabled={addMut.isPending || !newZoneCityId}>
+            <Button size="sm" onClick={() => { if (name.trim() && newZoneCityId && coordsPatch) addMut.mutate({ name: name.trim(), city_id: newZoneCityId, ...coordsPatch }); }} disabled={addMut.isPending || !newZoneCityId || !coordsPatch}>
               {addMut.isPending ? "Guardando…" : "Guardar"}
             </Button>
           </DialogFooter>
@@ -582,9 +621,12 @@ function ZonesTab() {
         title="Editar zona"
         name={name}
         setName={setName}
-        onSave={() => { if (editItem && name.trim()) editMut.mutate({ id: editItem.id, name: name.trim() }); }}
+        onSave={() => { if (editItem && name.trim() && coordsPatch) editMut.mutate({ id: editItem.id, name: name.trim(), ...coordsPatch }); }}
         saving={editMut.isPending}
-      />
+        saveDisabled={!coordsPatch}
+      >
+        {coordFields}
+      </CatalogFormDialog>
       <DeleteConfirmDialog
         open={!!deleteItem}
         onClose={() => setDeleteItem(null)}
@@ -821,6 +863,8 @@ function CatalogFormDialog({
   setName,
   onSave,
   saving,
+  saveDisabled = false,
+  children,
 }: {
   open: boolean;
   onClose: () => void;
@@ -829,6 +873,10 @@ function CatalogFormDialog({
   setName: (v: string) => void;
   onSave: () => void;
   saving: boolean;
+  /** Campos extra inválidos (p. ej. coordenadas de Zonas/Ciudades). */
+  saveDisabled?: boolean;
+  /** Campos extra debajo del nombre. */
+  children?: ReactNode;
 }) {
   const fieldId = useId();
   return (
@@ -845,12 +893,13 @@ function CatalogFormDialog({
             className="h-9 text-sm"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") onSave(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !saveDisabled) onSave(); }}
           />
         </div>
+        {children}
         <DialogFooter className="gap-2 sm:gap-0">
           <Button size="sm" variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button size="sm" onClick={onSave} disabled={saving || !name.trim()}>{saving ? "Guardando…" : "Guardar"}</Button>
+          <Button size="sm" onClick={onSave} disabled={saving || !name.trim() || saveDisabled}>{saving ? "Guardando…" : "Guardar"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -865,6 +914,7 @@ const CATALOGS: { value: string; label: string; icon: IconType; render: () => Re
   { value: "zonas", label: "Zonas", icon: MapPin, render: () => <ZonesTab /> },
   { value: "hospitales", label: "Hospitales", icon: Building2, render: () => <FacilitiesTab type="hospitals" /> },
   { value: "laboratorios", label: "Laboratorios", icon: FlaskConical, render: () => <FacilitiesTab type="laboratories" /> },
+  { value: "triaje", label: "Triaje", icon: ListChecks, render: () => <TriageCatalogTab /> },
 ];
 
 export default function Catalogos() {
