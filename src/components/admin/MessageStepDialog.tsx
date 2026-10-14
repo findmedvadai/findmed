@@ -35,6 +35,8 @@ export interface StepDraft {
   url_button_param: string | null;
   quick_reply_action: string | null;
   enabled: boolean;
+  /** Solo en la reserva original: no se envía cuando la cita se reagenda. */
+  skip_on_reschedule?: boolean;
 }
 
 const NONE = "__none__";
@@ -282,6 +284,21 @@ export default function MessageStepDialog({
             </span>
             <Switch checked={step.enabled} onCheckedChange={(v) => setStep({ ...step, enabled: v })} />
           </label>
+
+          {isStatusEvent && (
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium text-foreground">No enviar al reagendar</span>
+                <span className="block text-xs text-muted-foreground">
+                  Solo se manda con la reserva original. Si el paciente, el médico o FindMed cambian la cita de horario, este mensaje no se repite.
+                </span>
+              </span>
+              <Switch
+                checked={step.skip_on_reschedule === true}
+                onCheckedChange={(v) => setStep({ ...step, skip_on_reschedule: v })}
+              />
+            </label>
+          )}
         </div>
 
         <DialogFooter className="gap-2 border-t bg-muted/30 px-4 py-3 sm:space-x-0">

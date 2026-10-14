@@ -119,3 +119,79 @@ Deno.test("R22 (simulated): unreadable Google calendar → external_calendar_unv
     f.restore();
   }
 });
+
+// R23 (simulated): all-day events and pagination.
+
+function googleCalendar(route: (url: string) => { status: number; body: unknown }) {
+  return stubFetch(200, (url) => {
+    if (url.includes("oauth2.googleapis.com")) return { status: 200, body: { access_token: "at", expires_in: 3600 } };
+    if (url.includes("googleapis.com/calendar")) return route(url);
+  });
+}
+
+Deno.test("R23: a Google all-day event ('Vacaciones', shown as free) blocks the whole day", async () => {
+  const f = googleCalendar(() => ({
+    status: 200,
+    body: { items: [{ summary: "Vacaciones", transparency: "transparent", start: { date: DATE }, end: { date: "2027-03-02" } }] },
+  }));
+  try {
+    const r = await computeDaySlots(sb(db(googleOffice)), "o1", DATE);
+    assertEquals(r.ok && r.value.slots, []);
+    assertEquals(r.ok && r.value.availability_status, "verified");
+  } finally {
+    f.restore();
+  }
+});
+
+Deno.test("R23: an all-day event of the previous day doesn't leak into this one (CDMX day, not UTC)", async () => {
+  const f = googleCalendar(() => ({
+    status: 200,
+    body: { items: [{ summary: "Domingo", start: { date: "2027-02-28" }, end: { date: DATE } }] },
+  }));
+  try {
+    const r = await computeDaySlots(sb(db(googleOffice)), "o1", DATE);
+    assertEquals(r.ok && r.value.slots, ["09:00", "10:00", "11:00"]);
+  } finally {
+    f.restore();
+  }
+});
+
+Deno.test("R23: busy events on the second page are applied (pagination)", async () => {
+  const f = googleCalendar((url) =>
+    url.includes("pageToken=p2")
+      ? { status: 200, body: { items: [{ start: { dateTime: iso("11:00") }, end: { dateTime: iso("12:00") } }] } }
+      : { status: 200, body: { items: [{ start: { dateTime: iso("09:00") }, end: { dateTime: iso("10:00") } }], nextPageToken: "p2" } }
+  );
+  try {
+    const r = await computeDaySlots(sb(db(googleOffice)), "o1", DATE);
+    assertEquals(r.ok && r.value.slots, ["10:00"]);
+    assertEquals(r.ok && r.value.availability_status, "verified");
+  } finally {
+    f.restore();
+  }
+});
+
+Deno.test("R23: an Outlook all-day event (isAllDay) blocks the day", async () => {
+  const f = stubFetch(200, (url) => {
+    if (url.includes("login.microsoftonline.com")) return { status: 200, body: { access_token: "at", refresh_token: "refresh", expires_in: 3600 } };
+    if (url.includes("graph.microsoft.com")) {
+      return {
+        status: 200,
+        body: { value: [{ subject: "Congreso", isAllDay: true, showAs: "free", start: { dateTime: `${DATE}T00:00:00.0000000` }, end: { dateTime: "2027-03-02T00:00:00.0000000" } }] },
+      };
+    }
+  });
+  Deno.env.set("OUTLOOK_CLIENT_ID", "test-client");
+  Deno.env.set("OUTLOOK_CLIENT_SECRET", "test-secret");
+  try {
+    const r = await computeDaySlots(
+      sb(db({ outlook_calendar_connected: true, outlook_calendar_id: "cal", outlook_refresh_token_ref: "refresh" })),
+      "o1",
+      DATE,
+    );
+    assertEquals(r.ok && r.value.slots, []);
+    assertEquals(r.ok && r.value.availability_status, "verified");
+  } finally {
+    f.restore();
+  }
+});

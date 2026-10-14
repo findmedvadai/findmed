@@ -165,6 +165,7 @@ function StepRow({
           {step.quick_reply_action && (
             <SoftBadge tone="info"><MousePointerClick className="h-3 w-3" /> Botón {step.quick_reply_action === "confirm" ? "confirmar" : "cancelar"}</SoftBadge>
           )}
+          {step.skip_on_reschedule && <SoftBadge tone="neutral">No se repite al reagendar</SoftBadge>}
         </div>
         {template?.body && <p className="line-clamp-2 text-xs text-muted-foreground">{template.body}</p>}
         {step.body_params.length > 0 && (
@@ -249,6 +250,7 @@ function EventsTab() {
     url_button_param: null,
     quick_reply_action: null,
     enabled: true,
+    skip_on_reschedule: false,
   });
 
   return (

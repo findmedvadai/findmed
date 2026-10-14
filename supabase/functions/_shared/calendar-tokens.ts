@@ -128,11 +128,9 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
         `[calendar-tokens] ${provider} invalid_grant for office ${office.id} — auto-disconnecting`
       );
 
-      // Durably record the disconnect BEFORE clearing the office, so the
-      // forensic evidence (the actual provider error + token lifetime) survives
-      // regardless of Edge Function log retention. Best-effort: never blocks the
-      // disconnect. We read doctor_id + the connect timestamp here (rare path)
-      // because the office object callers pass in may not include them.
+      // We read doctor_id + the connect timestamp here (rare path) because the
+      // office object callers pass in may not include them; the disconnect
+      // below clears the timestamp.
       let doctorId: string | null = null;
       let connectedAt: string | null = null;
       try {
@@ -151,18 +149,17 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
       } catch (err) {
         console.error(`[calendar-tokens] failed to read office for event record:`, err);
       }
-      await recordAutoDisconnect(supabase, {
-        provider,
-        officeId: office.id,
-        doctorId,
-        reasonCode: errorCode,
-        httpStatus: res.status,
-        providerResponse: data,
-        connectedAt,
-      });
 
+      // Compare-and-swap on the token that actually failed. The office row the
+      // caller loaded can be stale: if the doctor reconnected (new OAuth) or a
+      // concurrent request stored a rotated token since then, the token that
+      // just failed is no longer the office's token, and wiping the office
+      // would destroy a fresh, working connection ("se desconecta solo justo
+      // después de conectar"). Only the token that failed is disconnected.
+      const tokenColumn = provider === "google" ? "google_refresh_token_ref" : "outlook_refresh_token_ref";
+      let disconnected: boolean | null = null; // null = unknown (DB error)
       try {
-        await supabase
+        const { data: updated, error: updErr } = await supabase
           .from("doctor_offices")
           .update(
             provider === "google"
@@ -181,7 +178,33 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
                   outlook_connected_at: null,
                 }
           )
-          .eq("id", office.id);
+          .eq("id", office.id)
+          .eq(tokenColumn, refreshToken)
+          .select("id");
+        if (updErr) console.error(`[calendar-tokens] auto-disconnect persist failed:`, updErr);
+        else disconnected = Array.isArray(updated) && updated.length > 0;
+      } catch (err) {
+        console.error(`[calendar-tokens] auto-disconnect persist failed:`, err);
+      }
+
+      if (disconnected === false) {
+        console.warn(
+          `[calendar-tokens] ${provider} invalid_grant came from a stale token for office ${office.id}; ` +
+            `the office already has a newer token — connection kept`
+        );
+      } else {
+        // Durable evidence (provider error verbatim + token lifetime), also when
+        // the DB update failed, so the provider failure is never lost.
+        // Best-effort: never throws.
+        await recordAutoDisconnect(supabase, {
+          provider,
+          officeId: office.id,
+          doctorId,
+          reasonCode: errorCode,
+          httpStatus: res.status,
+          providerResponse: data,
+          connectedAt,
+        });
         // Reflect in the in-memory row too so subsequent code in the same
         // request doesn't keep treating the office as connected.
         if (provider === "google") {
@@ -193,8 +216,6 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
           office.outlook_calendar_id = null;
           office.outlook_refresh_token_ref = null;
         }
-      } catch (err) {
-        console.error(`[calendar-tokens] auto-disconnect persist failed:`, err);
       }
     } else {
       console.error(
@@ -210,6 +231,10 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
   const newRefreshToken = typeof data.refresh_token === "string" ? (data.refresh_token as string) : null;
   if (newRefreshToken && newRefreshToken !== refreshToken && office.id) {
     try {
+      // Compare-and-swap: only replace the token we refreshed with. If the
+      // doctor reconnected meanwhile (possibly with another account), the
+      // newer connection must not be overwritten by this older grant.
+      const tokenColumn = provider === "google" ? "google_refresh_token_ref" : "outlook_refresh_token_ref";
       await supabase
         .from("doctor_offices")
         .update(
@@ -217,7 +242,8 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
             ? { google_refresh_token_ref: newRefreshToken }
             : { outlook_refresh_token_ref: newRefreshToken }
         )
-        .eq("id", office.id);
+        .eq("id", office.id)
+        .eq(tokenColumn, refreshToken);
       // Update the in-memory row so a second call within the same request
       // uses the new token (otherwise Microsoft would reject the old one).
       if (provider === "google") office.google_refresh_token_ref = newRefreshToken;

@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { getServiceKey, getPublishableKey } from "../_shared/supabase-keys.ts";
+import { provisionDoctor } from "./provision.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -101,142 +102,34 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 1. Create auth user — common failures: email_exists, weak_password.
-    const { data: authUser, error: authErr } = await adminClient.auth.admin.createUser({
+    // Validate BEFORE creating anything: a malformed list used to throw after
+    // the auth user existed, leaving a half-created doctor.
+    const specialtyIds: unknown = specialty_ids ?? [];
+    if (!Array.isArray(specialtyIds) || specialtyIds.some((s) => typeof s !== "string" || !s)) {
+      return jsonResponse(
+        { error: "invalid_input", message: "La lista de especialidades no es válida", field: "specialty_ids" },
+        400
+      );
+    }
+
+    // All or nothing: any failing step undoes the whole sign-up and the admin
+    // gets a clear message (see provision.ts, F11).
+    const result = await provisionDoctor(adminClient, adminClient.auth.admin, {
       email,
       password,
-      email_confirm: true,
+      full_name,
+      phone: phone || null,
+      address: address || null,
+      city_id: city_id || null,
+      zone_id: zone_id || null,
+      specialty_ids: [...new Set(specialtyIds as string[])],
     });
-    if (authErr) {
-      const msg = (authErr.message ?? "").toLowerCase();
-      const code = (authErr as { code?: string }).code ?? "";
-      if (code === "email_exists" || msg.includes("already") || msg.includes("registered") || msg.includes("exists")) {
-        return jsonResponse(
-          { error: "email_taken", message: "Ese email ya está registrado en el sistema" },
-          409
-        );
-      }
-      if (code === "weak_password" || msg.includes("password")) {
-        return jsonResponse(
-          { error: "weak_password", message: "La contraseña no cumple los requisitos mínimos" },
-          400
-        );
-      }
-      console.error("[create-doctor] auth.admin.createUser failed:", authErr);
-      return jsonResponse(
-        { error: "internal_error", message: "No se pudo crear la cuenta de auth: " + authErr.message },
-        500
-      );
-    }
-    const authUserId = authUser.user.id;
-
-    // 2. doctors row
-    const { data: doctor, error: docErr } = await adminClient
-      .from("doctors")
-      .insert({
-        full_name,
-        phone: phone || null,
-        address: address || null,
-        city_id: city_id || null,
-        zone_id: zone_id || null,
-      })
-      .select("id")
-      .single();
-    if (docErr) {
-      // Best-effort: deshacer el usuario de auth para no dejar huérfano.
-      await adminClient.auth.admin.deleteUser(authUserId).catch((e) =>
-        console.error("[create-doctor] rollback auth user failed:", e)
-      );
-      console.error("[create-doctor] insert doctors failed:", docErr);
-      return jsonResponse(
-        { error: "internal_error", message: "No se pudo crear el registro del doctor" },
-        500
-      );
-    }
-
-    // 3. users row
-    const { error: userErr } = await adminClient.from("users").insert({
-      id: authUserId,
-      role: "doctor",
-      doctor_id: doctor.id,
-      email,
-      initial_password: password,
-    });
-    if (userErr) {
-      await adminClient.auth.admin.deleteUser(authUserId).catch(() => {});
-      await adminClient.from("doctors").delete().eq("id", doctor.id).then(() => {});
-      console.error("[create-doctor] insert users failed:", userErr);
-      return jsonResponse(
-        { error: "internal_error", message: "No se pudo registrar el usuario del doctor" },
-        500
-      );
-    }
-
-    // 4. user_roles row
-    const { error: roleErr } = await adminClient.from("user_roles").insert({
-      user_id: authUserId,
-      role: "doctor",
-    });
-    if (roleErr) {
-      console.error("[create-doctor] insert user_roles failed:", roleErr);
-      // No hacemos rollback aquí — el doctor ya está creado y funcional;
-      // user_roles es secundario para auditoría.
-    }
-
-    // 5. doctor_specialties
-    if (specialty_ids && specialty_ids.length > 0) {
-      const rows = specialty_ids.map((sid: string) => ({
-        doctor_id: doctor.id,
-        specialty_id: sid,
-      }));
-      const { error: specErr } = await adminClient
-        .from("doctor_specialties")
-        .insert(rows);
-      if (specErr) console.error("[create-doctor] insert specialties failed:", specErr);
-    }
-
-    // 6. default schedule settings
-    const { error: settingsErr } = await adminClient
-      .from("doctor_schedule_settings")
-      .insert({ doctor_id: doctor.id });
-    if (settingsErr) console.error("[create-doctor] insert settings failed:", settingsErr);
-
-    // 7. default office. Since Mejora 2 everything (availability, calendars,
-    // duration) hangs off doctor_offices, and doctor_weekly_availability
-    // requires office_id — without this row the availability insert below
-    // silently failed and every new doctor started with no office/hours.
-    const { data: office, error: officeErr } = await adminClient
-      .from("doctor_offices")
-      .insert({
-        doctor_id: doctor.id,
-        name: "Consultorio principal",
-        address: address || null,
-        city_id: city_id || null,
-        zone_id: zone_id || null,
-        appointment_duration_minutes: 30,
-      })
-      .select("id")
-      .single();
-    if (officeErr || !office) {
-      console.error("[create-doctor] insert office failed:", officeErr);
-    } else {
-      // 8. default Mon-Fri 09:00-17:00 on that office
-      const weekdays = [1, 2, 3, 4, 5].map((wd) => ({
-        doctor_id: doctor.id,
-        office_id: office.id,
-        weekday: wd,
-        start_time: "09:00",
-        end_time: "17:00",
-        is_enabled: true,
-      }));
-      const { error: availErr } = await adminClient
-        .from("doctor_weekly_availability")
-        .insert(weekdays);
-      if (availErr) console.error("[create-doctor] insert availability failed:", availErr);
+    if (!result.ok) {
+      return jsonResponse({ error: result.error, message: result.message }, result.status);
     }
 
     return jsonResponse(
-      { success: true, doctor_id: doctor.id, auth_user_id: authUserId, office_id: office?.id ?? null },
+      { success: true, doctor_id: result.doctorId, auth_user_id: result.authUserId, office_id: result.officeId },
       200
     );
   } catch (err: unknown) {

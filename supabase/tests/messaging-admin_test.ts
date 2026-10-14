@@ -158,6 +158,25 @@ Deno.test("save_step validates against the live template; delete_step removes", 
   assertEquals(d.rows("message_route_steps").length, 2);
 });
 
+Deno.test("save_step: 'No enviar al reagendar' is saved when sent and never reset by a client that omits it", async () => {
+  const d = db();
+  const w = whaapy();
+  const s0 = d.rows("message_route_steps")[0];
+  const base = { id: s0.id, event_type: "appointment.status_changed", when_status: "confirmed", position: 1, template_name: "confirmada_estado_cita", body_params: ["patient_name"], url_button_param: "manage_token" };
+
+  assertEquals((await post(d, w.client, { action: "save_step", step: { ...base, skip_on_reschedule: true } })).status, 200);
+  assertEquals(d.rows("message_route_steps")[0].skip_on_reschedule, true);
+  // An older screen (no flag in the body) toggling "enabled" keeps the flag.
+  assertEquals((await post(d, w.client, { action: "save_step", step: { ...base, enabled: false } })).status, 200);
+  assertEquals([d.rows("message_route_steps")[0].skip_on_reschedule, d.rows("message_route_steps")[0].enabled], [true, false]);
+  assertEquals((await post(d, w.client, { action: "save_step", step: { ...base, skip_on_reschedule: false } })).status, 200);
+  assertEquals(d.rows("message_route_steps")[0].skip_on_reschedule, false);
+
+  // On a reschedule event the flag would silence the message forever.
+  const never = await post(d, w.client, { action: "save_step", step: { ...base, id: undefined, event_type: "appointment.rescheduled_by_staff", when_status: null, position: 2, skip_on_reschedule: true } });
+  assertEquals([never.status, (await never.json()).error], [400, "invalid_step"]);
+});
+
 Deno.test("N23: resend creates a new manual delivery; an uncertain one needs explicit confirmation", async () => {
   const d = db();
   const w = whaapy();

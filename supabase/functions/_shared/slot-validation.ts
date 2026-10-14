@@ -13,10 +13,18 @@
 //
 // External calendar API failures are treated as "unknown availability" — we
 // log and continue, because we don't want a flaky third-party API to block
-// admin operations. Internal appointment overlaps are hard blocks.
+// admin operations. Internal appointment overlaps are hard blocks. The result
+// says so explicitly (`external_calendar: "unverified"`), and whatever part of
+// the calendar could be read still blocks (F13).
+//
+// External busy time follows _shared/calendar-busy.ts (all pages; all-day
+// events block the whole CDMX day; free/cancelled/declined events don't), the
+// same rules used for the slots offered to patients.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleAccessToken, getOutlookAccessToken } from "./calendar-tokens.ts";
+import { type BusyInterval, fetchGoogleBusy, fetchOutlookBusy } from "./calendar-busy.ts";
+import { msToMxIso, mxDayBoundsMs } from "./mx-time.ts";
 
 export interface SlotConflict {
   source: "appointment" | "google" | "outlook";
@@ -28,6 +36,12 @@ export interface SlotConflict {
 export interface SlotValidationResult {
   available: boolean;
   conflicts: SlotConflict[];
+  /**
+   * "verified": connected calendar fully read · "unverified": connected but
+   * (partly) unreadable, slot NOT blocked for that reason · "not_connected".
+   * Absent when the slot was rejected before looking at calendars.
+   */
+  external_calendar?: "verified" | "unverified" | "not_connected";
 }
 
 interface ValidateSlotInput {
@@ -101,12 +115,10 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
     | null = null;
 
   if (officeId) {
+    // One string literal: a concatenated select loses supabase-js typing.
     const { data } = await supabase
       .from("doctor_offices")
-      .select(
-        "id, google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-          "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-      )
+      .select("id, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id")
       .eq("id", officeId)
       .maybeSingle();
     doctor = data;
@@ -116,103 +128,73 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
     // because all production callers pass officeId post-Mejora 2.
     const { data } = await supabase
       .from("doctors")
-      .select(
-        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-          "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-      )
+      .select("google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id")
       .eq("id", doctorId)
       .maybeSingle();
     doctor = data ? { id: null, ...data } : null;
   }
 
-  if (!doctor) return { available: true, conflicts: [] };
+  if (!doctor) return { available: true, conflicts: [], external_calendar: "not_connected" };
 
-  // Widen the query window slightly so an event starting 10 minutes early is
-  // still caught. The conflict math itself is exact.
-  const widenStart = new Date(startMs - 60 * 60 * 1000).toISOString();
-  const widenEnd = new Date(endMs + 60 * 60 * 1000).toISOString();
+  // Query the whole CDMX day(s) the slot touches, so all-day events of that
+  // day are always returned. The overlap math below is exact.
+  const firstDay = msToMxIso(startMs).slice(0, 10);
+  const lastDay = msToMxIso(endMs - 1).slice(0, 10);
+  const range = {
+    timeMin: new Date(mxDayBoundsMs(firstDay).startMs).toISOString(),
+    timeMax: new Date(mxDayBoundsMs(lastDay).endMs).toISOString(),
+  };
+
+  // Same rules as the slots offered to patients (_shared/calendar-busy.ts):
+  // every page, all-day events block the day, free/cancelled/declined don't.
+  let checked = false;
+  let unverified = false;
+  const addConflicts = (busy: BusyInterval[], fallback: string) => {
+    for (const b of busy) {
+      if (b.startMs < endMs && b.endMs > startMs) {
+        conflicts.push({
+          source: b.source,
+          start_at: new Date(b.startMs).toISOString(),
+          end_at: new Date(b.endMs).toISOString(),
+          reason: b.summary ?? (b.allDay ? `${fallback} (todo el día)` : fallback),
+        });
+      }
+    }
+  };
 
   if (doctor.google_calendar_connected && doctor.google_calendar_id) {
-    try {
-      const accessToken = await getGoogleAccessToken({ supabase, office: doctor });
-      if (accessToken) {
-        const calendarId = encodeURIComponent(doctor.google_calendar_id);
-        const url =
-          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events?` +
-          new URLSearchParams({
-            timeMin: widenStart,
-            timeMax: widenEnd,
-            singleEvents: "true",
-            orderBy: "startTime",
-            maxResults: "50",
-          });
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-        if (res.ok) {
-          const data = await res.json();
-          for (const e of (data.items ?? []) as Array<{ start?: { dateTime?: string }; end?: { dateTime?: string }; summary?: string }>) {
-            if (!e.start?.dateTime || !e.end?.dateTime) continue;
-            const eStart = new Date(e.start.dateTime).getTime();
-            const eEnd = new Date(e.end.dateTime).getTime();
-            if (eStart < endMs && eEnd > startMs) {
-              conflicts.push({
-                source: "google",
-                start_at: e.start.dateTime,
-                end_at: e.end.dateTime,
-                reason: e.summary ?? "Google event",
-              });
-            }
-          }
-        }
+    checked = true;
+    const accessToken = await getGoogleAccessToken({ supabase, office: doctor });
+    if (!accessToken) {
+      unverified = true;
+    } else {
+      const r = await fetchGoogleBusy({ accessToken, calendarId: doctor.google_calendar_id, ...range });
+      addConflicts(r.busy, "Google event");
+      if (!r.complete) {
+        unverified = true;
+        console.error("[slot-validation] Google check incomplete (not verified):", r.error);
       }
-    } catch (err) {
-      console.error("[slot-validation] Google check failed (treating as available):", err);
     }
   }
 
   if (doctor.outlook_calendar_connected && doctor.outlook_calendar_id) {
-    try {
-      const accessToken = await getOutlookAccessToken({ supabase, office: doctor });
-      if (accessToken) {
-        const calendarId = encodeURIComponent(doctor.outlook_calendar_id);
-        const url =
-          `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/calendarView?` +
-          new URLSearchParams({
-            startDateTime: widenStart,
-            endDateTime: widenEnd,
-            $top: "50",
-            $orderby: "start/dateTime",
-            $select: "id,subject,start,end",
-          });
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-        if (res.ok) {
-          const data = await res.json();
-          for (const e of (data.value ?? []) as Array<{ start?: { dateTime?: string }; end?: { dateTime?: string }; subject?: string }>) {
-            if (!e.start?.dateTime || !e.end?.dateTime) continue;
-            // Microsoft Graph returns dateTime without offset; default is UTC when
-            // no Prefer header is sent, so appending "Z" yields a valid instant.
-            const eStartIso = e.start.dateTime.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(e.start.dateTime)
-              ? e.start.dateTime
-              : e.start.dateTime.replace(/\.\d+$/, "") + "Z";
-            const eEndIso = e.end.dateTime.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(e.end.dateTime)
-              ? e.end.dateTime
-              : e.end.dateTime.replace(/\.\d+$/, "") + "Z";
-            const eStart = new Date(eStartIso).getTime();
-            const eEnd = new Date(eEndIso).getTime();
-            if (eStart < endMs && eEnd > startMs) {
-              conflicts.push({
-                source: "outlook",
-                start_at: eStartIso,
-                end_at: eEndIso,
-                reason: e.subject ?? "Outlook event",
-              });
-            }
-          }
-        }
+    checked = true;
+    const accessToken = await getOutlookAccessToken({ supabase, office: doctor });
+    if (!accessToken) {
+      unverified = true;
+    } else {
+      const r = await fetchOutlookBusy({ accessToken, calendarId: doctor.outlook_calendar_id, ...range });
+      addConflicts(r.busy, "Outlook event");
+      if (!r.complete) {
+        unverified = true;
+        console.error("[slot-validation] Outlook check incomplete (not verified):", r.error);
       }
-    } catch (err) {
-      console.error("[slot-validation] Outlook check failed (treating as available):", err);
     }
   }
 
-  return { available: conflicts.length === 0, conflicts };
+  return {
+    available: conflicts.length === 0,
+    conflicts,
+    external_calendar: !checked ? "not_connected" : unverified ? "unverified" : "verified",
+  };
 }

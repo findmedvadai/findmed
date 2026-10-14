@@ -15,6 +15,8 @@
 //    time (phone, names, status) and an event that no longer matches the
 //    appointment (e.g. a 48 h reminder for a cancelled appointment, an old
 //    reschedule) is not sent (R33).
+//  * Steps flagged skip_on_reschedule (pedir_documentos) go only with the
+//    original booking, never with a reschedule (isRescheduleEvent).
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOrCreateManageUrl } from "./manage-token.ts";
@@ -182,6 +184,32 @@ export interface RouteStep {
   quick_reply_action: "confirm" | "cancel" | null;
   when_status: string | null;
   when_cancel_reason: string | null;
+  /** Only on the original booking: not sent when the event comes from a reschedule. */
+  skip_on_reschedule?: boolean | null;
+}
+
+/**
+ * Whether an event comes from a reschedule (patient, doctor or FindMed).
+ * A patient reschedule creates a NEW appointment and emits
+ * appointment.status_changed for it, indistinguishable from a first booking
+ * except for `rescheduled_from` (old appointment id) set by manage-reschedule.
+ */
+export function isRescheduleEvent(eventType: string, payload: Record<string, unknown>): boolean {
+  if (eventType === "appointment.rescheduled" || eventType === "appointment.rescheduled_by_staff") return true;
+  return typeof payload.rescheduled_from === "string" && payload.rescheduled_from.length > 0;
+}
+
+/** Steps of an event that apply to this appointment state and origin. */
+export function applicableSteps(
+  steps: RouteStep[],
+  ctx: Pick<AppointmentContext, "status" | "cancel_reason">,
+  reschedule: boolean,
+): RouteStep[] {
+  return steps.filter((s) =>
+    (!s.when_status || s.when_status === ctx.status) &&
+    (!s.when_cancel_reason || s.when_cancel_reason === ctx.cancel_reason) &&
+    !(reschedule && s.skip_on_reschedule === true)
+  );
 }
 
 export const BUTTON_PAYLOAD_PREFIX = { confirm: "confirmar_cita", cancel: "cancelar_cita" } as const;
@@ -303,11 +331,13 @@ export async function processOutboxRow(
     .eq("enabled", true)
     .order("position", { ascending: true });
   if (stepsErr) return finish(supabase, row, "retry", "steps_unavailable");
-  const steps = ((stepRows ?? []) as RouteStep[]).filter((s) =>
-    (!s.when_status || s.when_status === ctx.status) &&
-    (!s.when_cancel_reason || s.when_cancel_reason === ctx.cancel_reason)
-  );
-  if (steps.length === 0) return finish(supabase, row, "skipped", "no_template_for_event");
+  const reschedule = isRescheduleEvent(row.event_type, row.payload);
+  const matching = applicableSteps((stepRows ?? []) as RouteStep[], ctx, false);
+  const steps = applicableSteps(matching, ctx, reschedule);
+  if (steps.length === 0) {
+    // e.g. only "pedir_documentos" matched and this is a reschedule.
+    return finish(supabase, row, "skipped", matching.length > 0 ? "only_first_booking_steps" : "no_template_for_event");
+  }
   if (!whaapy.configured) return finish(supabase, row, "retry", "whaapy_not_configured");
 
   let manageToken: string | null = null;

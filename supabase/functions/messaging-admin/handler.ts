@@ -8,7 +8,8 @@
 //   sync_templates                    → POST /templates/v1/sync
 //   set_owner   { event_type, owner } → switching to 'findmed' requires every
 //                                       enabled step to fit its template
-//   save_step   { step }              → insert/update one mapping row (validated)
+//   save_step   { step }              → insert/update one mapping row (validated;
+//                                       skip_on_reschedule only if sent)
 //   delete_step { id }
 //   resend      { delivery_id, confirm_duplicate_risk? } → new manual delivery
 //   retry_outbox { outbox_id }        → failed event back to the queue
@@ -115,7 +116,16 @@ export async function handleMessagingAdmin(req: Request, deps: MessagingAdminDep
 
     case "save_step": {
       const s = (b.step ?? {}) as Record<string, unknown>;
-      const step = {
+      const step: Record<string, unknown> & {
+        event_type: string;
+        when_status: string | null;
+        position: number;
+        template_name: string;
+        language: string;
+        body_params: string[];
+        url_button_param: string | null;
+        quick_reply_action: string | null;
+      } = {
         event_type: String(s.event_type ?? ""),
         when_status: s.when_status ? String(s.when_status) : null,
         when_cancel_reason: s.when_cancel_reason ? String(s.when_cancel_reason) : null,
@@ -127,6 +137,12 @@ export async function handleMessagingAdmin(req: Request, deps: MessagingAdminDep
         quick_reply_action: s.quick_reply_action ? String(s.quick_reply_action) : null,
         enabled: s.enabled !== false,
       };
+      // Only written when the caller sends it, so an older screen that doesn't
+      // know the flag never resets it (e.g. pedir_documentos) when saving.
+      if (typeof s.skip_on_reschedule === "boolean") step.skip_on_reschedule = s.skip_on_reschedule;
+      if (step.skip_on_reschedule === true && step.event_type.startsWith("appointment.rescheduled")) {
+        return bad("invalid_step", "Este evento siempre es una reagenda: con \"No enviar al reagendar\" el mensaje nunca se enviaría.");
+      }
       if (!Number.isInteger(step.position) || step.position < 1 || step.position > 20) return bad("invalid_step", "Posición inválida (1–20).");
       if (step.when_status && !STATUSES.includes(step.when_status)) return bad("invalid_step", "Estado inválido.");
       if (step.when_status && step.event_type !== "appointment.status_changed") return bad("invalid_step", "El estado solo aplica al evento de cambio de estado.");

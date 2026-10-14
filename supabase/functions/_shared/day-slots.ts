@@ -4,7 +4,8 @@
 // Slots come from the office's weekly blocks for that weekday, minus:
 //   * the doctor's date override (blocked day),
 //   * live appointments of the DOCTOR in any office (decision D2),
-//   * busy events in the office's connected Google/Outlook calendar,
+//   * busy events in the office's connected Google/Outlook calendar (all
+//     pages; all-day events block the whole day — see _shared/calendar-busy.ts),
 //   * past slots, and for *today* slots closer than min_confirm_hours_before.
 //
 // Everything is compared as absolute instants (see _shared/mx-time.ts).
@@ -16,6 +17,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleAccessToken, getOutlookAccessToken } from "./calendar-tokens.ts";
+import { fetchGoogleBusy, fetchOutlookBusy } from "./calendar-busy.ts";
 import { isValidLocalDate, mxDayBoundsMs, mxLocalToMs, mxToday } from "./mx-time.ts";
 
 export type AvailabilityStatus =
@@ -116,55 +118,30 @@ export async function computeDaySlots(supabase: SupabaseClient, officeId: string
     .gt("end_at", dayStartIso);
   const busy: Busy[] = (appts ?? []).map((a) => ({ startMs: Date.parse(a.start_at), endMs: Date.parse(a.end_at) }));
 
+  // External calendar: every page, all-day events block the whole CDMX day,
+  // free/cancelled/declined don't (rules in _shared/calendar-busy.ts, shared
+  // with slot-validation so an offered slot is also an accepted one).
   let calendarVerified = true;
+  const dayRange = { timeMin: dayStartIso, timeMax: dayEndIso };
 
   if (office.google_calendar_connected && office.google_calendar_id) {
-    try {
-      const token = await getGoogleAccessToken({ supabase, office });
-      if (!token) {
-        calendarVerified = false;
-      } else {
-        const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(office.google_calendar_id)}/events?` +
-          new URLSearchParams({ timeMin: dayStartIso, timeMax: dayEndIso, singleEvents: "true", orderBy: "startTime", maxResults: "250" });
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) {
-          calendarVerified = false;
-        } else {
-          const data = await res.json();
-          for (const e of data.items ?? []) {
-            // Timed events only; "free" (transparent) events don't block.
-            if (!e.start?.dateTime || e.transparency === "transparent") continue;
-            busy.push({ startMs: Date.parse(e.start.dateTime), endMs: Date.parse(e.end?.dateTime || e.start.dateTime) });
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[day-slots] Google read failed:", err);
+    const token = await getGoogleAccessToken({ supabase, office });
+    if (!token) {
       calendarVerified = false;
+    } else {
+      const r = await fetchGoogleBusy({ accessToken: token, calendarId: office.google_calendar_id, ...dayRange });
+      busy.push(...r.busy);
+      if (!r.complete) calendarVerified = false;
     }
-  } else if (office.outlook_calendar_connected && office.outlook_calendar_id) {
-    try {
-      const token = await getOutlookAccessToken({ supabase, office });
-      if (!token) {
-        calendarVerified = false;
-      } else {
-        const url = `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(office.outlook_calendar_id)}/calendarView?` +
-          new URLSearchParams({ startDateTime: dayStartIso, endDateTime: dayEndIso, $top: "250", $select: "id,start,end,showAs" });
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="UTC"' } });
-        if (!res.ok) {
-          calendarVerified = false;
-        } else {
-          const data = await res.json();
-          const parse = (dt: string) => Date.parse(dt.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(dt) ? dt : dt + "Z");
-          for (const e of data.value ?? []) {
-            if (!e.start?.dateTime || e.showAs === "free") continue;
-            busy.push({ startMs: parse(e.start.dateTime), endMs: parse(e.end?.dateTime || e.start.dateTime) });
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[day-slots] Outlook read failed:", err);
+  }
+  if (office.outlook_calendar_connected && office.outlook_calendar_id) {
+    const token = await getOutlookAccessToken({ supabase, office });
+    if (!token) {
       calendarVerified = false;
+    } else {
+      const r = await fetchOutlookBusy({ accessToken: token, calendarId: office.outlook_calendar_id, ...dayRange });
+      busy.push(...r.busy);
+      if (!r.complete) calendarVerified = false;
     }
   }
 

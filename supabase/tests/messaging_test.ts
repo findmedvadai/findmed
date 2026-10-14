@@ -11,6 +11,7 @@ import {
   buildTemplateRequest,
   enqueueEvent,
   formatMxDateTime,
+  isRescheduleEvent,
   type OutboxRow,
   processOutboxRow,
   type RouteStep,
@@ -359,5 +360,112 @@ Deno.test("messaging migration: seed is all-n8n, claim is exclusive, dedupe and 
   await db.exec(`INSERT INTO message_deliveries (outbox_id, step_position, to_phone, template_name) VALUES ('${ob}', 1, '+52', 't')`);
   const again = await db.query(`INSERT INTO message_deliveries (outbox_id, step_position, to_phone, template_name) VALUES ('${ob}', 1, '+52', 't') ON CONFLICT DO NOTHING RETURNING id`);
   assertEquals(again.rows.length, 0);
+  await db.close();
+});
+
+// ---------------------------------------------------------------------------
+// "Pedir documentos" only with the original booking (skip_on_reschedule)
+
+function bookingClinic() {
+  const db = clinic("findmed", "scheduled");
+  db.rows("message_route_steps").push(
+    step("appointment.status_changed", 1, "reservada_estado_cita", { when_status: "scheduled", url_button_param: "manage_token" }),
+    step("appointment.status_changed", 2, "pedir_documentos", { when_status: "scheduled", skip_on_reschedule: true }),
+  );
+  return db;
+}
+const sentNames = (w: ReturnType<typeof scriptedWhaapy>) => w.sent.map((b) => (b.template as { name: string }).name);
+
+Deno.test("isRescheduleEvent: reschedule event types and the rescheduled_from marker", () => {
+  assertEquals(isRescheduleEvent("appointment.status_changed", { new_status: "scheduled" }), false);
+  assertEquals(isRescheduleEvent("appointment.status_changed", { new_status: "scheduled", rescheduled_from: OTHER_APPT }), true);
+  assertEquals(isRescheduleEvent("appointment.status_changed", { rescheduled_from: "" }), false);
+  assertEquals(isRescheduleEvent("appointment.status_changed", { rescheduled_from: 42 }), false);
+  assertEquals(isRescheduleEvent("appointment.rescheduled_by_staff", {}), true);
+  assertEquals(isRescheduleEvent("appointment.rescheduled", {}), true);
+});
+
+Deno.test("first booking: 'reservada' + 'pedir_documentos' are both sent", async () => {
+  const db = bookingClinic();
+  const w = scriptedWhaapy();
+  const row = await queued(db, "appointment.status_changed", { appointment_id: APPT, new_status: "scheduled" });
+  assertEquals(await processOutboxRow(sb(db), w.client, row), "sent");
+  assertEquals(sentNames(w), ["reservada_estado_cita", "pedir_documentos"]);
+});
+
+Deno.test("patient reschedule (manage-reschedule, rescheduled_from): documents are NOT requested again", async () => {
+  const db = bookingClinic();
+  const w = scriptedWhaapy();
+  const row = await queued(db, "appointment.status_changed", { appointment_id: APPT, new_status: "scheduled", rescheduled_from: OTHER_APPT });
+  assertEquals(await processOutboxRow(sb(db), w.client, row), "sent");
+  assertEquals(sentNames(w), ["reservada_estado_cita"]); // new date + link, no póliza/INE
+  assertEquals(db.rows("message_deliveries").map((d) => d.step_position), [1]);
+});
+
+Deno.test("reschedule where the only matching step is first-booking-only → skipped with its own reason", async () => {
+  const db = bookingClinic();
+  db.tables.message_route_steps = db.rows("message_route_steps").filter((s) => s.template_name !== "reservada_estado_cita");
+  const w = scriptedWhaapy();
+  const row = await queued(db, "appointment.status_changed", { appointment_id: APPT, new_status: "scheduled", rescheduled_from: OTHER_APPT });
+  assertEquals(await processOutboxRow(sb(db), w.client, row), "skipped");
+  assertEquals(db.rows("domain_outbox")[0].last_error, "only_first_booking_steps");
+  assertEquals(w.sent.length, 0);
+});
+
+Deno.test("staff reschedule event never sends a first-booking-only step (defensive)", async () => {
+  const db = clinic("findmed", "scheduled");
+  db.rows("message_route_steps").push(
+    step("appointment.rescheduled_by_staff", 1, "cita_reagendada_staff", {
+      body_params: ["patient_name", "previous_start_local", "start_local", "doctor_name", "office_address"],
+      url_button_param: "manage_token",
+    }),
+    step("appointment.rescheduled_by_staff", 2, "pedir_documentos", { skip_on_reschedule: true }),
+  );
+  const startAt = db.rows("appointments")[0].start_at as string;
+  const w = scriptedWhaapy();
+  const row = await queued(db, "appointment.rescheduled_by_staff", { appointment_id: APPT, start_at: startAt, previous_start_at: iso(Date.now() + 24 * H) });
+  assertEquals(await processOutboxRow(sb(db), w.client, row), "sent");
+  assertEquals(sentNames(w), ["cita_reagendada_staff"]);
+});
+
+Deno.test("steps without the flag (or rows from before the migration) keep being sent on reschedule", async () => {
+  const db = bookingClinic();
+  for (const s of db.rows("message_route_steps")) delete s.skip_on_reschedule; // column not there yet
+  const w = scriptedWhaapy();
+  const row = await queued(db, "appointment.status_changed", { appointment_id: APPT, new_status: "scheduled", rescheduled_from: OTHER_APPT });
+  assertEquals(await processOutboxRow(sb(db), w.client, row), "sent");
+  assertEquals(sentNames(w), ["reservada_estado_cita", "pedir_documentos"]);
+});
+
+Deno.test("migration 20261014100000: skip_on_reschedule defaults false and is on only for pedir_documentos", async () => {
+  const outbox = await Deno.readTextFile(new URL("../migrations/20261013140000_messaging_outbox.sql", import.meta.url));
+  const flag = await Deno.readTextFile(new URL("../migrations/20261014100000_skip_on_reschedule_steps.sql", import.meta.url));
+  const db = await PGlite.create();
+  await db.exec(`
+    CREATE ROLE authenticated; CREATE ROLE anon;
+    CREATE SCHEMA auth; CREATE TABLE auth.users (id uuid PRIMARY KEY);
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
+    CREATE FUNCTION public.is_admin_or_superadmin(_user_id uuid) RETURNS boolean LANGUAGE sql AS 'SELECT false';
+    CREATE FUNCTION public.update_updated_at_column() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.updated_at = now(); RETURN NEW; END;$$;
+    CREATE FUNCTION public.invoke_edge_function(slug text) RETURNS void LANGUAGE sql AS 'SELECT';
+    CREATE TABLE public.appointments (id uuid PRIMARY KEY);
+    CREATE TABLE public.whaapy_events (id uuid PRIMARY KEY, processed_at timestamptz, received_at timestamptz);
+    CREATE SCHEMA cron;
+    CREATE TABLE cron.job (jobname text PRIMARY KEY, schedule text, command text);
+    CREATE FUNCTION cron.schedule(j text, s text, c text) RETURNS bigint LANGUAGE sql AS
+      'INSERT INTO cron.job VALUES (j, s, c) ON CONFLICT (jobname) DO UPDATE SET command = EXCLUDED.command RETURNING 1::bigint';`);
+  await db.exec(outbox);
+  await db.exec(flag);
+  await db.exec(flag); // re-runnable
+
+  const flagged = await db.query<{ template_name: string; when_status: string }>(
+    "SELECT template_name, when_status FROM message_route_steps WHERE skip_on_reschedule ORDER BY template_name",
+  );
+  assertEquals(flagged.rows, [{ template_name: "pedir_documentos", when_status: "scheduled" }]);
+  const others = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM message_route_steps WHERE NOT skip_on_reschedule");
+  assertEquals(others.rows[0].n, 13);
+  await db.exec(`INSERT INTO message_route_steps (event_type, position, template_name) VALUES ('appointment.reminder_48h', 9, 'x')`);
+  const added = await db.query<{ skip_on_reschedule: boolean }>("SELECT skip_on_reschedule FROM message_route_steps WHERE template_name = 'x'");
+  assertEquals(added.rows[0].skip_on_reschedule, false);
   await db.close();
 });
