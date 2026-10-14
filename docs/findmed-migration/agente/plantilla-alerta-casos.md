@@ -1,4 +1,6 @@
-# Plantilla de WhatsApp `alerta_caso_findmed` (alertas al equipo)
+# Plantilla de WhatsApp `alerta_caso_findmed_utility` (alertas al equipo)
+
+> **Estado (14-oct-2026):** aprobada en WHAAPY/Meta como `alerta_caso_findmed_utility` (es_MX, UTILITY), con encabezado fijo "Alerta del equipo FindMed", pie "Este mensaje es de utilidad VADAI", las 4 variables del cuerpo y **sin botón**. `staff_alert_settings.template_name` en producción apunta a ese nombre. Envío de prueba a FINDMED_TEST_PHONE aceptado por WHAAPY (HTTP 200). Sin botón, el código envía solo los parámetros del cuerpo (`hasUrlButton=false`).
 
 Plantilla que FindMed envía por la API de WHAAPY a los **números de guardia**
 (Configuración → Alertas) cuando un caso necesita a una persona:
