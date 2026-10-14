@@ -33,6 +33,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { plural } from "@/lib/plural";
 import { messagingAdmin, type IntegrationHealth } from "@/lib/messaging-admin";
 import { caseSla, formatWait, type SlaSettings, sortBySla, WAITING_STATUSES } from "@/lib/case-sla";
 import { caseTypeLabel } from "@/lib/case-labels";
@@ -61,8 +62,6 @@ const SEVERITY_CLASS: Record<Severity, string> = {
   warning: "bg-warning/10 text-warning",
   info: "bg-info/10 text-info",
 };
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 function greeting(now: Date) {
   const h = toZonedTime(now, TZ).getHours();
@@ -222,7 +221,7 @@ function buildPending(o: NonNullable<ReturnType<typeof useOverview>["data"]>, sl
   if (o.eventsByN8n) items.push({ id: "n8n", severity: "warning", title: plural(o.eventsByN8n, "evento todavía lo envía n8n", "eventos todavía los envía n8n"), detail: "Pásalos a FindMed para que todo salga por WHAAPY.", to: "/admin/automatizacion", cta: "Revisar" });
   if (o.adminCancelWithoutMessage) items.push({ id: "admin-cancel", severity: "info", title: "Cancelaciones del equipo sin aviso", detail: "Cuando FindMed cancela una cita, el paciente no recibe WhatsApp: falta una plantilla.", to: "/admin/automatizacion", cta: "Configurar" });
   if (o.pendingForms) items.push({ id: "forms", severity: "info", title: plural(o.pendingForms, "reporte post-consulta por revisar", "reportes post-consulta por revisar"), detail: "Formularios de los doctores que aún no se revisan.", to: "#notificaciones", cta: "Ver" });
-  if (o.triagePending) items.push({ id: "triage", severity: "info", title: "Catálogo de triaje sin validar", detail: `${o.triagePending} condiciones esperan la revisión del responsable clínico.`, to: "/admin/configuracion/agente-ia", cta: "Ver" });
+  if (o.triagePending) items.push({ id: "triage", severity: "info", title: "Catálogo de triaje sin validar", detail: `${plural(o.triagePending, "condición espera", "condiciones esperan")} la revisión del responsable clínico.`, to: "/admin/configuracion/agente-ia", cta: "Ver" });
   if (o.docsPending48h) items.push({ id: "documents", severity: "warning", title: plural(o.docsPending48h, "cita en las próximas 48 h sin documentos", "citas en las próximas 48 h sin documentos"), detail: "Se les pidió póliza e INE por WhatsApp y aún no los envían.", to: "/admin/agenda?vista=lista", cta: "Ver citas" });
   return items.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 }
@@ -386,7 +385,7 @@ export default function Inicio() {
               icon={Bot}
               label="Agente IA"
               to="/admin/configuracion/agente-ia"
-              status={!o ? "…" : o.agentErrors ? `${o.agentErrors} errores 24 h` : o.lastAgentRequestAt ? "Activo" : "Sin actividad"}
+              status={!o ? "…" : o.agentErrors ? `${plural(o.agentErrors, "error", "errores")} en 24 h` : o.lastAgentRequestAt ? "Activo" : "Sin actividad"}
               tone={!o ? "neutral" : o.agentErrors ? "warning" : o.lastAgentRequestAt ? "success" : "neutral"}
               detail={o?.lastAgentRequestAt ? `Última actividad ${format(new Date(o.lastAgentRequestAt), "d MMM, HH:mm", { locale: es })}` : undefined}
             />
@@ -396,15 +395,15 @@ export default function Inicio() {
               to="/admin/automatizacion"
               status={!o ? "…" : o.eventsByN8n ? `${o.eventsByN8n} en n8n` : "FindMed"}
               tone={!o ? "neutral" : o.eventsByN8n ? "warning" : "success"}
-              detail={o ? `${o.eventsByFindmed} de ${o.eventsTotal} eventos los envía FindMed` : undefined}
+              detail={o ? `FindMed envía ${o.eventsByFindmed} de ${plural(o.eventsTotal, "evento", "eventos")}` : undefined}
             />
             <ConnectionRow
               icon={CalendarCheck}
               label="Calendarios de doctores"
               to="/admin/doctores"
-              status={!o ? "…" : o.disconnectedCalendars ? `${o.disconnectedCalendars} desconectados` : `${o.officesWithCalendar}/${o.officesTotal}`}
+              status={!o ? "…" : o.disconnectedCalendars ? plural(o.disconnectedCalendars, "desconectado", "desconectados") : `${o.officesWithCalendar}/${o.officesTotal}`}
               tone={!o ? "neutral" : o.disconnectedCalendars ? "warning" : "success"}
-              detail={o ? `${o.officesWithCalendar} de ${o.officesTotal} consultorios con Google u Outlook` : undefined}
+              detail={o ? `${o.officesWithCalendar} de ${plural(o.officesTotal, "consultorio", "consultorios")} con Google u Outlook` : undefined}
             />
           </CardContent>
         </Card>

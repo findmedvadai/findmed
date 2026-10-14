@@ -44,3 +44,20 @@ export function mxDayBoundsMs(date: string): { startMs: number; endMs: number } 
 export function mxToday(now = Date.now()): string {
   return new Date(now + MX_OFFSET_MS).toISOString().slice(0, 10);
 }
+
+const DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+/**
+ * Instant (ISO with offset, or epoch ms) -> "martes 14 de octubre, 10:00"
+ * (CDMX wall clock, 24 h). For texts the staff reads (panel notifications);
+ * never interpolate a raw `start_at` there. Invalid input returns "".
+ */
+export function formatMxLongDateTime(instant: string | number): string {
+  const ms = typeof instant === "number" ? instant : Date.parse(instant);
+  if (Number.isNaN(ms)) return "";
+  const d = new Date(ms + MX_OFFSET_MS); // shifted, read as wall clock
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${DIAS[d.getUTCDay()]} ${d.getUTCDate()} de ${MESES[d.getUTCMonth()]}, ${hh}:${mm}`;
+}

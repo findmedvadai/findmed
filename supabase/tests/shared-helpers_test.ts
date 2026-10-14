@@ -7,6 +7,7 @@ import { generateManageToken, generateSecureToken } from "../functions/_shared/m
 import { isServiceRequest } from "../functions/_shared/service-auth.ts";
 import { getPublishableKey, getServiceKey } from "../functions/_shared/supabase-keys.ts";
 import {
+  formatMxLongDateTime,
   isValidLocalDate,
   isValidLocalTime,
   msToMxIso,
@@ -84,6 +85,16 @@ Deno.test("P-003 mx-time conversions", () => {
   assertEquals(isValidLocalTime("24:00"), false);
   assertEquals(isValidLocalTime("9:30"), false);
   assertEquals(isValidLocalTime("09:30"), true);
+});
+
+Deno.test("P-003b formatMxLongDateTime: CDMX wall clock in Spanish, never raw ISO", () => {
+  // Stored as UTC (what Postgres returns) → 10:00 CDMX.
+  assertEquals(formatMxLongDateTime("2026-10-14T16:00:00+00:00"), "miércoles 14 de octubre, 10:00");
+  // Already with CDMX offset; and an evening slot that is the next day in UTC.
+  assertEquals(formatMxLongDateTime("2026-10-13T19:30:00-06:00"), "martes 13 de octubre, 19:30");
+  assertEquals(formatMxLongDateTime("2026-10-14T01:30:00Z"), "martes 13 de octubre, 19:30");
+  assertEquals(formatMxLongDateTime(mxLocalToMs("2026-01-04", "08:05")), "domingo 4 de enero, 08:05");
+  assertEquals(formatMxLongDateTime("no es fecha"), "");
 });
 
 Deno.test("P-004 supabase-keys prefers new keys and falls back to legacy", () => {

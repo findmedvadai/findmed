@@ -162,7 +162,8 @@ export default function DoctorProfileCard({ doctorId }: Props) {
           <CardDescription className="text-xs">Tu nombre y teléfono de contacto.</CardDescription>
         </CardHeader>
         <CardContent className="grid flex-1 gap-3 p-4 pt-0 sm:grid-cols-2">
-          <div className="space-y-1.5">
+          {/* Fila completa: con la tarjeta en media columna, la mitad cortaba nombres largos. */}
+          <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="doctor-full-name" className="text-sm">Nombre completo *</Label>
             <Input
               id="doctor-full-name"

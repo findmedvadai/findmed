@@ -22,6 +22,7 @@ import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar
 import { normalizeMxPhone, mxPhoneLookupVariants, isValidNormalizedPhone } from "../_shared/phone.ts";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 interface CreateBody {
   doctor_id: string;
@@ -294,7 +295,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_scheduled",
     title: "Nueva cita (creada por admin)",
-    body: `${fullName} - ${start_at}`,
+    body: `${fullName} - ${formatMxLongDateTime(start_at)}`,
   });
 
   // Generate the patient's manage token. Without this the n8n WhatsApp flow

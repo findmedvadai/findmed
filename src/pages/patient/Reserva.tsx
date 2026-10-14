@@ -13,6 +13,7 @@ import {
   mexicoTodayPickerDate,
   pickerDateToYmd,
 } from "@/lib/timezone";
+import { CALENDAR_LABELS_ES } from "@/lib/calendar-labels";
 
 // Los horarios (slots, fecha y hora de la cita) son siempre hora de CDMX,
 // aunque el paciente abra el enlace desde otra zona horaria.
@@ -234,6 +235,7 @@ export default function Reserva() {
               today={mxToday}
               defaultMonth={mxToday}
               locale={es}
+              labels={CALENDAR_LABELS_ES}
             />
           </CardContent>
         </Card>

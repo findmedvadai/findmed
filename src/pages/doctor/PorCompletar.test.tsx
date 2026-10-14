@@ -98,6 +98,9 @@ describe("Por completar — tipo de manejo", () => {
     expect(form.management_type).toBe("urgente");
     expect(form.hospitalization).toBe("Sí, sin detalle."); // interruptor encendido sin detalle no se pierde
     expect(form.lab_tests).toBeNull();
+    // El nombre ya trae el título: nada de "Dr. Dra. …".
+    const notification = h.inserts.find((i) => i.table === "notifications")!.values as { body: string };
+    expect(notification.body).toBe("Dra. Laura Gómez envió formulario post-consulta para Ana Pérez (12 oct 2026)");
     const [fn, opts] = h.invoke.mock.calls[0] as [string, { body: { event_type: string; payload: Record<string, unknown> } }];
     expect(fn).toBe("dispatch-webhook");
     expect(opts.body.event_type).toBe("postconsultation.submitted");

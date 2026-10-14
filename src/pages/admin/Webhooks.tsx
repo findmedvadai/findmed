@@ -351,6 +351,12 @@ function urlHost(url: string): string {
   }
 }
 
+/** Destinos de n8n: el host de automatización de VADAI (el que pausó la migración de corte) o cualquiera con "n8n". */
+function isN8nUrl(url: string): boolean {
+  const host = urlHost(url).toLowerCase();
+  return host === "automation.vadai.com.mx" || host.includes("n8n");
+}
+
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text).then(
     () => toast({ title: "Copiado al portapapeles" }),
@@ -778,6 +784,8 @@ function WebhooksContent() {
 
   const list = webhooks ?? [];
   const activeCount = list.filter((wh) => wh.is_active).length;
+  // Webhooks de n8n que siguen pausados (la migración 20261013180000 los pausó).
+  const pausedN8n = list.filter((wh) => !wh.is_active && isN8nUrl(wh.url)).length;
 
   return (
     <div className="space-y-5">
@@ -797,8 +805,13 @@ function WebhooksContent() {
         <div className="min-w-0 space-y-1 text-sm">
           <p className="font-medium text-foreground">Los WhatsApp a pacientes ya no salen por webhooks</p>
           <p className="text-muted-foreground">
-            Desde el 13 de octubre FindMed los envía desde Automatización por WHAAPY, y los 8 webhooks que apuntaban a n8n
-            quedaron pausados. Un evento que envía FindMed ya no se manda a ningún webhook: úsalos solo para integraciones externas.
+            Desde el 13 de octubre FindMed los envía desde Automatización por WHAAPY
+            {pausedN8n === 0
+              ? " y los webhooks que apuntaban a n8n se pausaron."
+              : pausedN8n === 1
+              ? "; el webhook que apuntaba a n8n está pausado."
+              : `; los ${pausedN8n} webhooks que apuntaban a n8n están pausados.`}{" "}
+            Un evento que envía FindMed ya no se manda a ningún webhook: úsalos solo para integraciones externas.
           </p>
           <Link to="/admin/automatizacion" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
             Ir a Automatización <ArrowRight className="h-3.5 w-3.5" />

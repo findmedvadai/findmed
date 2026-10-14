@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/app/PageHeader";
 import { EmptyState } from "@/components/app/EmptyState";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { cn } from "@/lib/utils";
+import { formatMx } from "@/lib/timezone";
 import {
   isManagementType,
   MANAGEMENT_TYPE_INFO,
@@ -291,7 +292,8 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
         recipient_role: "admin",
         type: "postconsultation_submitted",
         title: "Formulario post-consulta enviado",
-        body: `Dr. ${doctorData?.full_name ?? "Doctor"} envió formulario post-consulta para ${patient?.full_name ?? "Paciente"} (${format(start, "d MMM yyyy", { locale: es })})`,
+        // El nombre ya trae el título ("Dra. Mariana…"): no anteponer "Dr.".
+        body: `${doctorData?.full_name ?? "El doctor"} envió formulario post-consulta para ${patient?.full_name ?? "Paciente"} (${formatMx(start, "d MMM yyyy", { locale: es })})`,
       });
 
       // Dispatch webhook

@@ -12,6 +12,7 @@ import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { dispatchStaffRescheduleWebhook } from "../_shared/staff-reschedule-webhook.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 interface Body {
   appointment_id: string;
@@ -285,7 +286,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_rescheduled",
     title: "Cita reagendada",
-    body: `${patient?.full_name ?? "Paciente"} fue reagendado a ${start_at}`,
+    body: `La cita de ${patient?.full_name ?? "Paciente"} se reagendó al ${formatMxLongDateTime(start_at)}`,
   });
 
   // Single webhook: appointment.rescheduled_by_staff. Status doesn't change

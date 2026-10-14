@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -101,7 +102,7 @@ Deno.serve(async (req) => {
         recipient_role: "doctor",
         type: "appointment_auto_cancelled",
         title: "Cita auto-cancelada",
-        body: `${patient?.full_name ?? "Paciente"} no confirmó a tiempo. La cita del ${appt.start_at?.split("T")[0] ?? ""} fue cancelada.`,
+        body: `${patient?.full_name ?? "Paciente"} no confirmó a tiempo. La cita del ${formatMxLongDateTime(appt.start_at ?? "")} fue cancelada.`,
       });
 
       // Generate reschedule token. Auto-cancellation gives the patient 24h to

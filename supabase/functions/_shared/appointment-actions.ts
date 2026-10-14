@@ -16,7 +16,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { deleteAppointmentEvents, type CalendarDeleteResult } from "./calendar-sync.ts";
 import { emitEvent, manageUrlFor } from "./events.ts";
-import { msToMxIso } from "./mx-time.ts";
+import { formatMxLongDateTime } from "./mx-time.ts";
 
 export type PatientAction = "confirm" | "cancel";
 export type ActionChannel = "web" | "whatsapp" | "mcp" | "api";
@@ -100,8 +100,7 @@ export async function applyPatientAction(supabase: SupabaseClient, input: Action
     .eq("id", appt.patient_id)
     .maybeSingle();
   const patientName = patient?.full_name ?? "Paciente";
-  const local = msToMxIso(Date.parse(appt.start_at)); // "YYYY-MM-DDTHH:mm:00-06:00"
-  const when = `${local.slice(0, 10)} ${local.slice(11, 16)}`;
+  const when = formatMxLongDateTime(appt.start_at); // "martes 14 de octubre, 10:00"
   const via = input.channel === "whatsapp" || input.channel === "mcp" ? " vía WhatsApp" : "";
 
   await supabase.from("notifications").insert({

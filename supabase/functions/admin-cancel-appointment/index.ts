@@ -8,6 +8,7 @@ import { requireAdmin } from "../_shared/auth.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 interface Body {
   appointment_id: string;
@@ -115,7 +116,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_cancelled_by_admin",
     title: "Cita cancelada por admin",
-    body: `${patient?.full_name ?? "Paciente"} - ${appointment.start_at}`,
+    body: `${patient?.full_name ?? "Paciente"} - ${formatMxLongDateTime(appointment.start_at)}`,
   });
 
   // WhatsApp dispatch — both doctor and patient.

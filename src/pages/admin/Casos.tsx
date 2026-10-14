@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { extractEdgeFunctionError, toastFromEdgeFunctionError } from "@/lib/edge-function-error";
 import { AlertTriangle, Bot, BotOff, CheckCircle2, Hand, LifeBuoy, MapPin, Phone, Plus, SearchX, UserRound } from "lucide-react";
-import { CASE_TYPE_LABEL } from "@/lib/case-labels";
+import { CASE_TYPE_LABEL, caseEventLabel } from "@/lib/case-labels";
 import NewCaseDialog from "@/components/admin/cases/NewCaseDialog";
 import CaseOriginCard from "@/components/admin/cases/CaseOriginCard";
 import CaseReimbursementPanel from "@/components/admin/cases/CaseReimbursementPanel";
@@ -91,50 +91,6 @@ const PRIORITY: Record<string, { label: string; tone: Tone }> = {
 };
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2 };
-
-const EVENT_LABEL: Record<string, string> = {
-  created: "Caso abierto por el agente",
-  deduplicated: "El paciente repitió la solicitud",
-  handoff_requested: "Se pidió atención humana",
-  handoff_retried: "Se volvió a pedir atención humana",
-  ai_paused: "IA apagada en WhatsApp",
-  ai_pause_failed: "No se pudo apagar la IA",
-  ai_resumed: "IA reactivada",
-  ai_resume_failed: "No se pudo reactivar la IA",
-  conversation_lookup_failed: "No se pudo consultar la conversación en WHAAPY",
-  conversation_not_found: "No existe conversación en WHAAPY para este número",
-  whaapy_not_configured: "WHAAPY no está configurado",
-  tags_added: "Etiquetas agregadas en WHAAPY",
-  tags_failed: "No se pudieron agregar etiquetas en WHAAPY",
-  assigned: "Caso tomado",
-  whaapy_assigned: "Asignado también en WHAAPY",
-  whaapy_assign_failed: "WHAAPY rechazó la asignación",
-  whaapy_no_matching_agent: "Sin agente de WHAAPY con ese correo",
-  whaapy_released: "Asignación liberada en WHAAPY",
-  whaapy_release_failed: "No se pudo liberar la asignación en WHAAPY",
-  updated: "Seguimiento actualizado",
-  note: "Nota",
-  resolved: "Resuelto",
-  closed: "Cerrado",
-  reimbursement_created: "Reembolso registrado",
-  reimbursement_status: "Reembolso: cambio de estado",
-  reimbursement_updated: "Reembolso actualizado",
-  // Alertas al equipo (_shared/staff-alerts.ts)
-  staff_alert_sent: "Equipo avisado",
-  staff_alert_failed: "No se pudo avisar al equipo por WhatsApp",
-  staff_alert_skipped: "Alerta por WhatsApp no enviada",
-  escalated: "Re-aviso: nadie ha tomado el caso",
-};
-
-/** created/deduplicated dicen quién abrió el caso según su origen (agente, equipo o post-consulta). */
-function eventLabel(e: CaseEvent) {
-  const origin = (e.detail as Record<string, unknown> | null)?.origin;
-  if (e.event_type === "created" && origin === "post_consultation") return "Caso abierto por la post-consulta";
-  if (e.event_type === "created" && origin === "admin") return "Caso abierto por el equipo";
-  if (e.event_type === "deduplicated" && origin === "post_consultation") return "La post-consulta agregó una indicación";
-  if (e.event_type === "deduplicated" && origin === "admin") return "El equipo agregó una solicitud del mismo tipo";
-  return EVENT_LABEL[e.event_type] ?? e.event_type;
-}
 
 const AI_STATE: Record<string, { label: string; icon: typeof Bot; className: string }> = {
   not_requested: { label: "IA activa", icon: Bot, className: "text-muted-foreground" },
@@ -854,7 +810,7 @@ function CaseSheet({
                       <span className={cn("mt-1.5 h-[11px] w-[11px] shrink-0 rounded-full ring-4 ring-background", eventDot(e.event_type))} aria-hidden />
                       <div className="min-w-0 flex-1">
                         <p className={cn("text-sm font-medium", failed ? "text-destructive" : "text-foreground")}>
-                          {eventLabel(e)}
+                          {caseEventLabel(e)}
                           {e.actor_user_id && <span className="font-normal text-muted-foreground"> · {e.actor_user_id === me ? "tú" : staff[e.actor_user_id] ?? "equipo"}</span>}
                         </p>
                         {text && <p className="mt-1 whitespace-pre-wrap rounded-md bg-muted/60 px-2.5 py-1.5 text-sm text-foreground">{text}</p>}

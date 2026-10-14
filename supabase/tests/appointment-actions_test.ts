@@ -5,6 +5,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { applyPatientAction, findUpcomingAppointmentsByPhone } from "../functions/_shared/appointment-actions.ts";
+import { formatMxLongDateTime } from "../functions/_shared/mx-time.ts";
 import { FakeDb, stubFetch } from "./fake-supabase.ts";
 
 Deno.env.set("SUPABASE_URL", "https://example.supabase.co");
@@ -44,6 +45,12 @@ Deno.test("confirm: scheduled → confirmed, notifies doctor and emits both even
     assertEquals(r.ok, true);
     assertEquals(db.rows("appointments")[0].status, "confirmed");
     assertEquals(db.rows("notifications").length, 1);
+    // Readable CDMX date in the panel, never the raw ISO.
+    const start = String(db.rows("appointments")[0].start_at);
+    assertEquals(
+      db.rows("notifications")[0].body,
+      `Paciente Prueba confirmó su cita del ${formatMxLongDateTime(start)} vía WhatsApp`,
+    );
     const events = f.calls.map((c) => (c.body as { event_type: string }).event_type).sort();
     assertEquals(events, ["appointment.confirmed", "appointment.status_changed"]);
     const payload = (f.calls[0].body as { payload: Record<string, unknown> }).payload;

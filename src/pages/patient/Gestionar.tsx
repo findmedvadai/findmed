@@ -18,12 +18,15 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   formatMx,
   isBeforeMexicoToday,
   mexicoTodayPickerDate,
   pickerDateToYmd,
 } from "@/lib/timezone";
+import { CALENDAR_LABELS_ES } from "@/lib/calendar-labels";
+import { APPOINTMENT_STATUS } from "@/lib/appointment-status";
 
 // Fecha y hora de la cita y los horarios para reagendar son siempre hora de
 // CDMX, aunque el paciente abra el enlace desde otra zona horaria.
@@ -32,11 +35,13 @@ const MX_TIME_NOTE = "Horarios en hora del centro de México.";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-const STATUS_LABELS: Record<string, string> = {
-  scheduled: "Reservada",
-  confirmed: "Confirmada",
-  cancelled: "Cancelada",
-  completed: "Completada",
+// Etiquetas de src/lib/appointment-status.ts (iguales al panel). Verde solo
+// para la confirmada: una cita reservada aún está por confirmar.
+const STATUS_STYLE: Record<string, { className: string; Icon: typeof CheckCircle2 }> = {
+  scheduled: { className: "text-warning", Icon: Clock },
+  confirmed: { className: "text-confirmed", Icon: CheckCircle2 },
+  cancelled: { className: "text-destructive", Icon: XCircle },
+  completed: { className: "text-info", Icon: CheckCircle2 },
 };
 
 interface AppointmentData {
@@ -214,6 +219,9 @@ export default function Gestionar() {
   // Mirrors manage-reschedule: completed consultations and past appointments
   // can't be rescheduled; cancelled ones can (the page invites it).
   const isCancelled = cancelled || appointment.status === "cancelled";
+  const statusKey = isCancelled ? "cancelled" : appointment.status;
+  const status = STATUS_STYLE[statusKey] ?? { className: "text-muted-foreground", Icon: Clock };
+  const statusLabel = APPOINTMENT_STATUS[statusKey]?.label ?? statusKey;
   const canReschedule =
     appointment.status !== "completed" &&
     (isCancelled || new Date(appointment.start_at).getTime() > Date.now());
@@ -270,15 +278,9 @@ export default function Gestionar() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-muted-foreground">Estado:</span>
-                {cancelled || appointment.status === "cancelled" ? (
-                  <span className="flex items-center gap-1 text-destructive">
-                    <XCircle className="h-4 w-4" /> {STATUS_LABELS.cancelled}
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-confirmed">{/* confirmed status color */}
-                    <CheckCircle2 className="h-4 w-4" /> {STATUS_LABELS[appointment.status] ?? appointment.status}
-                  </span>
-                )}
+                <span className={cn("flex items-center gap-1", status.className)}>
+                  <status.Icon className="h-4 w-4" /> {statusLabel}
+                </span>
               </div>
             </div>
 
@@ -363,6 +365,7 @@ export default function Gestionar() {
                   today={mxToday}
                   defaultMonth={mxToday}
                   locale={es}
+                  labels={CALENDAR_LABELS_ES}
                 />
               </CardContent>
             </Card>

@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getServiceKey, getPublishableKey } from "../_shared/supabase-keys.ts";
+import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -201,7 +202,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_cancelled_by_doctor",
     title: "Cita cancelada",
-    body: `Cancelaste la cita de ${patient?.full_name ?? "Paciente"} del ${appointment.start_at?.split("T")[0] ?? ""}`,
+    body: `Cancelaste la cita de ${patient?.full_name ?? "Paciente"} del ${formatMxLongDateTime(appointment.start_at ?? "")}`,
   });
 
   // Dispatch webhooks (fire-and-forget)

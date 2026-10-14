@@ -3,7 +3,7 @@ import { checkAvailability } from "../_shared/availability-check.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
-import { isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
+import { formatMxLongDateTime, isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 import { carryOverDocuments } from "../_shared/patient-documents.ts";
 
 const corsHeaders = {
@@ -326,7 +326,6 @@ Deno.serve(async (req) => {
     .eq("id", manageToken.id);
 
   // 5. Insert notifications for doctor
-  const rescheduleDate = startAt.split("T")[0];
   await supabase.from("notifications").insert([
     {
       doctor_id: oldAppt.doctor_id,
@@ -342,7 +341,7 @@ Deno.serve(async (req) => {
       recipient_role: "doctor",
       type: "appointment_scheduled",
       title: "Nueva cita (reagendada)",
-      body: `${patient?.full_name ?? "Paciente"} - ${rescheduleDate} ${slot_start}`,
+      body: `${patient?.full_name ?? "Paciente"} - ${formatMxLongDateTime(startAt)}`,
     },
   ]);
 

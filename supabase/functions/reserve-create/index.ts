@@ -3,7 +3,7 @@ import { createManageToken } from "../_shared/manage-token.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
-import { isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
+import { formatMxLongDateTime, isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 
 const corsHeaders = {
@@ -282,15 +282,13 @@ Deno.serve(async (req) => {
   }
 
   // Insert notification for doctor
-  const formattedDate = startAt.split("T")[0];
-  const formattedTime = slot_start;
   await supabase.from("notifications").insert({
     doctor_id: session.doctor_id,
     appointment_id: appointment.id,
     recipient_role: "doctor",
     type: "appointment_scheduled",
     title: "Nueva cita agendada",
-    body: `${patient?.full_name ?? "Paciente"} - ${formattedDate} ${formattedTime}`,
+    body: `${patient?.full_name ?? "Paciente"} - ${formatMxLongDateTime(startAt)}`,
   });
 
   // Generate manage token (expires when appointment ends).

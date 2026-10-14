@@ -29,7 +29,9 @@ import { FilterBar, SearchInput } from "@/components/app/FilterBar";
 import { StatCard, type Tone } from "@/components/app/StatCard";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { EmptyState } from "@/components/app/EmptyState";
-import { caseTypeLabel } from "@/lib/case-labels";
+import { caseEventLabel, caseTypeLabel } from "@/lib/case-labels";
+import { DELIVERY_STATUS } from "@/lib/staff-alerts";
+import { plural } from "@/lib/plural";
 import {
   Activity,
   AlertTriangle,
@@ -274,6 +276,12 @@ function StatusTiles({
       : { value: "Sin conexión", tone: "warning", hint: "WHAAPY aún no prueba la conexión" };
 
   const agentErrors = stats.errors24h + stats.authFails24h;
+  // La leyenda enumera exactamente lo que suma (o no) el número de la tarjeta.
+  const errorParts = [
+    stats.errors24h ? plural(stats.errors24h, "llamada con error", "llamadas con error") : null,
+    stats.authFails24h ? `${stats.authFails24h} con token rechazado` : null,
+    stats.eventErrors24h ? plural(stats.eventErrors24h, "evento de WHAAPY con error", "eventos de WHAAPY con error") : null,
+  ].filter(Boolean);
   const latency = api?.latency_ms;
 
   return (
@@ -284,13 +292,7 @@ function StatusTiles({
       <StatCard
         label="Errores · 24 h"
         value={agentErrors}
-        hint={
-          stats.authFails24h
-            ? `${stats.authFails24h} con token rechazado`
-            : stats.eventErrors24h
-            ? `${stats.eventErrors24h} eventos de WHAAPY con error`
-            : "Sin fallas del agente"
-        }
+        hint={errorParts.length ? errorParts.join(" · ") : "Sin fallas del agente"}
         icon={CircleAlert}
         tone={agentErrors ? "danger" : stats.eventErrors24h ? "warning" : "success"}
       />
@@ -394,7 +396,7 @@ function ConnectionCard({
               <CheckLine ok={apiConfigured} label="Llave de API configurada" />
               <CheckLine
                 ok={apiOk}
-                label={api?.ok ? "WHAAPY responde" : "WHAAPY no responde"}
+                label={apiOk === null ? "Respuesta de WHAAPY" : apiOk ? "WHAAPY responde" : "WHAAPY no responde"}
                 detail={
                   api?.ok
                     ? `${api.approved} plantillas aprobadas de ${api.templates} · ${api.latency_ms} ms`
@@ -411,10 +413,22 @@ function ConnectionCard({
                 label={`Última prueba de conexión ${ago(stats?.lastConnection)}`}
                 detail={`Última herramienta usada ${ago(stats?.lastCall)}`}
               />
+              {/* El ícono dice si hubo errores: el texto principal también, y el volumen va al detalle. */}
               <CheckLine
                 ok={mcpClean}
-                label={`${stats?.calls24h ?? 0} llamadas en 24 h`}
-                detail={`${stats?.errors24h ?? 0} con error · ${stats?.authFails24h ?? 0} con token rechazado`}
+                label={
+                  !stats
+                    ? "Errores del agente en 24 h"
+                    : mcpClean
+                    ? "Sin errores del agente en 24 h"
+                    : [
+                        stats.errors24h ? plural(stats.errors24h, "llamada con error", "llamadas con error") : null,
+                        stats.authFails24h ? `${stats.authFails24h} con token rechazado` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") + " en 24 h"
+                }
+                detail={stats ? `${plural(stats.calls24h, "llamada", "llamadas")} a herramientas en 24 h` : null}
               />
             </ConnectionSection>
             <ConnectionSection icon={Webhook} title="WHAAPY → FindMed (webhook)" checks={[webhookSecret, webhookReceiving, outboxClean]}>
@@ -422,18 +436,29 @@ function ConnectionCard({
               <CheckLine
                 ok={webhookReceiving}
                 label={`Último evento recibido ${ago(stats?.lastEvent)}`}
-                detail={`${stats?.events24h ?? 0} eventos en 24 h · ${stats?.eventErrors24h ?? 0} con error al procesar`}
+                detail={`${plural(stats?.events24h ?? 0, "evento", "eventos")} en 24 h · ${stats?.eventErrors24h ?? 0} con error al procesar`}
               />
               <CheckLine
                 ok={outboxClean}
-                label={`Mensajes de FindMed: ${stats?.owners.findmed ?? 0} eventos propios, ${stats?.owners.n8n ?? 0} en n8n`}
+                label={
+                  !stats
+                    ? "Envíos de FindMed"
+                    : outboxClean
+                    ? "Envíos de FindMed sin fallas pendientes"
+                    : plural(stats.stuckOutbox, "envío de FindMed fallido o incierto", "envíos de FindMed fallidos o inciertos")
+                }
                 detail={
-                  stats?.stuckOutbox ? (
+                  stats ? (
                     <>
-                      {stats.stuckOutbox} envío(s) fallidos o inciertos ·{" "}
-                      <Link to="/admin/automatizacion?tab=envios" className="font-medium text-primary hover:underline">
-                        Ver en Automatización
-                      </Link>
+                      FindMed envía {plural(stats.owners.findmed ?? 0, "evento", "eventos")}; n8n, {stats.owners.n8n ?? 0}
+                      {stats.stuckOutbox ? (
+                        <>
+                          {" · "}
+                          <Link to="/admin/automatizacion?tab=envios" className="font-medium text-primary hover:underline">
+                            Ver en Automatización
+                          </Link>
+                        </>
+                      ) : null}
                     </>
                   ) : null
                 }
@@ -680,7 +705,7 @@ function ActivityLog({ errorsOnly }: { errorsOnly: boolean }) {
         const bad = d.status === "failed" || d.status === "uncertain";
         out.push({
           id: `del-${d.id}`, at: d.created_at, source: "template", ok: !bad,
-          title: `FindMed envió "${d.template_name}" · ${d.status}`, detail: d.error_message, phone: d.to_phone, raw: d,
+          title: `FindMed envió "${d.template_name}" · ${DELIVERY_STATUS[d.status]?.label ?? d.status}`, detail: d.error_message, phone: d.to_phone, raw: d,
         });
       }
 
@@ -688,7 +713,7 @@ function ActivityLog({ errorsOnly }: { errorsOnly: boolean }) {
         const pc = c.patient_cases as { subject_phone?: string; request_type?: string } | null;
         out.push({
           id: `case-${c.id}`, at: c.created_at, source: "case", ok: !c.event_type.endsWith("_failed"),
-          title: `Caso ${caseTypeLabel(pc?.request_type)}: ${c.event_type.replace(/_/g, " ")}`, phone: pc?.subject_phone ?? null, raw: c,
+          title: `Caso ${caseTypeLabel(pc?.request_type)}: ${caseEventLabel(c)}`, phone: pc?.subject_phone ?? null, raw: c,
         });
       }
 
