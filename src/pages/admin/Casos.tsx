@@ -30,7 +30,14 @@ import type { Tone } from "@/components/app/StatCard";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { extractEdgeFunctionError, toastFromEdgeFunctionError } from "@/lib/edge-function-error";
-import { AlertTriangle, Bot, BotOff, CheckCircle2, Hand, LifeBuoy, MapPin, Phone, SearchX, UserRound } from "lucide-react";
+import { AlertTriangle, Bot, BotOff, CheckCircle2, Hand, LifeBuoy, MapPin, Phone, Plus, SearchX, UserRound } from "lucide-react";
+import { CASE_TYPE_LABEL } from "@/lib/case-labels";
+import NewCaseDialog from "@/components/admin/cases/NewCaseDialog";
+import CaseOriginCard from "@/components/admin/cases/CaseOriginCard";
+import CaseReimbursementPanel from "@/components/admin/cases/CaseReimbursementPanel";
+import { useCaseDeepLink } from "@/components/admin/cases/useCaseDeepLink";
+import { type CaseSla, caseSla, formatWait, SLA_STATE, sortBySla } from "@/lib/case-sla";
+import { useSlaSettings } from "@/hooks/useStaffAlertSettings";
 
 type PatientCase = Tables<"patient_cases">;
 type CaseEvent = Tables<"case_events">;
@@ -54,14 +61,8 @@ const VIEWS: { value: View; label: string }[] = [
   { value: "closed", label: "Resueltos" },
 ];
 
-const TYPE_LABEL: Record<string, string> = {
-  appointment_help: "Cita",
-  hospital: "Hospital",
-  studies: "Estudios",
-  urgency: "Urgencia",
-  follow_up: "Seguimiento",
-  other: "Otro",
-};
+// Incluye los tipos de la Etapa 2 (procedimiento, referencia, reembolso): src/lib/case-labels.ts.
+const TYPE_LABEL: Record<string, string> = CASE_TYPE_LABEL;
 
 const STATUS_LABEL: Record<string, string> = {
   open: "Abierto",
@@ -115,7 +116,25 @@ const EVENT_LABEL: Record<string, string> = {
   note: "Nota",
   resolved: "Resuelto",
   closed: "Cerrado",
+  reimbursement_created: "Reembolso registrado",
+  reimbursement_status: "Reembolso: cambio de estado",
+  reimbursement_updated: "Reembolso actualizado",
+  // Alertas al equipo (_shared/staff-alerts.ts)
+  staff_alert_sent: "Equipo avisado",
+  staff_alert_failed: "No se pudo avisar al equipo por WhatsApp",
+  staff_alert_skipped: "Alerta por WhatsApp no enviada",
+  escalated: "Re-aviso: nadie ha tomado el caso",
 };
+
+/** created/deduplicated dicen quién abrió el caso según su origen (agente, equipo o post-consulta). */
+function eventLabel(e: CaseEvent) {
+  const origin = (e.detail as Record<string, unknown> | null)?.origin;
+  if (e.event_type === "created" && origin === "post_consultation") return "Caso abierto por la post-consulta";
+  if (e.event_type === "created" && origin === "admin") return "Caso abierto por el equipo";
+  if (e.event_type === "deduplicated" && origin === "post_consultation") return "La post-consulta agregó una indicación";
+  if (e.event_type === "deduplicated" && origin === "admin") return "El equipo agregó una solicitud del mismo tipo";
+  return EVENT_LABEL[e.event_type] ?? e.event_type;
+}
 
 const AI_STATE: Record<string, { label: string; icon: typeof Bot; className: string }> = {
   not_requested: { label: "IA activa", icon: Bot, className: "text-muted-foreground" },
@@ -194,6 +213,9 @@ export default function Casos() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [newCaseOpen, setNewCaseOpen] = useState(false);
+  // /admin/casos?caso=<id> abre ese caso (enlace desde el detalle post-consulta).
+  useCaseDeepLink(setSelected);
 
   // Pendientes y en curso siempre (alimentan los contadores); cerrados solo al verlos.
   const pending = useCaseBucket("pending");
@@ -212,9 +234,13 @@ export default function Casos() {
   const pendingRows = pending.data ?? [];
   const activeRows = active.data ?? [];
   const closedRows = closed.data ?? [];
+  // SLA de los casos sin tomar (Configuración → Alertas); se recalcula en cada refresco de la cola.
+  const slaSettings = useSlaSettings();
+  const nowMs = Date.now();
 
   const rowsFor = (v: View): PatientCase[] => {
-    if (v === "unassigned") return pendingRows;
+    // Sin asignar: primero los vencidos más urgentes.
+    if (v === "unassigned") return sortBySla(pendingRows, slaSettings, nowMs);
     if (v === "closed") return closedRows;
     if (v === "mine") return activeRows.filter((c) => !!me && c.assigned_user_id === me);
     if (v === "waiting") return activeRows.filter((c) => WAITING.includes(c.status));
@@ -255,8 +281,24 @@ export default function Casos() {
     <div className="space-y-5">
       <PageHeader
         title="Casos"
-        description="Solicitudes que necesitan a una persona: hospital, estudios, urgencias y canalizaciones del agente de WhatsApp."
-        actions={urgentOpen > 0 ? <SoftBadge tone="danger" dot>{urgentOpen === 1 ? "1 urgente abierto" : `${urgentOpen} urgentes abiertos`}</SoftBadge> : undefined}
+        description="Solicitudes que necesitan a una persona: hospital, estudios, urgencias, seguimiento post-consulta, reembolsos y canalizaciones del agente de WhatsApp."
+        actions={
+          <>
+            {urgentOpen > 0 && <SoftBadge tone="danger" dot>{urgentOpen === 1 ? "1 urgente abierto" : `${urgentOpen} urgentes abiertos`}</SoftBadge>}
+            <Button size="sm" className="gap-1.5" onClick={() => setNewCaseOpen(true)}>
+              <Plus className="h-4 w-4" /> Nuevo caso
+            </Button>
+          </>
+        }
+      />
+
+      <NewCaseDialog
+        open={newCaseOpen}
+        onOpenChange={setNewCaseOpen}
+        onCreated={(c) => {
+          queryClient.invalidateQueries({ queryKey: ["patient-cases"] });
+          setSelected(c);
+        }}
       />
 
       <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
@@ -356,7 +398,7 @@ export default function Casos() {
                 <TableHead className="hidden h-9 text-xs lg:table-cell">Ciudad</TableHead>
                 <TableHead className="hidden h-9 text-xs md:table-cell">Estado</TableHead>
                 <TableHead className="hidden h-9 text-xs xl:table-cell">Responsable</TableHead>
-                <TableHead className="h-9 text-right text-xs">Recibido</TableHead>
+                <TableHead className="h-9 text-right text-xs">{view === "unassigned" ? "Esperando" : "Recibido"}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -366,6 +408,7 @@ export default function Casos() {
                   c={c}
                   selected={current?.id === c.id}
                   assignee={staffName(c.assigned_user_id)}
+                  sla={caseSla(c, slaSettings, nowMs)}
                   onOpen={() => setSelected(c)}
                 />
               ))}
@@ -385,7 +428,20 @@ export default function Casos() {
   );
 }
 
-function CaseRow({ c, selected, assignee, onOpen }: { c: PatientCase; selected: boolean; assignee: string | null; onOpen: () => void }) {
+function CaseRow({
+  c,
+  selected,
+  assignee,
+  sla,
+  onOpen,
+}: {
+  c: PatientCase;
+  selected: boolean;
+  assignee: string | null;
+  /** Solo para casos que nadie ha tomado (open / awaiting_assignment). */
+  sla: CaseSla | null;
+  onOpen: () => void;
+}) {
   const prio = PRIORITY[c.priority] ?? PRIORITY.normal;
   const ai = AI_STATE[c.ai_state] ?? AI_STATE.not_requested;
   const isClosed = BUCKETS.closed.includes(c.status);
@@ -449,7 +505,14 @@ function CaseRow({ c, selected, assignee, onOpen }: { c: PatientCase; selected: 
         className="whitespace-nowrap py-2.5 text-right text-xs text-muted-foreground"
         title={format(parseISO(c.created_at), "d MMM yyyy, HH:mm", { locale: es })}
       >
-        {shortAgo(c.created_at)}
+        {sla ? (
+          <div className="flex flex-col items-end gap-1">
+            <span className={cn("font-medium tabular-nums", sla.state === "overdue" ? "text-destructive" : "text-foreground")}>{formatWait(sla.minutes)}</span>
+            <SoftBadge tone={SLA_STATE[sla.state].tone} dot>{SLA_STATE[sla.state].label}</SoftBadge>
+          </div>
+        ) : (
+          shortAgo(c.created_at)
+        )}
       </TableCell>
     </TableRow>
   );
@@ -473,6 +536,8 @@ function eventDot(type: string) {
   }
   if (type === "resolved" || type === "closed") return "bg-success";
   if (type === "note") return "bg-info";
+  if (type === "escalated" || type === "staff_alert_skipped") return "bg-warning";
+  if (type === "staff_alert_sent") return "bg-info";
   if (type === "created" || type === "assigned") return "bg-primary";
   return "bg-muted-foreground/40";
 }
@@ -491,6 +556,7 @@ function CaseSheet({
   onChanged: () => void;
 }) {
   const queryClient = useQueryClient();
+  const slaSettings = useSlaSettings();
   const [note, setNote] = useState("");
   const [nextAction, setNextAction] = useState("");
   const [dueAt, setDueAt] = useState("");
@@ -549,6 +615,7 @@ function CaseSheet({
   const ai = AI_STATE[caseRow.ai_state] ?? AI_STATE.not_requested;
   const prio = PRIORITY[caseRow.priority] ?? PRIORITY.normal;
   const overdue = isOverdue(caseRow);
+  const sla = caseSla(caseRow, slaSettings, Date.now());
   // Con keepPreviousData puede llegar el historial del caso anterior mientras carga.
   const caseEvents = (events ?? []).filter((e) => e.case_id === caseRow.id);
   const assignee = caseRow.assigned_user_id
@@ -567,12 +634,19 @@ function CaseSheet({
             <SoftBadge tone="neutral">{TYPE_LABEL[caseRow.request_type] ?? caseRow.request_type}</SoftBadge>
             <SoftBadge tone={STATUS_TONE[caseRow.status] ?? "neutral"}>{STATUS_LABEL[caseRow.status] ?? caseRow.status}</SoftBadge>
             {overdue && <SoftBadge tone="danger">Vencido</SoftBadge>}
+            {sla && <SoftBadge tone={SLA_STATE[sla.state].tone} dot>{SLA_STATE[sla.state].label}</SoftBadge>}
           </div>
           <div className="space-y-0.5">
             <SheetTitle className="text-base font-semibold leading-tight">{caseRow.contact_name ?? "Sin nombre"}</SheetTitle>
             <SheetDescription className="text-xs">
               Abierto {ago(caseRow.created_at)} · {format(parseISO(caseRow.created_at), "d MMM yyyy, HH:mm", { locale: es })}
             </SheetDescription>
+            {sla && (
+              <p className={cn("text-xs", sla.state === "overdue" ? "font-medium text-destructive" : "text-muted-foreground")}>
+                Esperando a alguien del equipo: {formatWait(sla.minutes)} (tiempo de respuesta: {formatWait(sla.slaMinutes)})
+                {caseRow.alert_level > 0 && ` · ${caseRow.alert_level} de ${slaSettings.max_escalations} re-avisos enviados`}
+              </p>
+            )}
           </div>
         </SheetHeader>
 
@@ -650,6 +724,14 @@ function CaseSheet({
                 </div>
               )}
             </section>
+
+            {/* Etapa 2: origen post-consulta (tipo de manejo, cita) y reembolsos. */}
+            <CaseOriginCard caseRow={caseRow} />
+            <CaseReimbursementPanel
+              caseRow={caseRow}
+              closed={closed}
+              onChanged={() => queryClient.invalidateQueries({ queryKey: ["case-events", caseRow.id] })}
+            />
 
             {!closed && (
               <>
@@ -758,7 +840,13 @@ function CaseSheet({
               <ol>
                 {caseEvents.map((e, i) => {
                   const detail = (e.detail ?? {}) as Record<string, unknown>;
-                  const text = typeof detail.text === "string" ? detail.text : typeof detail.reason === "string" ? detail.reason : null;
+                  const text = typeof detail.text === "string"
+                    ? detail.text
+                    : typeof detail.reason === "string"
+                    ? detail.reason
+                    : e.event_type === "deduplicated" && typeof detail.summary === "string"
+                    ? detail.summary
+                    : null;
                   const failed = e.event_type.endsWith("_failed");
                   return (
                     <li key={e.id} className="relative flex gap-3 pb-5 last:pb-0">
@@ -766,7 +854,7 @@ function CaseSheet({
                       <span className={cn("mt-1.5 h-[11px] w-[11px] shrink-0 rounded-full ring-4 ring-background", eventDot(e.event_type))} aria-hidden />
                       <div className="min-w-0 flex-1">
                         <p className={cn("text-sm font-medium", failed ? "text-destructive" : "text-foreground")}>
-                          {EVENT_LABEL[e.event_type] ?? e.event_type}
+                          {eventLabel(e)}
                           {e.actor_user_id && <span className="font-normal text-muted-foreground"> · {e.actor_user_id === me ? "tú" : staff[e.actor_user_id] ?? "equipo"}</span>}
                         </p>
                         {text && <p className="mt-1 whitespace-pre-wrap rounded-md bg-muted/60 px-2.5 py-1.5 text-sm text-foreground">{text}</p>}

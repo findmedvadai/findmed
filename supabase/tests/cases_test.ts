@@ -71,7 +71,8 @@ Deno.test("M09: open_case creates a case linked to the patient; a repeat is dedu
   assert(again.ok);
   assertEquals([again.case_id, again.deduplicated, again.priority], [first.case_id, true, "urgent"]);
   assertEquals(db.rows("patient_cases").length, 1);
-  assertEquals(events(db), ["created", "deduplicated"]);
+  // staff_alert_sent: the team got the panel alert (staff-alerts_test.ts covers it).
+  assertEquals(events(db), ["created", "staff_alert_sent", "deduplicated"]);
 
   const other = await openCase(sb(db), { phone: PHONE, requestType: "studies", summary: "Laboratorio" });
   assert(other.ok && !other.deduplicated); // different request type → new case
@@ -96,7 +97,7 @@ Deno.test("R31: handoff pauses the AI, tags the contact and stays awaiting_assig
   const row = db.rows("patient_cases")[0];
   assertEquals([row.ai_state, row.whaapy_conversation_id, row.whaapy_contact_id], ["paused", "conv-1", "contact-1"]);
   assertEquals(w.calls, [`by-phone ${PHONE}`, "ai conv-1 false", 'contact contact-1 {"add_tags":["apoyo_asesor"]}']);
-  assertEquals(events(db), ["created", "handoff_requested", "ai_paused", "tags_added"]);
+  assertEquals(events(db), ["created", "staff_alert_sent", "handoff_requested", "staff_alert_sent", "ai_paused", "tags_added"]);
 
   // Retried tool call: same answer, no new side effects (no double pause/tag).
   const again = await requestHandoff(sb(db), w.client, { phone: PHONE, caseId: id, reason: "otra vez" });

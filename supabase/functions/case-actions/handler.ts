@@ -8,6 +8,8 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { applyStaffAction, PRIORITIES, type StaffAction } from "../_shared/cases.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import type { WhaapyClient } from "../_shared/whaapy-client.ts";
+import { handleExtraAction } from "./extra-actions.ts";
+import { handleAlertAction } from "./alerts.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UPDATE_STATUSES = ["awaiting_assignment", "assigned", "awaiting_patient", "awaiting_provider"];
@@ -71,6 +73,12 @@ export async function handleCaseActions(req: Request, deps: CaseActionDeps): Pro
   } catch {
     return jsonResponse({ error: "invalid_json", message: "Cuerpo inválido" }, 400);
   }
+  // Etapa 2: "Nuevo caso" y reembolsos (extra-actions.ts).
+  const extra = await handleExtraAction(body, deps, auth.userId);
+  if (extra) return extra;
+  // Alertas al equipo: números de guardia, SLA, plantilla y alerta de prueba (alerts.ts).
+  const alert = await handleAlertAction(body, deps, auth.userId);
+  if (alert) return alert;
   if (typeof body.case_id !== "string" || !UUID_RE.test(body.case_id)) {
     return jsonResponse({ error: "invalid_case_id", message: "case_id inválido" }, 400);
   }

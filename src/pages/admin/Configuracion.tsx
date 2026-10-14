@@ -1,15 +1,17 @@
 // Configuración del panel (se abre desde el engrane): submódulos que no son
 // operación diaria. Cada pestaña conserva su propia página.
 import { Navigate, NavLink, useParams } from "react-router-dom";
-import { Bot, Key, Layers, Webhook } from "lucide-react";
+import { BellRing, Bot, Key, Layers, Webhook } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AgenteIA from "./AgenteIA";
+import Alertas from "./Alertas";
 import Catalogos from "./Catalogos";
 import Webhooks from "./Webhooks";
 import ApiKeysPage from "./ApiKeys";
 
 const TABS = [
   { slug: "agente-ia", title: "Agente IA", icon: Bot, element: <AgenteIA /> },
+  { slug: "alertas", title: "Alertas", icon: BellRing, element: <Alertas /> },
   { slug: "catalogos", title: "Catálogos", icon: Layers, element: <Catalogos /> },
   { slug: "webhooks", title: "Webhooks", icon: Webhook, element: <Webhooks /> },
   { slug: "api-keys", title: "API Keys", icon: Key, element: <ApiKeysPage /> },

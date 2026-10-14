@@ -17,10 +17,16 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "./phone.ts";
+import { raiseCaseAlert } from "./staff-alerts.ts";
 import type { WhaapyClient } from "./whaapy-client.ts";
 
+/** Types the WhatsApp agent may open (open_case tool enum). */
 export const REQUEST_TYPES = ["appointment_help", "hospital", "studies", "urgency", "follow_up", "other"] as const;
-export type RequestType = (typeof REQUEST_TYPES)[number];
+/** All case types: the agent's plus the ones only staff or the post-consultation routes open (Etapa 2). */
+export const CASE_REQUEST_TYPES = [...REQUEST_TYPES, "procedure", "referral", "reimbursement"] as const;
+export type RequestType = (typeof CASE_REQUEST_TYPES)[number];
+/** Who opened the case (patient_cases.source). */
+export type CaseSource = "mcp" | "admin" | "whatsapp" | "post_consultation";
 export const PRIORITIES = ["normal", "high", "urgent"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 export const ACTIVE_STATUSES = ["open", "awaiting_assignment", "assigned", "awaiting_patient", "awaiting_provider"] as const;
@@ -107,6 +113,17 @@ export interface OpenCaseInput {
   contactName?: string | null;
   city?: string | null;
   zone?: string | null;
+  // Etapa 2 — optional; the defaults keep the agent's (MCP) behavior.
+  source?: CaseSource;
+  actor?: Actor;
+  actorUserId?: string | null;
+  /** Known patient (staff picked it / it comes from the appointment); else looked up by phone. */
+  patientId?: string | null;
+  appointmentId?: string | null;
+  nextAction?: string | null;
+  dueAt?: string | null;
+  /** Extra context merged into the created / deduplicated case_event (e.g. origin). */
+  eventDetail?: Record<string, unknown>;
 }
 
 export type OpenCaseResult =
@@ -119,6 +136,9 @@ export async function openCase(supabase: SupabaseClient, input: OpenCaseInput): 
   const summary = input.summary.trim().slice(0, 1000);
   if (summary.length < 3) return fail("invalid_summary", "Falta un resumen breve de la solicitud.");
   const priority = input.priority ?? "normal";
+  const actor: Actor = input.actor ?? "agent";
+  const actorUserId = input.actorUserId ?? null;
+  const extra = input.eventDetail ?? {};
 
   // Repeated request for the same thing → same case (also guarded by the
   // partial unique index patient_cases_one_active against races).
@@ -127,28 +147,35 @@ export async function openCase(supabase: SupabaseClient, input: OpenCaseInput): 
     if (merged !== existing.priority) {
       await supabase.from("patient_cases").update({ priority: merged }).eq("id", existing.id);
     }
-    await logEvent(supabase, existing.id, "deduplicated", "agent", { summary, priority });
+    await logEvent(supabase, existing.id, "deduplicated", actor, { summary, priority, ...extra }, actorUserId);
     return { ok: true, case_id: existing.id, status: existing.status, priority: merged, deduplicated: true };
   };
 
   const existing = await findActiveCase(supabase, who.variants, input.requestType);
   if (existing) return reuse(existing);
 
-  const { data: patient } = await supabase
-    .from("patients")
-    .select("id")
-    .in("phone", who.variants)
-    .limit(1)
-    .maybeSingle();
+  let patientId = input.patientId ?? null;
+  if (!patientId) {
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .in("phone", who.variants)
+      .limit(1)
+      .maybeSingle();
+    patientId = (patient as { id: string } | null)?.id ?? null;
+  }
 
   const now = new Date().toISOString();
   const { data: created, error } = await supabase
     .from("patient_cases")
     .insert({
       request_type: input.requestType,
-      source: "mcp",
+      source: input.source ?? "mcp",
       subject_phone: who.canonical,
-      patient_id: (patient as { id: string } | null)?.id ?? null,
+      patient_id: patientId,
+      appointment_id: input.appointmentId ?? null,
+      next_action: input.nextAction?.trim().slice(0, 500) || null,
+      due_at: input.dueAt ?? null,
       contact_name: input.contactName?.trim().slice(0, 120) || null,
       city: input.city?.trim().slice(0, 80) || null,
       zone: input.zone?.trim().slice(0, 80) || null,
@@ -172,7 +199,14 @@ export async function openCase(supabase: SupabaseClient, input: OpenCaseInput): 
     return fail("temporarily_unavailable", "No pude registrar la solicitud en este momento.");
   }
   const row = created as { id: string; status: CaseStatus; priority: Priority };
-  await logEvent(supabase, row.id, "created", "agent", { request_type: input.requestType, priority });
+  await logEvent(supabase, row.id, "created", actor, { request_type: input.requestType, priority, ...extra }, actorUserId);
+  // Tell the team right away (panel now, WhatsApp for urgent/high via the
+  // worker). Best-effort and idempotent: it never fails the case.
+  await raiseCaseAlert(
+    supabase,
+    { id: row.id, request_type: input.requestType, priority: row.priority, status: row.status, summary, created_at: now },
+    "opened",
+  );
   return { ok: true, case_id: row.id, status: row.status, priority: row.priority, deduplicated: false };
 }
 
@@ -304,6 +338,9 @@ export async function requestHandoff(
     reason: input.reason.trim().slice(0, 500),
     priority,
   });
+  // The team learns about it before any WHAAPY call (panel now, WhatsApp via
+  // the worker). One alert per case: a retried call never alerts twice.
+  await raiseCaseAlert(supabase, c, "handoff");
 
   const paused = await setCaseAi(supabase, whaapy, c, true, "agent");
   if (firstRequest) {

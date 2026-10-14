@@ -1,12 +1,14 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CalendarDays, Home, Key, Layers, LifeBuoy, MessageCircle, UserCog, Webhook, Workflow } from "lucide-react";
+import { BellRing, Bot, CalendarDays, Home, Key, Layers, LifeBuoy, MessageCircle, UserCog, Webhook, Workflow } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useCaseAlertListener } from "@/hooks/useCaseAlertListener";
 import { supabase } from "@/integrations/supabase/client";
 import AppShell, { type ShellNavItem, type ShellSettingsItem } from "./AppShell";
 
 const settings: ShellSettingsItem[] = [
   { title: "Agente IA", url: "/admin/configuracion/agente-ia", icon: Bot, description: "Conexión, actividad y errores del agente" },
+  { title: "Alertas", url: "/admin/configuracion/alertas", icon: BellRing, description: "Avisos de casos, números de guardia y tiempos" },
   { title: "Catálogos", url: "/admin/configuracion/catalogos", icon: Layers, description: "Especialidades, ciudades, hospitales…" },
   { title: "Webhooks", url: "/admin/configuracion/webhooks", icon: Webhook, description: "Integraciones salientes" },
   { title: "API Keys", url: "/admin/configuracion/api-keys", icon: Key, description: "Acceso de sistemas externos" },
@@ -15,6 +17,8 @@ const settings: ShellSettingsItem[] = [
 export default function AdminLayout() {
   const { signOut, user, role } = useAuth();
   const queryClient = useQueryClient();
+  // Casos nuevos, canalizaciones y casos vencidos: aviso fijo + sonido + aviso del navegador.
+  useCaseAlertListener();
 
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ["admin-unread-notifications"],
@@ -28,14 +32,14 @@ export default function AdminLayout() {
     },
   });
 
-  // Casos esperando que alguien los tome (canalizaciones del agente de WhatsApp).
+  // Casos esperando que alguien los tome (los mismos de "Sin asignar" en Casos).
   const { data: pendingCases = 0 } = useQuery({
     queryKey: ["admin-pending-cases"],
     queryFn: async () => {
       const { count } = await supabase
         .from("patient_cases")
         .select("id", { count: "exact", head: true })
-        .eq("status", "awaiting_assignment");
+        .in("status", ["open", "awaiting_assignment"]);
       return count ?? 0;
     },
     refetchInterval: 30_000,

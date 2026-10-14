@@ -2,12 +2,14 @@
 //
 // One run: claim due outbox rows (SKIP LOCKED + lease, so overlapping runs
 // never take the same event), send each one, then retry WHAAPY webhook events
-// that were stored but not processed. Stops early to stay inside the Edge
+// that were stored but not processed, then the staff alerts of patient cases
+// (escalations + WhatsApp to on-call numbers). Stops early to stay inside the Edge
 // Function time budget; whatever is left is picked up by the next run.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jsonResponse } from "../_shared/cors.ts";
 import { type OutboxRow, processOutboxRow } from "../_shared/messaging.ts";
+import { runStaffAlerts } from "../_shared/staff-alerts.ts";
 import { processAndMark } from "../_shared/whaapy-events.ts";
 import type { WhaapyClient } from "../_shared/whaapy-client.ts";
 
@@ -62,7 +64,19 @@ export async function handleWorker(req: Request, deps: WorkerDeps): Promise<Resp
     events++;
   }
 
-  const summary = { outbox: outcomes, whaapy_events: events };
+  // Staff alerts for patient cases: escalate cases nobody took within their
+  // SLA, then send the queued WhatsApp alerts (_shared/staff-alerts.ts).
+  let caseAlerts: Record<string, number> = {};
+  if (now() - started <= BUDGET_MS) {
+    try {
+      caseAlerts = await runStaffAlerts(deps.supabase, deps.whaapy, { now, deadline: started + BUDGET_MS });
+    } catch (e) {
+      console.error("[events-worker] staff alerts failed", e);
+      caseAlerts = { error: 1 };
+    }
+  }
+
+  const summary = { outbox: outcomes, whaapy_events: events, ...(Object.keys(caseAlerts).length ? { case_alerts: caseAlerts } : {}) };
   console.log(JSON.stringify({ event: "events_worker", ...summary }));
   return jsonResponse(summary);
 }
