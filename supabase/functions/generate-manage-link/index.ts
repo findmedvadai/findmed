@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
     );
   }
 
-  let appointment: any;
+  let appointment: { id: string; status: string; patient_id: string; end_at: string } | null | undefined;
 
   if (appointment_id) {
     const { data } = await supabase

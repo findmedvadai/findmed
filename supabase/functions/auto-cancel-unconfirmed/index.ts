@@ -3,6 +3,7 @@ import { createManageToken } from "../_shared/manage-token.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
+import { deleteAppointmentEvents } from "../_shared/calendar-sync.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,7 +36,7 @@ Deno.serve(async (req) => {
   const { data: appointments, error } = await supabase
     .from("appointments")
     .select(`
-      id, start_at, end_at, doctor_id, patient_id,
+      id, start_at, end_at, doctor_id, patient_id, office_id, google_event_id, outlook_event_id,
       doctors(full_name),
       patients(full_name, phone)
     `)
@@ -63,8 +64,8 @@ Deno.serve(async (req) => {
   let cancelled = 0;
 
   for (const appt of appointments) {
-    const patient = appt.patients as { full_name: string; phone: string } | null;
-    const doctor = appt.doctors as { full_name: string } | null;
+    const patient = appt.patients as unknown as { full_name: string; phone: string } | null;
+    const doctor = appt.doctors as unknown as { full_name: string } | null;
 
     // Query settings separately since there's no FK between appointments and doctor_schedule_settings
     const { data: settings } = await supabase
@@ -95,6 +96,15 @@ Deno.serve(async (req) => {
       }
       if (!cancelledRow) continue;
 
+      // Remove the event from the doctor's Google/Outlook calendar, like every
+      // other cancel path. It used to stay there: the doctor saw a consultation
+      // that no longer existed and the slot kept looking busy.
+      try {
+        await deleteAppointmentEvents(supabase, appt);
+      } catch (err) {
+        console.error(`[auto-cancel] calendar cleanup failed for ${appt.id}:`, err);
+      }
+
       // Insert doctor notification
       await supabase.from("notifications").insert({
         doctor_id: appt.doctor_id,
@@ -108,12 +118,19 @@ Deno.serve(async (req) => {
       // Generate reschedule token. Auto-cancellation gives the patient 24h to
       // act on the link, regardless of when the original appointment was —
       // hence the +24h expiry instead of the appointment's `end_at`.
-      const { manageUrl: rescheduleUrl } = await createManageToken({
-        supabase,
-        appointmentId: appt.id,
-        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-        patientPhone: patient?.phone ?? "",
-      });
+      // A failure here must not abort the run: the appointments after this one
+      // would stay un-cancelled and this one would lose its patient message.
+      let rescheduleUrl: string | null = null;
+      try {
+        ({ manageUrl: rescheduleUrl } = await createManageToken({
+          supabase,
+          appointmentId: appt.id,
+          expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+          patientPhone: patient?.phone ?? "",
+        }));
+      } catch (err) {
+        console.error(`[auto-cancel] manage token failed for ${appt.id}:`, err);
+      }
 
       // Dispatch webhooks
       try {
@@ -137,6 +154,7 @@ Deno.serve(async (req) => {
                 manage_url: rescheduleUrl,
               },
             }),
+            signal: AbortSignal.timeout(10_000),
           }),
           fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
             method: "POST",
@@ -157,6 +175,7 @@ Deno.serve(async (req) => {
                 manage_url: rescheduleUrl,
               },
             }),
+            signal: AbortSignal.timeout(10_000),
           }),
         ]);
       } catch (e) {

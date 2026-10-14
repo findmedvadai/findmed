@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { isServiceRequest } from "../_shared/service-auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { releaseReminderClaim } from "../_shared/reminders.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -83,9 +84,9 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (!claimed) continue;
 
-    const patient = appt.patients as { full_name: string; phone: string } | null;
-    const doctor = appt.doctors as { full_name: string } | null;
-    const office = appt.doctor_offices as { name: string; address: string | null } | null;
+    const patient = appt.patients as unknown as { full_name: string; phone: string } | null;
+    const doctor = appt.doctors as unknown as { full_name: string } | null;
+    const office = appt.doctor_offices as unknown as { name: string; address: string | null } | null;
 
     // Check for existing valid manage token
     const { data: existingToken } = await supabase
@@ -97,21 +98,22 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    let manageToken: string;
-    let manageUrl: string;
+    let manageUrl: string | null = null;
     if (existingToken) {
-      manageToken = existingToken.token;
-      manageUrl = `${baseUrl}/gestionar?token=${manageToken}`;
+      manageUrl = `${baseUrl}/gestionar?token=${existingToken.token}`;
     } else {
-      // Generate new token (expires when appointment ends).
-      const result = await createManageToken({
-        supabase,
-        appointmentId: appt.id,
-        expiresAt: appt.end_at,
-        patientPhone: patient?.phone ?? "",
-      });
-      manageToken = result.token;
-      manageUrl = result.manageUrl;
+      // Generate new token (expires when appointment ends). A failure must not
+      // abort the run (the worker builds its own link when it sends).
+      try {
+        ({ manageUrl } = await createManageToken({
+          supabase,
+          appointmentId: appt.id,
+          expiresAt: appt.end_at,
+          patientPhone: patient?.phone ?? "",
+        }));
+      } catch (err) {
+        console.error(`[48h] manage token failed for ${appt.id}:`, err);
+      }
     }
 
     // Fetch doctor's min_confirm_hours_before
@@ -123,13 +125,15 @@ Deno.serve(async (req) => {
 
     const minConfirmHours = settings?.min_confirm_hours_before ?? 24;
 
+    let dispatched = false;
     try {
-      await fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
+      const res = await fetch(`${supabaseUrl}/functions/v1/dispatch-webhook`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${serviceKey}`,
         },
+        signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({
           event_type: "appointment.reminder_48h",
           payload: {
@@ -147,9 +151,19 @@ Deno.serve(async (req) => {
           },
         }),
       });
-      processed++;
+      dispatched = res.ok;
+      if (!res.ok) console.error(`[48h] dispatch failed for ${appt.id}: HTTP ${res.status}`);
     } catch (e) {
       console.error(`Error dispatching reminder for appointment ${appt.id}:`, e);
+    }
+    if (dispatched) {
+      processed++;
+    } else {
+      // Release the claim so the next hourly run (still inside the 47–49 h
+      // window) retries. Safe: the outbox dedupes the same appointment +
+      // start_at, so a dispatch that did land is not sent twice. Before, a
+      // failed dispatch (fetch does not throw on 5xx) lost the reminder for good.
+      await releaseReminderClaim(supabase, appt.id, "reminder_48h_sent_at", now.toISOString());
     }
   }
 

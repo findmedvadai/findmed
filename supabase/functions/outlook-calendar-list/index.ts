@@ -52,7 +52,7 @@ serve(async (req) => {
     });
     const calData = await calRes.json();
 
-    const calendars = (calData.value || []).map((c: any) => ({
+    const calendars = (calData.value || []).map((c: { id: string; name: string; isDefaultCalendar?: boolean }) => ({
       id: c.id,
       summary: c.name,
       primary: c.isDefaultCalendar || false,

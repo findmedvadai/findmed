@@ -149,12 +149,17 @@ Deno.serve(async (req) => {
     const rollback: Record<string, string | null> = {};
     if (willChangeEmail) rollback.email = previousEmail;
     if (willChangePassword) rollback.initial_password = previousPassword;
-    await supabase
-      .from("users")
-      .update(rollback)
-      .eq("id", authUserId)
-      .then(() => {})
-      .catch((e) => console.error("[update-doctor-credentials] rollback failed:", e));
+    // The query builder is only PromiseLike (no .catch in its types): a
+    // network failure throws, a database error comes back in `error`.
+    try {
+      const { error: rollbackErr } = await supabase
+        .from("users")
+        .update(rollback)
+        .eq("id", authUserId);
+      if (rollbackErr) console.error("[update-doctor-credentials] rollback failed:", rollbackErr);
+    } catch (e) {
+      console.error("[update-doctor-credentials] rollback failed:", e);
+    }
 
     const msg = (authErr.message ?? "").toLowerCase();
     if (msg.includes("already") || msg.includes("exists") || msg.includes("registered")) {

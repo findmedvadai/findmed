@@ -25,6 +25,7 @@ const STATUS_FOR: Record<string, number> = {
   case_closed: 409,
   already_assigned: 409,
   concurrent_change: 409,
+  take_first: 409,
 };
 
 function parseAction(b: Record<string, unknown>): StaffAction | string {

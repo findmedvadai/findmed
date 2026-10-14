@@ -23,7 +23,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleAccessToken, getOutlookAccessToken } from "./calendar-tokens.ts";
-import { type BusyInterval, fetchGoogleBusy, fetchOutlookBusy } from "./calendar-busy.ts";
+import { type BusyInterval, fetchGoogleBusy, fetchOutlookBusy, withoutFindMedEvents } from "./calendar-busy.ts";
 import { msToMxIso, mxDayBoundsMs } from "./mx-time.ts";
 
 export interface SlotConflict {
@@ -149,7 +149,11 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
   // every page, all-day events block the day, free/cancelled/declined don't.
   let checked = false;
   let unverified = false;
-  const addConflicts = (busy: BusyInterval[], fallback: string) => {
+  // FindMed's own appointment events don't count (the appointments table is
+  // the source for those): the moved appointment's old event and events left
+  // behind by cancelled appointments must not block (calendar-busy.ts).
+  const addConflicts = async (raw: BusyInterval[], fallback: string) => {
+    const busy = await withoutFindMedEvents(supabase, raw);
     for (const b of busy) {
       if (b.startMs < endMs && b.endMs > startMs) {
         conflicts.push({
@@ -169,7 +173,7 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
       unverified = true;
     } else {
       const r = await fetchGoogleBusy({ accessToken, calendarId: doctor.google_calendar_id, ...range });
-      addConflicts(r.busy, "Google event");
+      await addConflicts(r.busy, "Google event");
       if (!r.complete) {
         unverified = true;
         console.error("[slot-validation] Google check incomplete (not verified):", r.error);
@@ -184,7 +188,7 @@ export async function validateSlotAvailable(input: ValidateSlotInput): Promise<S
       unverified = true;
     } else {
       const r = await fetchOutlookBusy({ accessToken, calendarId: doctor.outlook_calendar_id, ...range });
-      addConflicts(r.busy, "Outlook event");
+      await addConflicts(r.busy, "Outlook event");
       if (!r.complete) {
         unverified = true;
         console.error("[slot-validation] Outlook check incomplete (not verified):", r.error);

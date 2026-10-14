@@ -5,6 +5,8 @@ import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime, isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 import { carryOverDocuments } from "../_shared/patient-documents.ts";
+import { repointManageTokens } from "../_shared/manage-token.ts";
+import { externalTimeout } from "../_shared/http-timeout.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -105,20 +107,24 @@ Deno.serve(async (req) => {
   // Doctor display name only — calendar and duration come from the office.
   const { data: doctor } = await supabase
     .from("doctors")
-    .select("full_name")
+    .select("full_name, is_active, is_deleted")
     .eq("id", oldAppt.doctor_id)
     .maybeSingle();
 
   // Office: source of truth for calendars + duration.
   const { data: office } = await supabase
     .from("doctor_offices")
-    .select(
-      "id, name, address, appointment_duration_minutes, " +
-        "google_refresh_token_ref, google_calendar_id, google_calendar_connected, " +
-        "outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected"
-    )
+    .select("id, name, address, appointment_duration_minutes, is_active, is_deleted, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
     .eq("id", oldAppt.office_id)
     .maybeSingle();
+
+  // Appointments cancelled because their office was deleted (or the doctor
+  // left) keep a /gestionar link; they must not be rebooked into that office.
+  // Deleted offices can still have weekly availability rows (7 in production
+  // on 14-oct), so checkAvailability alone does not stop it.
+  if (!office || !office.is_active || office.is_deleted || doctor?.is_active === false || doctor?.is_deleted === true) {
+    return json(409, { error: "Este consultorio ya no recibe citas. Escríbenos por WhatsApp y te ayudamos a encontrar otra opción." });
+  }
 
   const { data: patient } = await supabase
     .from("patients")
@@ -192,6 +198,19 @@ Deno.serve(async (req) => {
     return json(500, { error: "Error al crear la nueva cita" });
   }
 
+  // Claim the reschedule: move EVERY manage link of the old appointment to the
+  // new one (compare-and-swap on appointment_id). A double click or a second
+  // tab that inserted its own new appointment finds no link left to move and
+  // rolls back, so the patient never ends up with two live appointments. It
+  // also stops an older link (e.g. the one auto-cancel sent) from rescheduling
+  // the old appointment again later.
+  const claimedLinks = await repointManageTokens(supabase, oldAppt.id, newAppt.id, endAt);
+  if (!claimedLinks) {
+    await supabase.from("appointments").delete().eq("id", newAppt.id);
+    if (claimedLinks === null) return json(500, { error: "No pudimos reagendar tu cita. Intenta de nuevo en unos minutos." });
+    return json(409, { error: "Esta cita ya se reagendó desde otra ventana. Abre de nuevo tu enlace para ver la cita vigente." });
+  }
+
   // The new appointment keeps the documents state of the one it replaces
   // (pedir_documentos is not re-sent on reschedules). Best-effort.
   await carryOverDocuments(supabase, oldAppt.id, newAppt.id);
@@ -209,8 +228,8 @@ Deno.serve(async (req) => {
       const calendarId = encodeURIComponent(office.google_calendar_id);
       try {
         await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${oldAppt.google_event_id}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${googleAccessToken}` } }
+          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(oldAppt.google_event_id)}`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${googleAccessToken}` }, signal: externalTimeout() }
         );
       } catch (err) {
         console.error("Error deleting old Google event:", err);
@@ -223,7 +242,7 @@ Deno.serve(async (req) => {
       try {
         await fetch(
           `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(oldAppt.outlook_event_id)}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${outlookAccessToken}` } }
+          { method: "DELETE", headers: { Authorization: `Bearer ${outlookAccessToken}` }, signal: externalTimeout() }
         );
       } catch (err) {
         console.error("Error deleting old Outlook event:", err);
@@ -233,7 +252,8 @@ Deno.serve(async (req) => {
     const { error: cancelErr } = await supabase
       .from("appointments")
       .update({ status: "cancelled", cancel_reason: "patient" })
-      .eq("id", oldAppt.id);
+      .eq("id", oldAppt.id)
+      .eq("status", oldAppt.status);
     if (cancelErr) console.error("[manage-reschedule] cancel old failed:", cancelErr);
   }
 
@@ -264,6 +284,7 @@ Deno.serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(eventBody),
+          signal: externalTimeout(),
         }
       );
 
@@ -301,6 +322,7 @@ Deno.serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(eventBody),
+          signal: externalTimeout(),
         }
       );
 
@@ -317,13 +339,8 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 4. Repoint the manage token to the new appointment and extend its expiry
-  // to the new end time (it used to keep the OLD end time, so links died
-  // early after rescheduling to a later date).
-  await supabase
-    .from("appointment_manage_tokens")
-    .update({ appointment_id: newAppt.id, expires_at: endAt })
-    .eq("id", manageToken.id);
+  // 4. (The manage links were already moved to the new appointment, with the
+  // new end time as expiry, when the reschedule was claimed above.)
 
   // 5. Insert notifications for doctor
   await supabase.from("notifications").insert([

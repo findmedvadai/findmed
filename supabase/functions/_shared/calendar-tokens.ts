@@ -24,6 +24,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { recordAutoDisconnect } from "./connection-events.ts";
+import { externalTimeout } from "./http-timeout.ts";
 
 export interface CalendarFields {
   google_calendar_connected?: boolean | null;
@@ -96,6 +97,7 @@ async function refreshAccessToken(provider: Provider, args: RefreshArgs): Promis
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(params),
+      signal: externalTimeout(),
     });
   } catch (err) {
     // Transient: network blip. Keep DB state, degrade this request.

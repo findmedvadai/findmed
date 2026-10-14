@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createManageToken } from "../_shared/manage-token.ts";
-import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { deleteAppointmentEvents } from "../_shared/calendar-sync.ts";
 import { getServiceKey, getPublishableKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
@@ -107,17 +107,36 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Cancel appointment
-  const { error: updateError } = await supabase
+  // A completed consultation is history: cancelling it would erase that it
+  // happened and send the patient a "cancelled" WhatsApp.
+  if (appointment.status === "completed") {
+    return new Response(JSON.stringify({ error: "La consulta ya se realizó; no se puede cancelar." }), {
+      status: 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Cancel appointment, guarded on the status we read (a concurrent patient
+  // action or cron wins instead of being overwritten).
+  const { data: cancelledRow, error: updateError } = await supabase
     .from("appointments")
     .update({ status: "cancelled", cancel_reason: "doctor" })
-    .eq("id", appointment_id);
+    .eq("id", appointment_id)
+    .eq("status", appointment.status)
+    .select("id")
+    .maybeSingle();
 
   if (updateError) {
     return new Response(
       JSON.stringify({ error: "Error al cancelar", details: updateError.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+  if (!cancelledRow) {
+    return new Response(JSON.stringify({ error: "La cita cambió mientras la cancelabas. Recarga y revisa su estado." }), {
+      status: 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   // Get patient info
@@ -127,65 +146,16 @@ Deno.serve(async (req) => {
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
-  // Doctor name (display only) and the appointment's office (calendar source).
+  // Doctor name (display only).
   const { data: doctor } = await supabase
     .from("doctors")
     .select("full_name")
     .eq("id", doctorId)
     .maybeSingle();
 
-  const { data: office } = appointment.office_id
-    ? await supabase
-        .from("doctor_offices")
-        .select(
-          "id, name, address, " +
-            "google_refresh_token_ref, google_calendar_id, google_calendar_connected, " +
-            "outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected"
-        )
-        .eq("id", appointment.office_id)
-        .maybeSingle()
-    : { data: null };
-
-  // Delete external calendar events via the shared token helper, which
-  // handles Microsoft refresh-token rotation and auto-disconnects on
-  // invalid_grant so the UI never shows a stale "connected" state.
-  if (
-    appointment.google_event_id &&
-    office?.google_calendar_connected &&
-    office.google_calendar_id
-  ) {
-    const accessToken = await getGoogleAccessToken({ supabase, office });
-    if (accessToken) {
-      try {
-        const calendarId = encodeURIComponent(office.google_calendar_id);
-        await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${appointment.google_event_id}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-      } catch (err) {
-        console.error("Error deleting Google Calendar event:", err);
-      }
-    }
-  }
-
-  if (
-    appointment.outlook_event_id &&
-    office?.outlook_calendar_connected &&
-    office.outlook_calendar_id
-  ) {
-    const accessToken = await getOutlookAccessToken({ supabase, office });
-    if (accessToken) {
-      try {
-        const calendarId = encodeURIComponent(office.outlook_calendar_id);
-        await fetch(
-          `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-      } catch (err) {
-        console.error("Error deleting Outlook Calendar event:", err);
-      }
-    }
-  }
+  // Delete external calendar events via the shared helper (token rotation,
+  // auto-disconnect on invalid_grant, timeouts, per-provider result).
+  await deleteAppointmentEvents(supabase, appointment);
 
   // Generate new manage token for rescheduling (expires when appointment would have ended).
   const { manageUrl: rescheduleUrl } = await createManageToken({

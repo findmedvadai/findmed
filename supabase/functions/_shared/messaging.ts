@@ -124,11 +124,12 @@ export async function loadAppointmentContext(supabase: SupabaseClient, appointme
     supabase.from("patients").select("full_name, phone").eq("id", a.patient_id).maybeSingle(),
     supabase.from("doctors").select("full_name").eq("id", a.doctor_id).maybeSingle(),
     a.office_id
-      ? supabase.from("doctor_offices").select("address").eq("id", a.office_id).maybeSingle()
+      ? supabase.from("doctor_offices").select("name, address").eq("id", a.office_id).maybeSingle()
       : Promise.resolve({ data: null }),
     supabase.from("doctor_schedule_settings").select("min_confirm_hours_before").eq("doctor_id", a.doctor_id).maybeSingle(),
   ]);
   const p = patient as { full_name?: string; phone?: string } | null;
+  const o = office as { name?: string | null; address?: string | null } | null;
   return {
     id: a.id!,
     status: a.status!,
@@ -138,7 +139,9 @@ export async function loadAppointmentContext(supabase: SupabaseClient, appointme
     patient_name: p?.full_name ?? null,
     patient_phone: p?.phone ?? null,
     doctor_name: (doctor as { full_name?: string } | null)?.full_name ?? null,
-    office_address: (office as { address?: string } | null)?.address ?? null,
+    // 9 bookable offices had no address (14-oct): without a fallback every
+    // reminder of those offices failed with missing_value_office_address.
+    office_address: templateText(o?.address) ?? templateText(o?.name),
     min_confirm_hours: (settings as { min_confirm_hours_before?: number } | null)?.min_confirm_hours_before ?? 24,
   };
 }
@@ -214,6 +217,18 @@ export function applicableSteps(
 
 export const BUTTON_PAYLOAD_PREFIX = { confirm: "confirmar_cita", cancel: "cancelar_cita" } as const;
 
+/**
+ * A template variable as WhatsApp accepts it: Meta rejects parameters with
+ * newlines, tabs or more than four consecutive spaces (error 132018), and
+ * empty ones. Addresses typed in a textarea and names with double spaces
+ * would make the whole send fail. Returns null when nothing is left.
+ */
+export function templateText(v: string | null | undefined): string | null {
+  if (v === null || v === undefined) return null;
+  const clean = String(v).replace(/\s+/g, " ").trim();
+  return clean ? clean : null;
+}
+
 export function buildTemplateRequest(
   step: RouteStep,
   ctx: AppointmentContext,
@@ -232,8 +247,9 @@ export function buildTemplateRequest(
   for (const key of step.body_params) {
     const v = values[key];
     if (v === undefined) return { error: `unknown_param_${key}` };
-    if (v === null || v === "") return { error: `missing_value_${key}` };
-    params.push(v);
+    const text = templateText(v);
+    if (!text) return { error: `missing_value_${key}` };
+    params.push(text);
   }
 
   const components: Record<string, unknown>[] = [];
@@ -318,6 +334,10 @@ export async function processOutboxRow(
   // (rollback), queued rows are not sent by FindMed as well.
   if ((await routeOwner(supabase, row.event_type)) !== "findmed") return finish(supabase, row, "skipped", "route_not_owned_by_findmed");
   if (!row.aggregate_id) return finish(supabase, row, "skipped", "no_appointment");
+  // Staff created the appointment with "Avisar al paciente por WhatsApp" off
+  // (admin/doctor-create-appointment send notify_patient=false): the dialog
+  // promises no message, so the confirmation is not sent.
+  if (row.payload?.notify_patient === false) return finish(supabase, row, "skipped", "patient_notification_disabled");
 
   const ctx = await loadAppointmentContext(supabase, row.aggregate_id);
   if (!ctx) return finish(supabase, row, "skipped", "appointment_not_found");

@@ -5,6 +5,7 @@ import { checkAvailability } from "../_shared/availability-check.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { formatMxLongDateTime, isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { externalTimeout } from "../_shared/http-timeout.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,11 +100,7 @@ Deno.serve(async (req) => {
   // Office: duration + calendar config.
   const { data: office } = await supabase
     .from("doctor_offices")
-    .select(
-      "id, name, address, appointment_duration_minutes, " +
-        "google_refresh_token_ref, google_calendar_id, google_calendar_connected, " +
-        "outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected"
-    )
+    .select("id, name, address, appointment_duration_minutes, is_active, is_deleted, google_refresh_token_ref, google_calendar_id, google_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, outlook_calendar_connected")
     .eq("id", session.office_id)
     .maybeSingle();
 
@@ -112,6 +109,17 @@ Deno.serve(async (req) => {
       status: 404,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+  // A link created before the office was deleted/deactivated (or the doctor
+  // left) must not book there: deleted offices can keep weekly availability
+  // rows, so checkAvailability alone would let it through.
+  const { data: doctorState } = await supabase
+    .from("doctors")
+    .select("is_active, is_deleted")
+    .eq("id", session.doctor_id)
+    .maybeSingle();
+  if (!office.is_active || office.is_deleted || doctorState?.is_active === false || doctorState?.is_deleted === true) {
+    return json(410, { error: "Este consultorio ya no recibe citas. Escríbenos por WhatsApp y te ayudamos a encontrar otra opción." });
   }
 
   const durationMinutes = office.appointment_duration_minutes ?? 30;
@@ -222,6 +230,7 @@ Deno.serve(async (req) => {
         const createRes = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
           {
+            signal: externalTimeout(),
             method: "POST",
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -258,6 +267,7 @@ Deno.serve(async (req) => {
         const createRes = await fetch(
           `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events`,
           {
+            signal: externalTimeout(),
             method: "POST",
             headers: {
               Authorization: `Bearer ${accessToken}`,

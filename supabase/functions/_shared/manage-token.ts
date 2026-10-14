@@ -82,6 +82,36 @@ export async function getOrCreateManageUrl(input: {
 }
 
 /**
+ * Moves every manage token of `fromAppointmentId` to `toAppointmentId` and
+ * makes them expire at `expiresAt` (the new appointment's end). Returns how
+ * many tokens moved, or null if the update failed.
+ *
+ * manage-reschedule uses it as the claim of a patient reschedule: the UPDATE
+ * is a compare-and-swap on appointment_id, so of two concurrent reschedules of
+ * the same appointment (double click, two tabs) only the first moves the
+ * tokens; the second gets 0 and must roll back its new appointment. Moving all
+ * tokens (not only the one used) also keeps older links — e.g. the one the
+ * auto-cancel message carried — from rescheduling the old appointment again.
+ */
+export async function repointManageTokens(
+  supabase: SupabaseClient,
+  fromAppointmentId: string,
+  toAppointmentId: string,
+  expiresAt: string,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("appointment_manage_tokens")
+    .update({ appointment_id: toAppointmentId, expires_at: expiresAt })
+    .eq("appointment_id", fromAppointmentId)
+    .select("id");
+  if (error) {
+    console.error("[manage-token] repoint failed:", error);
+    return null; // unknown: the caller must not assume it lost a race
+  }
+  return Array.isArray(data) ? data.length : 0;
+}
+
+/**
  * Insert a new manage token for the given appointment and return both the raw
  * token and the patient-facing /gestionar URL. Failure is fatal — caller decides
  * whether to surface or swallow.

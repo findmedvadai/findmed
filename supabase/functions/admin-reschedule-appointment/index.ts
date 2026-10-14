@@ -11,7 +11,9 @@ import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { dispatchStaffRescheduleWebhook } from "../_shared/staff-reschedule-webhook.ts";
+import { isMovable, moveAppointment } from "../_shared/staff-reschedule.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { externalTimeout } from "../_shared/http-timeout.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 interface Body {
@@ -61,8 +63,9 @@ Deno.serve(async (req) => {
     .maybeSingle();
 
   if (!appointment) return jsonResponse({ error: "Cita no encontrada" }, 404);
-  if (appointment.status === "cancelled") {
-    return jsonResponse({ error: "No se puede reagendar una cita cancelada" }, 409);
+  // Only live appointments move (a completed one used to be movable).
+  if (!isMovable(appointment.status)) {
+    return jsonResponse({ error: "Solo se pueden reagendar citas agendadas o confirmadas." }, 409);
   }
 
   // Availability soft-check on the new slot.
@@ -102,20 +105,13 @@ Deno.serve(async (req) => {
   const previousStartAt = appointment.start_at;
   const previousEndAt = appointment.end_at;
 
-  const { error: updateErr } = await supabase
-    .from("appointments")
-    .update({ start_at, end_at })
-    .eq("id", appointment_id);
-
-  // 23P01 = appointments_no_overlap_per_doctor (exclusion constraint): a
-  // concurrent booking took the slot between validation and write. Same
-  // contract as the pre-check above so the UI shows the conflict dialog.
-  if (updateErr?.code === "23P01") {
-    return jsonResponse({ error: "slot_conflict", conflicts: [] }, 409);
-  }
-
-  if (updateErr) {
-    return jsonResponse({ error: "No se pudo reagendar la cita", details: updateErr.message }, 500);
+  // Guarded move: status-checked UPDATE, reminder markers cleared, scheduled
+  // → confirmed inside 48 h, manage links extended (_shared/staff-reschedule.ts).
+  // slot_conflict keeps the pre-check contract so the UI shows the dialog.
+  const moved = await moveAppointment(supabase, appointment, start_at, end_at);
+  if (!moved.ok) {
+    if (moved.code === "slot_conflict") return jsonResponse({ error: "slot_conflict", conflicts: [] }, 409);
+    return jsonResponse({ error: moved.message_es }, moved.code === "db_error" ? 500 : 409);
   }
 
   // External calendar sync — read tokens off the appointment's office.
@@ -128,11 +124,7 @@ Deno.serve(async (req) => {
   const { data: office } = appointment.office_id
     ? await supabase
         .from("doctor_offices")
-        .select(
-          "id, name, address, " +
-            "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-            "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-        )
+        .select("id, name, address, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id")
         .eq("id", appointment.office_id)
         .maybeSingle()
     : { data: null };
@@ -167,6 +159,7 @@ Deno.serve(async (req) => {
             `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${appointment.google_event_id}`,
             {
               method: "PATCH",
+              signal: externalTimeout(),
               headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
               body: JSON.stringify(eventBody),
             }
@@ -191,6 +184,7 @@ Deno.serve(async (req) => {
             `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
             {
               method: "POST",
+              signal: externalTimeout(),
               headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
               body: JSON.stringify(eventBody),
             }
@@ -234,6 +228,7 @@ Deno.serve(async (req) => {
             `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
             {
               method: "PATCH",
+              signal: externalTimeout(),
               headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
               body: JSON.stringify(eventBody),
             }
@@ -257,6 +252,7 @@ Deno.serve(async (req) => {
             `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events`,
             {
               method: "POST",
+              signal: externalTimeout(),
               headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
               body: JSON.stringify(eventBody),
             }

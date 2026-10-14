@@ -49,10 +49,7 @@ Deno.serve(async (req) => {
 
   const { data: office } = await supabase
     .from("doctor_offices")
-    .select(
-      "id, doctor_id, is_deleted, google_calendar_connected, outlook_calendar_connected, " +
-        "google_connected_at, outlook_connected_at"
-    )
+    .select("id, doctor_id, is_deleted, google_calendar_connected, outlook_calendar_connected, google_connected_at, outlook_connected_at")
     .eq("id", body.office_id)
     .maybeSingle();
   if (!office || office.is_deleted) {
@@ -128,12 +125,7 @@ Deno.serve(async (req) => {
     .from("doctor_offices")
     .update(updates)
     .eq("id", body.office_id)
-    .select(
-      "id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, " +
-        "google_calendar_connected, google_calendar_id, google_calendar_name, " +
-        "outlook_calendar_connected, outlook_calendar_id, outlook_calendar_name, " +
-        "is_active, is_deleted"
-    )
+    .select("id, doctor_id, name, address, city_id, zone_id, appointment_duration_minutes, display_color, google_calendar_connected, google_calendar_id, google_calendar_name, outlook_calendar_connected, outlook_calendar_id, outlook_calendar_name, is_active, is_deleted")
     .single();
 
   if (error) {

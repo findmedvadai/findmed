@@ -96,11 +96,27 @@ export async function prepareAction(
       })
       .select("id")
       .single();
-    if (error || !created) {
+    if ((error as { code?: string } | null)?.code === "23505") {
+      // A simultaneous prepare (double button press) won the one-pending
+      // index: reuse its operation instead of failing the second press.
+      const { data: raced } = await supabase
+        .from("operation_requests")
+        .select("id, expires_at")
+        .eq("subject_phone", who.canonical)
+        .eq("appointment_id", appt.appointment_id)
+        .eq("action", input.action)
+        .eq("status", "pending_confirmation")
+        .maybeSingle();
+      if (raced) {
+        operationId = raced.id;
+        expiresAt = raced.expires_at;
+      }
+    }
+    if (!operationId && (error || !created)) {
       console.error("[operations] prepare insert failed:", error);
       return fail("temporarily_unavailable", "No pude preparar la acción en este momento.");
     }
-    operationId = created.id;
+    operationId ??= created!.id;
   }
 
   const [{ data: doctor }, { data: office }] = await Promise.all([

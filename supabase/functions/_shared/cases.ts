@@ -486,7 +486,27 @@ export async function applyStaffAction(
     }
     case "update": {
       const patch: Record<string, unknown> = {};
-      if (a.status) patch.status = a.status;
+      if (a.status && a.status !== c.status) {
+        if (a.status === "awaiting_assignment") {
+          // Back to the queue: nobody owns it any more, and the SLA restarts
+          // now so the team is alerted again if nobody takes it.
+          Object.assign(patch, {
+            status: a.status,
+            assigned_user_id: null,
+            assigned_at: null,
+            alert_level: 0,
+            last_alert_at: new Date().toISOString(),
+          });
+        } else if (!c.assigned_user_id) {
+          // "Asignado" / "Esperando…" without anyone taking it took the case
+          // out of the SLA queue (no more alerts) with no owner.
+          return fail("take_first", "Primero toma el caso («Tomar caso») para que quede claro quién lo atiende.");
+        } else {
+          patch.status = a.status;
+        }
+      } else if (a.status) {
+        patch.status = a.status;
+      }
       if (a.next_action !== undefined) patch.next_action = a.next_action?.trim().slice(0, 500) || null;
       if (a.due_at !== undefined) {
         if (a.due_at !== null && Number.isNaN(Date.parse(a.due_at))) return fail("invalid_due_at", "Fecha de vencimiento inválida.");

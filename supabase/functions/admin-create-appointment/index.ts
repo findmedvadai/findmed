@@ -22,6 +22,7 @@ import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar
 import { normalizeMxPhone, mxPhoneLookupVariants, isValidNormalizedPhone } from "../_shared/phone.ts";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { externalTimeout } from "../_shared/http-timeout.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 
 interface CreateBody {
@@ -93,11 +94,7 @@ Deno.serve(async (req) => {
   // from the office, NOT the doctor (legacy doctors fields are deprecated).
   const { data: office } = await supabase
     .from("doctor_offices")
-    .select(
-      "id, doctor_id, name, address, is_active, is_deleted, " +
-        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-    )
+    .select("id, doctor_id, name, address, is_active, is_deleted, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id")
     .eq("id", office_id)
     .eq("doctor_id", doctor_id)
     .maybeSingle();
@@ -223,6 +220,7 @@ Deno.serve(async (req) => {
           `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`,
           {
             method: "POST",
+            signal: externalTimeout(),
             headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
             body: JSON.stringify(eventBody),
           }
@@ -264,6 +262,7 @@ Deno.serve(async (req) => {
           `https://graph.microsoft.com/v1.0/me/calendars/${calendarId}/events`,
           {
             method: "POST",
+            signal: externalTimeout(),
             headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
             body: JSON.stringify(eventBody),
           }

@@ -5,7 +5,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
-import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
+import { deleteAppointmentEvents } from "../_shared/calendar-sync.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
@@ -45,15 +45,28 @@ Deno.serve(async (req) => {
   if (appointment.status === "cancelled") {
     return jsonResponse({ error: "La cita ya está cancelada" }, 409);
   }
+  // A completed consultation is history: cancelling it would erase that it
+  // happened (post-consultation form, cases) and notify the patient.
+  if (appointment.status === "completed") {
+    return jsonResponse({ error: "La consulta ya se realizó; no se puede cancelar." }, 409);
+  }
 
   const previousStatus = appointment.status;
 
-  const { error: updateErr } = await supabase
+  // Guarded on the status we read: a patient confirming/cancelling or a cron
+  // acting at the same moment wins instead of being overwritten.
+  const { data: cancelledRow, error: updateErr } = await supabase
     .from("appointments")
     .update({ status: "cancelled", cancel_reason: "admin" })
-    .eq("id", appointment_id);
+    .eq("id", appointment_id)
+    .eq("status", previousStatus)
+    .select("id")
+    .maybeSingle();
   if (updateErr) {
     return jsonResponse({ error: "No se pudo cancelar", details: updateErr.message }, 500);
+  }
+  if (!cancelledRow) {
+    return jsonResponse({ error: "La cita cambió mientras la cancelabas. Recarga y revisa su estado." }, 409);
   }
 
   const { data: doctor } = await supabase
@@ -65,11 +78,7 @@ Deno.serve(async (req) => {
   const { data: office } = appointment.office_id
     ? await supabase
         .from("doctor_offices")
-        .select(
-          "id, name, address, " +
-            "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-            "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-        )
+        .select("id, name, address, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id")
         .eq("id", appointment.office_id)
         .maybeSingle()
     : { data: null };
@@ -80,34 +89,9 @@ Deno.serve(async (req) => {
     .eq("id", appointment.patient_id)
     .maybeSingle();
 
-  // Delete external events (best-effort).
-  if (appointment.google_event_id && office?.google_calendar_connected && office.google_calendar_id) {
-    const accessToken = await getGoogleAccessToken({ supabase, office });
-    if (accessToken) {
-      try {
-        await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(office.google_calendar_id)}/events/${appointment.google_event_id}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-      } catch (err) {
-        console.error("[admin-cancel] Google delete failed:", err);
-      }
-    }
-  }
-
-  if (appointment.outlook_event_id && office?.outlook_calendar_connected && office.outlook_calendar_id) {
-    const accessToken = await getOutlookAccessToken({ supabase, office });
-    if (accessToken) {
-      try {
-        await fetch(
-          `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(office.outlook_calendar_id)}/events/${encodeURIComponent(appointment.outlook_event_id)}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-      } catch (err) {
-        console.error("[admin-cancel] Outlook delete failed:", err);
-      }
-    }
-  }
+  // Delete external events (best-effort; shared helper with timeouts and
+  // per-provider result, _shared/calendar-sync.ts).
+  await deleteAppointmentEvents(supabase, appointment);
 
   // Notify the doctor's inbox.
   await supabase.from("notifications").insert({

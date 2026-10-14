@@ -72,9 +72,9 @@ Deno.serve(async (req) => {
   let completed = 0;
 
   for (const appt of appointments) {
-    const patient = appt.patients as { full_name: string; phone: string } | null;
-    const doctor = appt.doctors as { full_name: string } | null;
-    const office = appt.doctor_offices as { name: string } | null;
+    const patient = appt.patients as unknown as { full_name: string; phone: string } | null;
+    const doctor = appt.doctors as unknown as { full_name: string } | null;
+    const office = appt.doctor_offices as unknown as { name: string } | null;
 
     // Guard on the previous status so two overlapping runs (or the doctor's
     // own post-consultation form) can't emit `appointment.completed` twice.

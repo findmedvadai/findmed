@@ -19,6 +19,7 @@ import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { externalTimeout } from "../_shared/http-timeout.ts";
 
 interface Body {
   office_id: string;
@@ -45,11 +46,7 @@ Deno.serve(async (req) => {
 
   const { data: office } = await supabase
     .from("doctor_offices")
-    .select(
-      "id, doctor_id, name, is_deleted, " +
-        "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-        "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id"
-    )
+    .select("id, doctor_id, name, is_deleted, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id")
     .eq("id", body.office_id)
     .maybeSingle();
   if (!office) return jsonResponse({ error: "Consultorio no encontrado" }, 404);
@@ -100,15 +97,20 @@ Deno.serve(async (req) => {
 
   let cancelled = 0;
   for (const appt of affected) {
-    // 1. Mark cancelled.
-    const { error: updErr } = await supabase
+    // 1. Mark cancelled, guarded on the status we read (if the patient
+    // cancelled it meanwhile, don't cancel/notify it a second time).
+    const { data: cancelledRow, error: updErr } = await supabase
       .from("appointments")
       .update({ status: "cancelled", cancel_reason: cancelReason })
-      .eq("id", appt.id);
+      .eq("id", appt.id)
+      .eq("status", appt.status)
+      .select("id")
+      .maybeSingle();
     if (updErr) {
       console.error(`[doctor-office-delete] failed to cancel appt ${appt.id}:`, updErr);
       continue;
     }
+    if (!cancelledRow) continue;
 
     // 2. Delete external calendar event (best-effort).
     if (appt.google_event_id && office.google_calendar_connected && office.google_calendar_id) {
@@ -117,7 +119,7 @@ Deno.serve(async (req) => {
         try {
           await fetch(
             `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(office.google_calendar_id)}/events/${appt.google_event_id}`,
-            { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+            { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: externalTimeout() }
           );
         } catch (err) {
           console.error("Google delete failed:", err);
@@ -130,7 +132,7 @@ Deno.serve(async (req) => {
         try {
           await fetch(
             `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(office.outlook_calendar_id)}/events/${encodeURIComponent(appt.outlook_event_id)}`,
-            { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+            { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: externalTimeout() }
           );
         } catch (err) {
           console.error("Outlook delete failed:", err);
@@ -227,10 +229,15 @@ Deno.serve(async (req) => {
   //      DELETE; we're soft-deleting, so we clean explicitly.
   //    - reservation_sessions: open triage links for this office are now stale;
   //      delete so patients can't land on a booking flow for a gone office.
-  await Promise.all([
+  //      Only UNUSED ones: a used session is referenced by its appointment
+  //      (appointments.created_from_session_id, no ON DELETE), so deleting all
+  //      of them failed with a FK error and — one statement — removed none.
+  const [availCleanup, sessionCleanup] = await Promise.all([
     supabase.from("doctor_weekly_availability").delete().eq("office_id", body.office_id),
-    supabase.from("reservation_sessions").delete().eq("office_id", body.office_id),
+    supabase.from("reservation_sessions").delete().eq("office_id", body.office_id).is("used_at", null),
   ]);
+  if (availCleanup.error) console.error("[doctor-office-delete] availability cleanup failed:", availCleanup.error);
+  if (sessionCleanup.error) console.error("[doctor-office-delete] session cleanup failed:", sessionCleanup.error);
 
   // 6. Soft-delete the office. is_active=false too so the partial unique
   // index releases the (doctor_id, zone_id) slot for re-use.

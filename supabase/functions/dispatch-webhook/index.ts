@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
     .select("id, url, secret, events")
     .eq("is_active", true);
 
-  const matching = (webhooks ?? []).filter((wh: any) =>
+  const matching = (webhooks ?? []).filter((wh: { events: unknown }) =>
     (wh.events as string[]).includes(event_type)
   );
 

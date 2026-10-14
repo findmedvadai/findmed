@@ -36,6 +36,17 @@ interface ExternalEvent {
   htmlLink: string | null;
 }
 
+// Subset of a Google Calendar `events.list` item that this function reads.
+// Only timed events reach the map (filtered by `start.dateTime`).
+interface GoogleEventItem {
+  id: string;
+  summary?: string;
+  description?: string;
+  htmlLink?: string;
+  start: { dateTime: string };
+  end?: { dateTime?: string };
+}
+
 async function fetchOfficeEvents(
   supabase: SupabaseClient,
   office: OfficeRow,
@@ -70,8 +81,8 @@ async function fetchOfficeEvents(
   const data = await eventsRes.json();
 
   const events: ExternalEvent[] = (data.items || [])
-    .filter((e: any) => e.start?.dateTime)
-    .map((e: any) => ({
+    .filter((e: GoogleEventItem) => e.start?.dateTime)
+    .map((e: GoogleEventItem) => ({
       id: e.id,
       office_id: office.id,
       office_name: office.name,

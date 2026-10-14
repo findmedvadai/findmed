@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleAccessToken, getOutlookAccessToken } from "./calendar-tokens.ts";
+import { externalTimeout } from "./http-timeout.ts";
 
 export type SyncOutcome = "deleted" | "already_gone" | "skipped" | "failed";
 
@@ -50,7 +51,7 @@ export async function deleteAppointmentEvents(
       try {
         const res = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(office.google_calendar_id)}/events/${encodeURIComponent(appt.google_event_id)}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+          { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, signal: externalTimeout() },
         );
         result.google = outcomeFor(res.status);
       } catch (err) {
@@ -68,7 +69,7 @@ export async function deleteAppointmentEvents(
       try {
         const res = await fetch(
           `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(office.outlook_calendar_id)}/events/${encodeURIComponent(appt.outlook_event_id)}`,
-          { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+          { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, signal: externalTimeout() },
         );
         result.outlook = outcomeFor(res.status);
       } catch (err) {

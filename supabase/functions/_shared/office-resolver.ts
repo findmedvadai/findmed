@@ -29,11 +29,11 @@ export interface OfficeRow {
   is_deleted: boolean;
 }
 
+// One literal (not "a" + "b"): supabase-js parses the column list from the
+// string's literal type; a concatenation widens to `string` and the row type
+// becomes GenericStringError (ERRORES.md 2026-10-13, N15).
 const OFFICE_SELECT =
-  "id, doctor_id, name, address, city_id, zone_id, " +
-  "google_calendar_connected, google_refresh_token_ref, google_calendar_id, " +
-  "outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, " +
-  "appointment_duration_minutes, is_active, is_deleted";
+  "id, doctor_id, name, address, city_id, zone_id, google_calendar_connected, google_refresh_token_ref, google_calendar_id, outlook_calendar_connected, outlook_refresh_token_ref, outlook_calendar_id, appointment_duration_minutes, is_active, is_deleted";
 
 export async function isCallerAdmin(supabase: SupabaseClient, userId: string): Promise<boolean> {
   const { data } = await supabase.rpc("is_admin_or_superadmin", { _user_id: userId });

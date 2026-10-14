@@ -36,6 +36,17 @@ interface ExternalEvent {
   htmlLink: string | null;
 }
 
+// Subset of a Microsoft Graph `calendarView` event that this function reads.
+// Only timed events reach the map (filtered by `start.dateTime`).
+interface OutlookEventItem {
+  id: string;
+  subject?: string;
+  bodyPreview?: string;
+  webLink?: string;
+  start: { dateTime: string };
+  end?: { dateTime?: string };
+}
+
 async function fetchOfficeEvents(
   supabase: SupabaseClient,
   office: OfficeRow,
@@ -75,8 +86,8 @@ async function fetchOfficeEvents(
   const data = await eventsRes.json();
 
   const events: ExternalEvent[] = (data.value || [])
-    .filter((e: any) => e.start?.dateTime)
-    .map((e: any) => ({
+    .filter((e: OutlookEventItem) => e.start?.dateTime)
+    .map((e: OutlookEventItem) => ({
       id: e.id,
       office_id: office.id,
       office_name: office.name,

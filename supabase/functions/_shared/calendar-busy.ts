@@ -23,6 +23,8 @@
 //     bad JSON, too many pages). Callers report that as "not verified" and never
 //     as verified free time; whatever WAS read still blocks.
 
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { externalTimeout } from "./http-timeout.ts";
 import { mxDayBoundsMs } from "./mx-time.ts";
 
 export type CalendarProvider = "google" | "outlook";
@@ -33,6 +35,8 @@ export interface BusyInterval {
   source: CalendarProvider;
   allDay: boolean;
   summary: string | null;
+  /** Provider event id (used to recognize FindMed's own appointment events). */
+  eventId?: string | null;
 }
 
 export interface BusyResult {
@@ -62,6 +66,7 @@ function allDayRange(startDate: string, endDate: string | null): { startMs: numb
 // Google
 
 export interface GoogleEvent {
+  id?: string;
   status?: string;
   eventType?: string;
   transparency?: string;
@@ -78,16 +83,17 @@ export function googleEventBusy(e: GoogleEvent): BusyInterval | null {
   if (e.eventType && GOOGLE_INFORMATIONAL.has(e.eventType)) return null;
   if (e.attendees?.some((a) => a.self && a.responseStatus === "declined")) return null;
   const summary = e.summary ?? null;
+  const eventId = e.id ?? null;
 
   if (e.start?.date) {
     const range = allDayRange(e.start.date, e.end?.date ?? null);
-    return range ? { ...range, source: "google", allDay: true, summary } : null;
+    return range ? { ...range, source: "google", allDay: true, summary, eventId } : null;
   }
   if (!e.start?.dateTime || e.transparency === "transparent") return null;
   const startMs = Date.parse(e.start.dateTime);
   const endMs = Date.parse(e.end?.dateTime ?? e.start.dateTime);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-  return { startMs, endMs: Math.max(startMs, endMs), source: "google", allDay: false, summary };
+  return { startMs, endMs: Math.max(startMs, endMs), source: "google", allDay: false, summary, eventId };
 }
 
 export async function fetchGoogleBusy(opts: {
@@ -110,7 +116,10 @@ export async function fetchGoogleBusy(opts: {
     if (pageToken) params.set("pageToken", pageToken);
     let data: { items?: GoogleEvent[]; nextPageToken?: string };
     try {
-      const res = await fetch(base + params, { headers: { Authorization: `Bearer ${opts.accessToken}` } });
+      const res = await fetch(base + params, {
+        headers: { Authorization: `Bearer ${opts.accessToken}` },
+        signal: externalTimeout(),
+      });
       if (!res.ok) return { busy, complete: false, error: `http_${res.status}` };
       data = await res.json();
     } catch (err) {
@@ -131,6 +140,7 @@ export async function fetchGoogleBusy(opts: {
 // Microsoft Graph (Outlook)
 
 export interface OutlookEvent {
+  id?: string;
   isAllDay?: boolean;
   isCancelled?: boolean;
   showAs?: string;
@@ -159,18 +169,19 @@ export function outlookEventBusy(e: OutlookEvent): BusyInterval | null {
   if (e.isCancelled) return null;
   if (!e.start?.dateTime) return null;
   const summary = e.subject ?? null;
+  const eventId = e.id ?? null;
 
   if (e.isAllDay) {
     const startDate = graphAllDayDate(e.start.dateTime);
     const endDate = e.end?.dateTime ? graphAllDayDate(e.end.dateTime) : null;
     const range = startDate ? allDayRange(startDate, endDate) : null;
-    return range ? { ...range, source: "outlook", allDay: true, summary } : null;
+    return range ? { ...range, source: "outlook", allDay: true, summary, eventId } : null;
   }
   if (e.showAs === "free") return null;
   const startMs = graphUtcMs(e.start.dateTime);
   const endMs = graphUtcMs(e.end?.dateTime ?? e.start.dateTime);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-  return { startMs, endMs: Math.max(startMs, endMs), source: "outlook", allDay: false, summary };
+  return { startMs, endMs: Math.max(startMs, endMs), source: "outlook", allDay: false, summary, eventId };
 }
 
 const GRAPH_ORIGIN = "https://graph.microsoft.com/";
@@ -195,6 +206,7 @@ export async function fetchOutlookBusy(opts: {
     try {
       const res: Response = await fetch(url, {
         headers: { Authorization: `Bearer ${opts.accessToken}`, Prefer: 'outlook.timezone="UTC"' },
+        signal: externalTimeout(),
       });
       if (!res.ok) return { busy, complete: false, error: `http_${res.status}` };
       data = await res.json();
@@ -215,4 +227,43 @@ export async function fetchOutlookBusy(opts: {
     url = next;
   }
   return { busy, complete: false, error: "too_many_pages" };
+}
+
+// ---------------------------------------------------------------------------
+// FindMed's own events
+
+/**
+ * Drops the busy intervals that are FindMed's own appointment events (the
+ * event FindMed wrote to the doctor's calendar for an appointment, whatever
+ * its status). Live appointments already block their time from the
+ * appointments table, so counting their calendar copy again only hurts:
+ *   * moving an appointment collided with its own event (10:00 -> 10:15 was
+ *     "taken" by the 10:00 event of that same appointment);
+ *   * a cancelled appointment whose event could not be deleted (or was never
+ *     deleted: auto-cancel) kept blocking that slot for every other patient.
+ * Events the doctor created by hand are not appointment events and still block.
+ * If the lookup fails nothing is dropped (blocking is safer than double-booking).
+ */
+export async function withoutFindMedEvents(supabase: SupabaseClient, busy: BusyInterval[]): Promise<BusyInterval[]> {
+  const ids = (source: CalendarProvider) =>
+    [...new Set(busy.filter((b) => b.source === source && b.eventId).map((b) => b.eventId as string))];
+  const lookups: Array<[CalendarProvider, string[], "google_event_id" | "outlook_event_id"]> = [
+    ["google", ids("google"), "google_event_id"],
+    ["outlook", ids("outlook"), "outlook_event_id"],
+  ];
+  const own = { google: new Set<string>(), outlook: new Set<string>() };
+  for (const [source, list, column] of lookups) {
+    if (list.length === 0) continue;
+    const { data, error } = await supabase.from("appointments").select(column).in(column, list);
+    if (error) {
+      console.error(`[calendar-busy] own-event lookup failed (${source}):`, error.message);
+      continue;
+    }
+    for (const row of (data ?? []) as Record<string, string | null>[]) {
+      const id = row[column];
+      if (id) own[source].add(id);
+    }
+  }
+  if (own.google.size === 0 && own.outlook.size === 0) return busy;
+  return busy.filter((b) => !(b.eventId && own[b.source].has(b.eventId)));
 }

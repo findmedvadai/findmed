@@ -17,7 +17,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGoogleAccessToken, getOutlookAccessToken } from "./calendar-tokens.ts";
-import { fetchGoogleBusy, fetchOutlookBusy } from "./calendar-busy.ts";
+import { type BusyInterval, fetchGoogleBusy, fetchOutlookBusy, withoutFindMedEvents } from "./calendar-busy.ts";
 import { isValidLocalDate, mxDayBoundsMs, mxLocalToMs, mxToday } from "./mx-time.ts";
 
 export type AvailabilityStatus =
@@ -67,6 +67,15 @@ export async function computeDaySlots(supabase: SupabaseClient, officeId: string
     .eq("id", officeId)
     .maybeSingle();
   if (!office || !office.is_active || office.is_deleted) return empty("office_unavailable");
+
+  // A deactivated doctor keeps active offices (2 in production, 14-oct):
+  // they must not be offered from old links nor from /gestionar.
+  const { data: doctor } = await supabase
+    .from("doctors")
+    .select("is_active, is_deleted")
+    .eq("id", office.doctor_id)
+    .maybeSingle();
+  if (doctor && (doctor.is_active === false || doctor.is_deleted === true)) return empty("office_unavailable");
 
   const duration = office.appointment_duration_minutes ?? 30;
   const base = { duration_minutes: duration, doctor_id: office.doctor_id };
@@ -123,6 +132,7 @@ export async function computeDaySlots(supabase: SupabaseClient, officeId: string
   // with slot-validation so an offered slot is also an accepted one).
   let calendarVerified = true;
   const dayRange = { timeMin: dayStartIso, timeMax: dayEndIso };
+  const external: BusyInterval[] = [];
 
   if (office.google_calendar_connected && office.google_calendar_id) {
     const token = await getGoogleAccessToken({ supabase, office });
@@ -130,7 +140,7 @@ export async function computeDaySlots(supabase: SupabaseClient, officeId: string
       calendarVerified = false;
     } else {
       const r = await fetchGoogleBusy({ accessToken: token, calendarId: office.google_calendar_id, ...dayRange });
-      busy.push(...r.busy);
+      external.push(...r.busy);
       if (!r.complete) calendarVerified = false;
     }
   }
@@ -140,10 +150,13 @@ export async function computeDaySlots(supabase: SupabaseClient, officeId: string
       calendarVerified = false;
     } else {
       const r = await fetchOutlookBusy({ accessToken: token, calendarId: office.outlook_calendar_id, ...dayRange });
-      busy.push(...r.busy);
+      external.push(...r.busy);
       if (!r.complete) calendarVerified = false;
     }
   }
+  // FindMed's own appointment events are not external busy time: live ones
+  // already block above, and a cancelled one left behind must not block.
+  busy.push(...(await withoutFindMedEvents(supabase, external)));
 
   const nowMs = Date.now();
   const cutoffMs = date === mxToday(nowMs) ? nowMs + minConfirmHours * 3_600_000 : nowMs;
