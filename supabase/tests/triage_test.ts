@@ -13,7 +13,7 @@ import { TOOLS } from "../functions/findmed-mcp/tools.ts";
 import { FakeDb } from "./fake-supabase.ts";
 
 const row = (especialidad: string, semaforo: string, keywords: string[], alarm: string | null = null) =>
-  ({ id: crypto.randomUUID(), especialidad, semaforo, keywords, si_esto_aparece_subir_a_urgencias: alarm });
+  ({ id: crypto.randomUUID(), especialidad, semaforo, keywords, si_esto_aparece_subir_a_urgencias: alarm, is_active: true });
 
 function catalog(rows: Record<string, unknown>[] = [
   row("Ortopedia", "AMARILLO", ["rodilla", "dolor", "inflamacion"]),

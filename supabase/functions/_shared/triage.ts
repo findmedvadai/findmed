@@ -16,6 +16,10 @@
 //    (urgencias inmediato / hoy, consulta mismo día / consulta). It is returned
 //    so the agent never books an elective consult for an urgent condition.
 //
+// The catalog is edited from Configuración → Catálogos → Triaje (Edge Function
+// triage-admin, which validates against KEYWORDS below). It is read on every
+// call — no cache — and inactive conditions (is_active = false) are ignored.
+//
 // The keyword list is a closed vocabulary; anything else is rejected by the
 // MCP schema. The condition name is never returned (the agent must not
 // suggest diagnoses); `catalog_id` keeps traceability in the MCP log.
@@ -61,8 +65,22 @@ export const KEYWORDS = {
 
 export const ALL_KEYWORDS: readonly string[] = [...KEYWORDS.zona_cuerpo, ...KEYWORDS.sintoma, ...KEYWORDS.contexto];
 
+export type KeywordCategory = keyof typeof KEYWORDS;
+
+/** Category of a vocabulary term, or null if the engine does not know it. */
+export function keywordCategory(k: string): KeywordCategory | null {
+  for (const cat of Object.keys(KEYWORDS) as KeywordCategory[]) {
+    if ((KEYWORDS[cat] as readonly string[]).includes(k)) return cat;
+  }
+  return null;
+}
+
+/** Terms outside the closed vocabulary (the engine would never match them). */
+export const unknownKeywords = (kws: readonly string[]): string[] => [...new Set(kws.filter((k) => !ALL_KEYWORDS.includes(k)))];
+
 /** Terms that appear in many conditions: they help, but never decide alone. */
-const HALF_WEIGHT = new Set(["dolor", "inflamacion", "nausea", "cansancio", "debilidad", "mareo", "subito", "cronico", "chequeo"]);
+export const HALF_WEIGHT_KEYWORDS = ["dolor", "inflamacion", "nausea", "cansancio", "debilidad", "mareo", "subito", "cronico", "chequeo"] as const;
+const HALF_WEIGHT = new Set<string>(HALF_WEIGHT_KEYWORDS);
 const weight = (k: string) => (HALF_WEIGHT.has(k) ? 0.5 : 1);
 
 const SEVERITY: Record<string, number> = { ROJO: 0, NARANJA: 1, AMARILLO: 2, VERDE: 3 };
@@ -167,7 +185,9 @@ export async function suggestSpecialty(supabase: SupabaseClient, rawKeywords: st
     return { ok: false, code: "invalid_keywords", message_es: `Términos fuera del catálogo: ${unknown.join(", ") || "(vacío)"}` };
   }
 
-  const { count, error: countErr } = await supabase.from("triage_findmed").select("id", { count: "exact", head: true });
+  // Read on every call (no cache): a change saved from Catálogos → Triaje
+  // applies to the very next suggest_specialty. Inactive conditions are ignored.
+  const { count, error: countErr } = await supabase.from("triage_findmed").select("id", { count: "exact", head: true }).eq("is_active", true);
   if (countErr) return { ok: false, code: "temporarily_unavailable", message_es: "No pude consultar el catálogo de orientación." };
   if (!count) return { ok: false, code: "catalog_unavailable", message_es: "La orientación por síntomas no está disponible todavía." };
 
@@ -194,6 +214,7 @@ export async function suggestSpecialty(supabase: SupabaseClient, rawKeywords: st
     const { data, error } = await supabase
       .from("triage_findmed")
       .select("id, especialidad, semaforo, primera_parada, si_esto_aparece_subir_a_urgencias, pregunta_diferencial, keywords, requiere_todos, requiere_alguno")
+      .eq("is_active", true)
       .overlaps("keywords", attempt)
       .limit(300);
     if (error) return { ok: false, code: "temporarily_unavailable", message_es: "No pude consultar el catálogo de orientación." };

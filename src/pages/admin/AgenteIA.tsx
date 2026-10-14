@@ -3,7 +3,8 @@
 // plataforma — herramientas que usa el agente (mcp_requests), mensajes del
 // paciente y respuestas de la IA (whaapy_events), plantillas enviadas por
 // FindMed (message_deliveries) y movimientos de casos (case_events). Incluye
-// un resumen de solo lectura del catálogo de triaje que usa el agente.
+// un resumen del catálogo de triaje que usa el agente (se edita en
+// Configuración → Catálogos → Triaje).
 // Sirve para operar el arranque: ver en vivo qué hace el agente y dónde falla.
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -471,7 +472,9 @@ function ConnectionCard({
   );
 }
 
-/* ───────── catálogo de triaje (solo lectura) ───────── */
+/* ───────── catálogo de triaje (resumen; se edita en Catálogos → Triaje) ───────── */
+
+const TRIAGE_CATALOG_URL = "/admin/configuracion/catalogos?catalogo=triaje";
 
 const PRIMERA_PARADA: { key: string; label: string; tone: Tone }[] = [
   { key: "urgencias_inmediato", label: "Urgencias inmediato", tone: "danger" },
@@ -499,7 +502,8 @@ function useTriageCatalog() {
     queryKey: ["triage-catalog-summary"],
     queryFn: async () => {
       const [conditions, specialties] = await Promise.all([
-        supabase.from("triage_findmed").select("especialidad, primera_parada, validado, origen", { count: "exact" }),
+        // Solo las activas: las inactivas el agente no las usa.
+        supabase.from("triage_findmed").select("especialidad, primera_parada, validado, origen", { count: "exact" }).eq("is_active", true),
         supabase.from("triage_specialty_map").select("especialidad, patient_label, search_specialties"),
       ]);
       if (conditions.error) throw conditions.error;
@@ -555,7 +559,10 @@ function TriageCatalogCard() {
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 p-4 pb-2">
         <div className="min-w-0 space-y-1">
           <CardTitle className="text-sm font-semibold">Catálogo de triaje</CardTitle>
-          <CardDescription className="text-xs">Condiciones con las que el agente orienta al paciente. Solo lectura.</CardDescription>
+          <CardDescription className="text-xs">
+            Condiciones activas con las que el agente orienta al paciente.{" "}
+            <Link to={TRIAGE_CATALOG_URL} className="font-medium text-primary hover:underline">Revisar y editar en Catálogos → Triaje</Link>
+          </CardDescription>
         </div>
         {data && <SoftBadge tone="neutral">{data.total} condiciones</SoftBadge>}
       </CardHeader>
@@ -569,7 +576,13 @@ function TriageCatalogCard() {
         ) : error ? (
           <p className="text-sm text-destructive">No se pudo leer el catálogo: {(error as Error).message}</p>
         ) : !data || data.total === 0 ? (
-          <EmptyState icon={ListChecks} title="El catálogo está vacío" description="Se carga con scripts/import-triage.mjs." className="py-6" />
+          <EmptyState
+            icon={ListChecks}
+            title="El catálogo está vacío"
+            description="Agrega o activa condiciones en Catálogos → Triaje."
+            action={<Button size="sm" variant="outline" asChild><Link to={TRIAGE_CATALOG_URL}>Abrir catálogo de triaje</Link></Button>}
+            className="py-6"
+          />
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">

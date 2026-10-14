@@ -19,6 +19,12 @@
 // FindMed mapping, gates that can never match); clinical content is never
 // invented here. The catalog contains FindMed's clinical content: keep inputs
 // and the generated SQL out of the repo (the repo is public).
+//
+// Since 14-oct-2026 the catalog is edited from the panel (Configuración →
+// Catálogos → Triaje, Edge Function triage-admin). This script REPLACES the
+// whole table: it discards panel edits, validations and inactive flags, and
+// does not write triage_changes. Use it only for a full reload agreed with the
+// clinical team; day-to-day changes go through the panel.
 
 import fs from "node:fs";
 

@@ -111,3 +111,7 @@ verify_jwt = false
 # Admin edits a patient's insurance. Auth: admin JWT verified in code (requireAdmin).
 [functions.admin-update-patient-insurance]
 verify_jwt = false
+
+# Triage catalog admin (Catálogos → Triaje). Auth: admin JWT verified in code (requireAdmin).
+[functions.triage-admin]
+verify_jwt = false
