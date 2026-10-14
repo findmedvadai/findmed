@@ -97,6 +97,10 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
     this.filters.push((r) => String(r[col]) < v);
     return this;
   }
+  gte(col: string, v: string) {
+    this.filters.push((r) => String(r[col]) >= v);
+    return this;
+  }
   is(col: string, v: null) {
     this.filters.push((r) => (r[col] ?? null) === v);
     return this;

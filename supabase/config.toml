@@ -107,3 +107,7 @@ verify_jwt = false
 # Cron-only: auth in code (FINDMED_CRON_SECRET / service key), not a JWT.
 [functions.send-appointment-reminders]
 verify_jwt = false
+
+# Admin edits a patient's insurance. Auth: admin JWT verified in code (requireAdmin).
+[functions.admin-update-patient-insurance]
+verify_jwt = false

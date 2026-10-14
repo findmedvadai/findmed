@@ -12,15 +12,16 @@ En WHAAPY → Agente → MCPs → agregar:
 | URL | `https://jyzvdowflblxmlahlupo.supabase.co/functions/v1/findmed-mcp` |
 | Autenticación | Bearer → el valor de `FINDMED_MCP_TOKEN` (en `.env.local` del equipo técnico; nunca en chats ni docs) |
 
-"Probar conexión" debe mostrar 10 herramientas. En FindMed → Agente IA aparece "WHAAPY probó la conexión con
-el MCP". Si aparece "token inválido", el valor pegado no coincide.
+"Probar conexión" debe mostrar 13 herramientas (v2.5 agrega `save_patient_insurance`, `find_network_hospitals`
+y `find_network_laboratories`: sincroniza y habilítalas). En FindMed → Agente IA aparece "WHAAPY probó la
+conexión con el MCP". Si aparece "token inválido", el valor pegado no coincide.
 
 ## 2. Campos fijos de cada herramienta
 
 En "Configurar tool", el campo `phone` va **fijo** a `{{contact.phoneNumber}}` en: `create_booking_link`,
-`list_my_appointments`, `prepare_appointment_action`, `get_operation_status`, `open_case`, `request_handoff`,
-`get_my_case_status`. En `open_case`, `contact_name` puede ir a `{{contact.name}}`. El resto de los campos
-los llena la IA. Ver detalle en `../whaapy-mcp-config.md`.
+`save_patient_insurance`, `list_my_appointments`, `prepare_appointment_action`, `get_operation_status`,
+`open_case`, `request_handoff`, `get_my_case_status`. En `open_case`, `contact_name` puede ir a
+`{{contact.name}}`. El resto de los campos los llena la IA. Ver detalle en `../whaapy-mcp-config.md`.
 
 ## 3. Instrucciones del agente
 

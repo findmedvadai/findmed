@@ -29,6 +29,7 @@ import { FilterBar, SearchInput } from "@/components/app/FilterBar";
 import { StatCard, type Tone } from "@/components/app/StatCard";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { EmptyState } from "@/components/app/EmptyState";
+import { caseTypeLabel } from "@/lib/case-labels";
 import {
   Activity,
   AlertTriangle,
@@ -87,6 +88,10 @@ const TOOL_LABEL: Record<string, string> = {
   open_case: "abrió un caso",
   request_handoff: "pasó a una persona",
   get_my_case_status: "consultó estado del caso",
+  suggest_specialty: "orientó especialidad",
+  save_patient_insurance: "guardó el seguro del paciente",
+  find_network_hospitals: "buscó hospitales de la red",
+  find_network_laboratories: "buscó laboratorios de la red",
 };
 
 const RANGES: Record<string, number> = { "1h": 1, "24h": 24, "7d": 24 * 7, "30d": 24 * 30 };
@@ -683,7 +688,7 @@ function ActivityLog({ errorsOnly }: { errorsOnly: boolean }) {
         const pc = c.patient_cases as { subject_phone?: string; request_type?: string } | null;
         out.push({
           id: `case-${c.id}`, at: c.created_at, source: "case", ok: !c.event_type.endsWith("_failed"),
-          title: `Caso ${pc?.request_type ?? ""}: ${c.event_type.replace(/_/g, " ")}`, phone: pc?.subject_phone ?? null, raw: c,
+          title: `Caso ${caseTypeLabel(pc?.request_type)}: ${c.event_type.replace(/_/g, " ")}`, phone: pc?.subject_phone ?? null, raw: c,
         });
       }
 
@@ -929,7 +934,7 @@ function SetupGuideBody() {
     queryFn: () => messagingAdmin<IntegrationHealth>({ action: "health" }),
     retry: false,
   });
-  const tools = ["create_booking_link", "list_my_appointments", "prepare_appointment_action", "get_operation_status", "open_case", "request_handoff", "get_my_case_status"];
+  const tools = ["create_booking_link", "save_patient_insurance", "list_my_appointments", "prepare_appointment_action", "get_operation_status", "open_case", "request_handoff", "get_my_case_status"];
 
   return (
     <div className="grid gap-px border-t bg-border md:grid-cols-2">
@@ -939,7 +944,7 @@ function SetupGuideBody() {
           Autenticación: <strong className="font-medium text-foreground">Bearer</strong> con el token del MCP (secreto{" "}
           <code className="rounded bg-muted px-1 font-mono text-xs">FINDMED_MCP_TOKEN</code>; por seguridad no se muestra en la plataforma).
         </p>
-        <p>Después usa "Probar conexión" en WHAAPY: en la bitácora debe aparecer "WHAAPY probó la conexión con el MCP" y las 10 herramientas.</p>
+        <p>Después usa "Probar conexión" en WHAAPY: en la bitácora debe aparecer "WHAAPY probó la conexión con el MCP" y las 13 herramientas.</p>
       </GuideStep>
       <GuideStep n={2} title="Campo de teléfono en cada herramienta">
         <p>

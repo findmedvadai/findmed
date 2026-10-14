@@ -2,6 +2,7 @@
 // módulo (casos, mensajes, agente, calendarios, doctores, catálogo de triaje),
 // el estado de las conexiones y las notificaciones. Solo lecturas por RLS y el
 // chequeo de salud de messaging-admin.
+import { useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { addHours, format, startOfDay, addDays, subDays } from "date-fns";
@@ -9,6 +10,7 @@ import { es } from "date-fns/locale";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import {
   AlertTriangle,
+  BellRing,
   Bot,
   CalendarCheck,
   CalendarClock,
@@ -21,15 +23,22 @@ import {
   MessageCircle,
   MessageSquareWarning,
   Workflow,
+  X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/app/PageHeader";
 import { StatCard, type Tone } from "@/components/app/StatCard";
 import { SoftBadge } from "@/components/app/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { messagingAdmin, type IntegrationHealth } from "@/lib/messaging-admin";
+import { caseSla, formatWait, type SlaSettings, sortBySla, WAITING_STATUSES } from "@/lib/case-sla";
+import { caseTypeLabel } from "@/lib/case-labels";
+import { casePath } from "@/lib/staff-alerts";
+import { useBrowserAlertPermission } from "@/hooks/useBrowserAlerts";
+import { useSlaSettings } from "@/hooks/useStaffAlertSettings";
 import AdminInbox from "./Inbox";
 
 const TZ = "America/Mexico_City";
@@ -97,11 +106,13 @@ function useOverview() {
         routes,
         steps,
         triagePending,
+        docsPending48h,
       ] = await Promise.all([
         count(supabase.from("appointments").select("id", head).in("status", ["scheduled", "confirmed"]).gte("start_at", start.toISOString()).lt("start_at", end.toISOString())),
         count(supabase.from("appointments").select("id", head).eq("status", "scheduled").gte("start_at", now.toISOString()).lt("start_at", addHours(now, 48).toISOString())),
-        supabase.from("patient_cases").select("id, status, priority").in("status", ACTIVE_CASE),
-        count(supabase.from("message_deliveries").select("id", head).in("status", ["failed", "uncertain"]).gte("created_at", subDays(now, 7).toISOString())),
+        supabase.from("patient_cases").select("id, status, priority, request_type, summary, created_at").in("status", ACTIVE_CASE),
+        // Mensajes a pacientes; las alertas al equipo se cuentan aparte (staffAlertFailures).
+        count(supabase.from("message_deliveries").select("id", head).neq("source", "staff_alert").in("status", ["failed", "uncertain"]).gte("created_at", subDays(now, 7).toISOString())),
         count(supabase.from("domain_outbox").select("id", head).in("status", ["failed", "uncertain"])),
         count(supabase.from("mcp_requests").select("id", head).eq("ok", false).gte("created_at", subDays(now, 1).toISOString())),
         supabase.from("mcp_requests").select("created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
@@ -113,6 +124,27 @@ function useOverview() {
         supabase.from("message_routes").select("event_type, owner, description"),
         supabase.from("message_route_steps").select("event_type, when_status, when_cancel_reason, enabled"),
         count(supabase.from("triage_findmed").select("id", head).eq("validado", false)),
+        // Citas de las próximas 48 h a las que ya se les pidieron documentos y no los han enviado.
+        // Si falla (p. ej. migración aún no aplicada) no tumba el resto de Inicio.
+        count(
+          supabase.from("appointments").select("id", head).in("status", ["scheduled", "confirmed"])
+            .gte("start_at", now.toISOString()).lt("start_at", addHours(now, 48).toISOString())
+            .not("documents_requested_at", "is", null).is("documents_received_at", null),
+        ).catch(() => 0),
+      ]);
+
+      // Alertas al equipo (Configuración → Alertas): WhatsApp fallidos en 7 días y
+      // números de guardia activos. Si fallan (migración sin aplicar) no tumban Inicio.
+      const [alertFailures, alertRecipients] = await Promise.all([
+        supabase
+          .from("message_deliveries")
+          .select("id, error_message, created_at")
+          .eq("source", "staff_alert")
+          .in("status", ["failed", "uncertain"])
+          .gte("created_at", subDays(now, 7).toISOString())
+          .order("created_at", { ascending: false })
+          .limit(50),
+        supabase.from("staff_alert_recipients").select("id", head).eq("is_active", true),
       ]);
 
       const activeCases = cases.data ?? [];
@@ -150,13 +182,35 @@ function useOverview() {
           (s) => s.enabled && s.event_type === "appointment.status_changed" && s.when_status === "cancelled" && (!s.when_cancel_reason || s.when_cancel_reason === "admin"),
         ),
         triagePending,
+        docsPending48h,
+        waitingCases: activeCases.filter((c) => WAITING_STATUSES.includes(c.status)),
+        staffAlertFailures: alertFailures.error ? 0 : (alertFailures.data ?? []).length,
+        staffAlertLastError: alertFailures.error ? null : (alertFailures.data ?? []).find((d) => d.error_message)?.error_message ?? null,
+        activeRecipients: alertRecipients.error ? null : alertRecipients.count ?? 0,
       };
     },
   });
 }
 
-function buildPending(o: NonNullable<ReturnType<typeof useOverview>["data"]>): PendingItem[] {
+function buildPending(o: NonNullable<ReturnType<typeof useOverview>["data"]>, sla: SlaSettings, nowMs: number): PendingItem[] {
   const items: PendingItem[] = [];
+  // Casos que nadie tomó dentro de su tiempo de respuesta: uno por uno, los más urgentes primero.
+  const overdue = sortBySla(o.waitingCases, sla, nowMs).filter((c) => caseSla(c, sla, nowMs)?.state === "overdue");
+  for (const c of overdue.slice(0, 3)) {
+    const s = caseSla(c, sla, nowMs)!;
+    const summary = c.summary.length > 90 ? `${c.summary.slice(0, 89)}…` : c.summary;
+    items.push({
+      id: `overdue-${c.id}`,
+      severity: "danger",
+      title: `${c.priority === "urgent" ? "Urgencia" : "Caso"} sin tomar: ${formatWait(s.minutes)} esperando`,
+      detail: `${caseTypeLabel(c.request_type)} · ${summary} (debía tomarse en ${formatWait(s.slaMinutes)})`,
+      to: casePath(c.id),
+      cta: "Tomar",
+    });
+  }
+  if (overdue.length > 3) items.push({ id: "overdue-more", severity: "danger", title: plural(overdue.length - 3, "caso vencido más", "casos vencidos más"), detail: "También superaron su tiempo de respuesta sin que nadie los tomara.", to: "/admin/casos", cta: "Ver cola" });
+  if (o.staffAlertFailures) items.push({ id: "staff-alerts", severity: "danger", title: plural(o.staffAlertFailures, "alerta de WhatsApp al equipo falló", "alertas de WhatsApp al equipo fallaron"), detail: o.staffAlertLastError ?? "Revisa la plantilla y los números de guardia (últimos 7 días).", to: "/admin/configuracion/alertas", cta: "Revisar" });
+  if (o.activeRecipients === 0) items.push({ id: "no-recipients", severity: "warning", title: "Sin números de guardia para alertas", detail: "Los casos urgentes y las canalizaciones solo avisan en el panel: agrega quién recibe el WhatsApp.", to: "/admin/configuracion/alertas", cta: "Configurar" });
   if (o.urgentCases) items.push({ id: "urgent", severity: "danger", title: plural(o.urgentCases, "caso urgente abierto", "casos urgentes abiertos"), detail: "Pacientes canalizados por urgencia desde WhatsApp.", to: "/admin/casos", cta: "Atender" });
   if (o.awaitingCases) items.push({ id: "awaiting", severity: "danger", title: plural(o.awaitingCases, "caso sin asignar", "casos sin asignar"), detail: "Nadie del equipo los ha tomado todavía.", to: "/admin/casos", cta: "Tomar casos" });
   if (o.failedOutbox) items.push({ id: "outbox", severity: "danger", title: plural(o.failedOutbox, "evento sin enviar", "eventos sin enviar"), detail: "Mensajes automáticos que fallaron y esperan reintento.", to: "/admin/automatizacion?tab=envios", cta: "Revisar" });
@@ -169,6 +223,7 @@ function buildPending(o: NonNullable<ReturnType<typeof useOverview>["data"]>): P
   if (o.adminCancelWithoutMessage) items.push({ id: "admin-cancel", severity: "info", title: "Cancelaciones del equipo sin aviso", detail: "Cuando FindMed cancela una cita, el paciente no recibe WhatsApp: falta una plantilla.", to: "/admin/automatizacion", cta: "Configurar" });
   if (o.pendingForms) items.push({ id: "forms", severity: "info", title: plural(o.pendingForms, "reporte post-consulta por revisar", "reportes post-consulta por revisar"), detail: "Formularios de los doctores que aún no se revisan.", to: "#notificaciones", cta: "Ver" });
   if (o.triagePending) items.push({ id: "triage", severity: "info", title: "Catálogo de triaje sin validar", detail: `${o.triagePending} condiciones esperan la revisión del responsable clínico.`, to: "/admin/configuracion/agente-ia", cta: "Ver" });
+  if (o.docsPending48h) items.push({ id: "documents", severity: "warning", title: plural(o.docsPending48h, "cita en las próximas 48 h sin documentos", "citas en las próximas 48 h sin documentos"), detail: "Se les pidió póliza e INE por WhatsApp y aún no los envían.", to: "/admin/agenda?vista=lista", cta: "Ver citas" });
   return items.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 }
 
@@ -187,6 +242,51 @@ function ConnectionRow({ icon: Icon, label, status, tone, detail, to }: { icon: 
   );
 }
 
+const REMINDER_KEY = "fm-browser-alerts-reminder-hidden";
+
+/** Recordatorio discreto para activar los avisos del navegador (alertas de casos). */
+function BrowserAlertsReminder() {
+  const { permission, request } = useBrowserAlertPermission();
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(REMINDER_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (hidden || (permission !== "default" && permission !== "denied")) return null;
+  const hide = () => {
+    try {
+      localStorage.setItem(REMINDER_KEY, "1");
+    } catch {
+      /* sin almacenamiento: solo se oculta en esta visita */
+    }
+    setHidden(true);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed bg-card px-3 py-2">
+      <BellRing className="h-4 w-4 shrink-0 text-primary" />
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        {permission === "denied"
+          ? "Los avisos del navegador están bloqueados: no te enterarás de casos nuevos si estás en otra pestaña."
+          : "Activa los avisos del navegador para enterarte de casos nuevos y urgencias aunque estés en otra pestaña."}
+      </p>
+      {permission === "default" ? (
+        <Button size="sm" variant="outline" className="h-8" onClick={() => void request()}>
+          Activar avisos
+        </Button>
+      ) : (
+        <Button size="sm" variant="outline" className="h-8" asChild>
+          <Link to="/admin/configuracion/alertas">Cómo activarlos</Link>
+        </Button>
+      )}
+      <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground" onClick={hide} aria-label="Ocultar recordatorio">
+        <X className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
 export default function Inicio() {
   const now = new Date();
   const { data: o, isLoading } = useOverview();
@@ -197,7 +297,8 @@ export default function Inicio() {
     retry: false,
   });
 
-  const pending = o ? buildPending(o) : [];
+  const slaSettings = useSlaSettings();
+  const pending = o ? buildPending(o, slaSettings, now.getTime()) : [];
   const whaapyOk = health?.whaapy_api.ok === true;
 
   return (
@@ -206,6 +307,8 @@ export default function Inicio() {
         title={`${greeting(now)} 👋`}
         description={`${format(toZonedTime(now, TZ), "EEEE d 'de' MMMM", { locale: es })} · lo de hoy y lo que falta resolver.`}
       />
+
+      <BrowserAlertsReminder />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {isLoading || !o ? (

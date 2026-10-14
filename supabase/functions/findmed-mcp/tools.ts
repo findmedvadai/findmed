@@ -7,7 +7,9 @@
 // The server normalizes it and scopes every read/write to that patient.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { searchCareOptions } from "../_shared/care-search.ts";
+import { type CareOption, citiesWithSpecialty, searchCareOptions } from "../_shared/care-search.ts";
+import { findNetworkPlaces, type NetworkKind, NETWORK_DEFAULT_LIMIT, NETWORK_MAX_LIMIT } from "../_shared/network-search.ts";
+import { INSURER_MAX, POLICY_MAX, savePatientInsuranceById, savePatientInsuranceByPhone } from "../_shared/patient-insurance.ts";
 import { computeDaySlots } from "../_shared/day-slots.ts";
 import { createReservationSession } from "../_shared/booking-session.ts";
 import { findUpcomingAppointmentsByPhone } from "../_shared/appointment-actions.ts";
@@ -69,15 +71,30 @@ const localParts = (isoUtc: string) => {
 
 // ---------------------------------------------------------------------------
 
+const optionOut = (o: CareOption) => ({
+  doctor_id: o.doctor_id,
+  doctor_name: o.doctor_name,
+  specialties: o.specialties,
+  office_id: o.office_id,
+  office_name: o.office_name,
+  office_address: o.office_address,
+  city: o.city,
+  zone: o.zone,
+});
+
 const searchCareOptionsTool: ToolDef = {
   name: "search_care_options",
   safety: "read_only",
   description: [
     "Busca médicos y consultorios de FindMed por especialidad y ubicación.",
-    "When to use: cuando ya sabes la especialidad (dicha por el paciente o validada) y la ciudad (y opcionalmente zona/colonia).",
-    "Never use for: diagnosticar, ni para decidir que FindMed no puede ayudar.",
+    "When to use: SOLO cuando ya sabes QUÉ necesita el paciente (la especialidad que pidió, o la que devolvió suggest_specialty) Y su ciudad (zona/colonia opcional). Si solo dijo 'quiero una cita', primero pregunta qué necesita.",
+    "Never use for: diagnosticar, adivinar la especialidad, ni para decidir que FindMed no puede ayudar.",
     "Result: data.result es 'none', 'one' o 'many'. Con 'many' presenta las opciones (médico + consultorio + zona) y pide que el paciente elija; NUNCA elijas tú la primera. Con 'one' confirma la sede con el paciente. Guarda doctor_id y office_id de la opción elegida para create_booking_link.",
-    "Si result='none' revisa data.reason: ambiguous_city/unknown_city/unknown_zone/unknown_specialty → usa nextQuestion para aclarar (pide permiso antes de ampliar la búsqueda a toda la ciudad). no_active_offices → esta búsqueda no encontró agenda automática: NO digas que FindMed no atiende; ofrece canalizar con un asesor.",
+    "Si result='none' NUNCA digas que FindMed no tiene médicos en su zona o ciudad. Revisa data.reason y data.alternatives:",
+    "- ambiguous_city / unknown_city / unknown_specialty → haz la nextQuestion (unknown_city trae data.available_cities: ciudades donde sí hay opciones). Si la especialidad no se reconoce y el paciente no sabe cuál necesita, usa suggest_specialty con sus síntomas.",
+    "- unknown_zone / no_active_offices con data.alternatives.scope='other_zones' → en su ciudad sí hay opciones en otras zonas: preséntalas (data.alternatives.options, máximo 3, médico · consultorio · zona) o haz la nextQuestion. Las opciones traen doctor_id y office_id válidos.",
+    "- data.alternatives.scope='other_cities' → hay opciones en otras ciudades (data.alternatives.cities): ofrécelas con la nextQuestion; si no le sirven, abre caso appointment_help + request_handoff.",
+    "- data.escalate=true (sin alternativas) → abre caso appointment_help + request_handoff y di que una persona de FindMed le ayudará a encontrar opción.",
     "Side effects: ninguno.",
   ].join("\n"),
   inputSchema: {
@@ -91,41 +108,75 @@ const searchCareOptionsTool: ToolDef = {
     },
   },
   async handler(supabase, args) {
-    const r = await searchCareOptions(supabase, {
-      especialidad: String(args.specialty),
-      ciudad: String(args.city),
-      zona: args.zone ? String(args.zone) : null,
-    });
+    const especialidad = String(args.specialty);
+    const ciudad = String(args.city);
+    const zoneAsked = typeof args.zone === "string" && args.zone.trim() !== "";
+    const r = await searchCareOptions(supabase, { especialidad, ciudad, zona: zoneAsked ? String(args.zone) : null });
     if (!r.ok) return fail("temporarily_unavailable", "No pude consultar el catálogo en este momento.");
 
-    const data = {
+    const data: Record<string, unknown> & { city: string | null; city_candidates: string[] } = {
       result: r.result,
       reason: r.reason ?? null,
       city: r.city?.name ?? null,
       city_candidates: r.city_candidates?.map((c) => c.name) ?? [],
       zones: r.zones.map((z) => z.name),
       matched_specialties: r.matched_specialties,
-      options: r.options.map((o) => ({
-        doctor_id: o.doctor_id,
-        doctor_name: o.doctor_name,
-        specialties: o.specialties,
-        office_id: o.office_id,
-        office_name: o.office_name,
-        office_address: o.office_address,
-        city: o.city,
-        zone: o.zone,
-      })),
+      options: r.options.map(optionOut),
+      alternatives: null,
+      escalate: false,
     };
+    if (r.result !== "none") return { ok: true, status: "success", data };
 
-    const questions: Record<string, string> = {
-      ambiguous_city: `¿En cuál de estas ciudades quieres atenderte: ${data.city_candidates.join(", ")}?`,
-      unknown_city: "¿En qué ciudad quieres atenderte?",
-      unknown_zone: `No encontré esa zona en ${data.city ?? "esa ciudad"}. ¿Quieres que busque en toda la ciudad?`,
-      unknown_specialty: "¿Me confirmas qué especialista buscas?",
-    };
-    if (r.result === "none" && r.reason && questions[r.reason]) {
-      return { ok: true, status: "needs_more_info", data, nextQuestion: questions[r.reason] };
+    const ask = (nextQuestion: string): ToolOutcome => ({ ok: true, status: "needs_more_info", data, nextQuestion });
+    const label = (matched: string[]) => matched[0] ?? especialidad;
+
+    if (r.reason === "ambiguous_city") return ask(`¿En cuál de estas ciudades quieres atenderte: ${data.city_candidates.join(", ")}?`);
+    if (r.reason === "unknown_specialty") return ask("¿Me confirmas qué especialista buscas o qué te está pasando?");
+    if (r.reason === "unknown_city") {
+      // Help the patient place themselves instead of looping on "¿en qué ciudad?".
+      const cities = (await citiesWithSpecialty(supabase, especialidad)) ?? [];
+      data.available_cities = cities.map((c) => c.city);
+      return ask(
+        cities.length > 0
+          ? `¿En qué ciudad quieres atenderte? Tengo opciones en: ${cities.map((c) => c.city).join(", ")}.`
+          : "¿En qué ciudad quieres atenderte?",
+      );
     }
+
+    // unknown_zone / no_active_offices: never answer "no hay médicos en tu
+    // zona". First the rest of the same city, then other cities, then a person.
+    let cityHasNone = r.reason === "no_active_offices" && !zoneAsked;
+    if (zoneAsked) {
+      const wide = await searchCareOptions(supabase, { especialidad, ciudad, zona: null });
+      if (!wide.ok) return fail("temporarily_unavailable", "No pude consultar el catálogo en este momento.");
+      if (wide.result !== "none") {
+        const zones = [...new Set(wide.options.map((o) => o.zone).filter((z): z is string => !!z))];
+        data.alternatives = {
+          scope: "other_zones",
+          city: wide.city?.name ?? data.city,
+          zones,
+          options: wide.options.slice(0, 3).map(optionOut),
+        };
+        const where = wide.city?.name ?? data.city ?? "tu ciudad";
+        return ask(
+          zones.length > 0
+            ? `En ${where} tengo opciones de ${label(wide.matched_specialties)} en estas zonas: ${zones.join(", ")}. ¿Alguna te queda cerca?`
+            : `En ${where} tengo opciones de ${label(wide.matched_specialties)}. ¿Te comparto cuáles son?`,
+        );
+      }
+      if (wide.reason === "unknown_specialty") return ask("¿Me confirmas qué especialista buscas o qué te está pasando?");
+      cityHasNone = wide.reason === "no_active_offices";
+    }
+    if (cityHasNone) {
+      const others = await citiesWithSpecialty(supabase, especialidad, r.city ? [r.city.id] : []);
+      if (others && others.length > 0) {
+        data.alternatives = { scope: "other_cities", cities: others.map((c) => ({ city: c.city, options: c.options })) };
+        return ask(
+          `Para ${label(r.matched_specialties)} tengo opciones en: ${others.map((c) => c.city).join(", ")}. ¿Te queda bien alguna de esas ciudades o prefieres que una persona de FindMed te busque una alternativa cerca de ti?`,
+        );
+      }
+    }
+    data.escalate = true;
     return { ok: true, status: "success", data };
   },
 };
@@ -188,6 +239,7 @@ const createBookingLinkTool: ToolDef = {
     "Never use for: varias opciones a la vez, ni sin que el paciente haya elegido.",
     "Identity: phone mapeado a {{contact.phoneNumber}}. patient_name es el nombre del PACIENTE que recibirá la atención (puede ser distinto de quien escribe).",
     "Side effects: registra/actualiza al paciente y crea una sesión de reserva que vence en 72 horas. NO crea una cita: la cita existe solo cuando el paciente reserva en el enlace. Nunca digas 'tu cita quedó agendada' por haber enviado el enlace.",
+    "Seguro (opcional): si el paciente ya te dijo si tiene seguro, su aseguradora o su póliza, pásalos en has_insurance, insurer y policy_number; se guardan en su expediente (data.insurance_saved). Nunca los inventes ni bloquees el enlace por ellos.",
     "Success criteria: ok=true y data.reserve_url presente.",
   ].join("\n"),
   inputSchema: {
@@ -200,6 +252,9 @@ const createBookingLinkTool: ToolDef = {
       doctor_id: { type: "string", pattern: UUID_PATTERN },
       office_id: { type: "string", pattern: UUID_PATTERN },
       symptoms: { type: "string", maxLength: 500, description: "Resumen breve del motivo de consulta, opcional." },
+      has_insurance: { type: "boolean", description: "Opcional: true si tiene seguro de gastos médicos mayores, false si no tiene." },
+      insurer: { type: "string", minLength: 2, maxLength: INSURER_MAX, description: "Opcional: aseguradora tal como la dijo el paciente (p. ej. 'GNP', 'AXA')." },
+      policy_number: { type: "string", minLength: 3, maxLength: POLICY_MAX, description: "Opcional: número de póliza tal como lo dio el paciente." },
     },
   },
   async handler(supabase, args) {
@@ -214,6 +269,20 @@ const createBookingLinkTool: ToolDef = {
       if (r.code === "db_error") return fail("temporarily_unavailable", r.message_es);
       return fail(r.code, r.message_es);
     }
+
+    // Insurance rides along when the agent already has it. A failure here
+    // never costs the patient the booking link.
+    let insuranceSaved: boolean | null = null;
+    const gaveInsurance = typeof args.has_insurance === "boolean" || args.insurer != null || args.policy_number != null;
+    if (gaveInsurance) {
+      const saved = await savePatientInsuranceById(supabase, r.patient_id, {
+        hasInsurance: typeof args.has_insurance === "boolean" ? args.has_insurance : true,
+        insurer: args.insurer as string | undefined,
+        policyNumber: args.policy_number as string | undefined,
+      }, "merge");
+      insuranceSaved = saved.ok && saved.saved;
+    }
+
     return {
       ok: true,
       status: "success",
@@ -226,9 +295,148 @@ const createBookingLinkTool: ToolDef = {
         doctor_name: r.doctor_name,
         office_name: r.office_name,
         office_address: r.office_address,
+        insurance_saved: insuranceSaved,
       },
     };
   },
+};
+
+// --- Insurance (FindMed decision a) -------------------------------------------
+
+const savePatientInsuranceTool: ToolDef = {
+  name: "save_patient_insurance",
+  safety: "mutation_limited",
+  description: [
+    "Guarda en el expediente del paciente si tiene seguro de gastos médicos mayores, su aseguradora y su número de póliza.",
+    "When to use: en cuanto el paciente responda si tiene seguro y, si tiene, la aseguradora y la póliza que te dé. Si no tiene la póliza a la mano, guárdala sin policy_number y sigue con el flujo: nunca bloquees la atención por la póliza.",
+    "Never use for: inventar o completar datos que el paciente no dio, ni para responder dudas de cobertura o costos.",
+    "Identity: phone mapeado a {{contact.phoneNumber}}. patient_name (opcional) es el nombre completo de quien se atiende: si el número todavía no está registrado, solo se guarda cuando lo incluyes.",
+    "Result: data.saved=true → quedó guardado (no se lo repitas al paciente). data.saved=false con data.reason='patient_not_registered' → el número aún no está registrado: NO le preguntes nada extra; vuelve a llamarla con patient_name cuando lo tengas o pasa has_insurance/insurer/policy_number en create_booking_link.",
+    "Side effects: actualiza el seguro del paciente (o lo registra si incluyes patient_name). has_insurance=false borra aseguradora y póliza anteriores. Repetirla no duplica nada.",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["phone", "has_insurance"],
+    properties: {
+      phone: PHONE_SCHEMA,
+      has_insurance: { type: "boolean", description: "true si tiene seguro de gastos médicos mayores; false si no tiene." },
+      insurer: { type: "string", minLength: 2, maxLength: INSURER_MAX, description: "Aseguradora tal como la dijo el paciente (p. ej. 'GNP', 'AXA', 'MetLife'). Opcional." },
+      policy_number: { type: "string", minLength: 3, maxLength: POLICY_MAX, description: "Número de póliza tal como lo dio el paciente. Opcional." },
+      patient_name: { type: "string", minLength: 2, maxLength: 120, description: "Nombre completo de quien recibe la atención, si ya lo tienes. Opcional." },
+    },
+  },
+  async handler(supabase, args) {
+    const r = await savePatientInsuranceByPhone(supabase, {
+      phone: String(args.phone),
+      hasInsurance: args.has_insurance === true,
+      insurer: args.insurer as string | undefined,
+      policyNumber: args.policy_number as string | undefined,
+      patientName: args.patient_name ? String(args.patient_name) : null,
+    });
+    if (!r.ok) return fail(r.code, r.message_es);
+    if (!r.saved) {
+      return {
+        ok: true,
+        status: "success",
+        data: {
+          saved: false,
+          reason: r.reason,
+          next_step: "Pasa has_insurance, insurer y policy_number en create_booking_link, o vuelve a llamar con patient_name.",
+        },
+      };
+    }
+    return {
+      ok: true,
+      status: "success",
+      data: {
+        saved: true,
+        created_patient: r.created,
+        has_insurance: r.state.has_insurance,
+        insurer: r.state.insurer,
+        policy_number_saved: !!r.state.policy_number,
+      },
+    };
+  },
+};
+
+// --- Network hospitals and laboratories (FindMed decision c) -----------------
+
+const NETWORK_LABEL: Record<NetworkKind, { plural: string; key: string }> = {
+  hospitals: { plural: "hospitales", key: "hospitals" },
+  laboratories: { plural: "laboratorios", key: "laboratories" },
+};
+
+async function networkHandler(supabase: SupabaseClient, kind: NetworkKind, args: Record<string, unknown>): Promise<ToolOutcome> {
+  const r = await findNetworkPlaces(supabase, kind, {
+    city: String(args.city),
+    zone: typeof args.zone === "string" ? args.zone : null,
+    limit: typeof args.limit === "number" ? args.limit : NETWORK_DEFAULT_LIMIT,
+  });
+  if (!r.ok) return fail("temporarily_unavailable", "No pude consultar la red de FindMed en este momento.");
+  const { key, plural } = NETWORK_LABEL[kind];
+  const data: Record<string, unknown> = {
+    result: r.result,
+    reason: r.reason,
+    city: r.city,
+    zone: r.zone,
+    zone_matched: r.zone_matched,
+    city_candidates: r.city_candidates,
+    [key]: r.places,
+    other_cities: r.other_cities,
+    escalate: r.reason === "none_in_city",
+  };
+  if (r.reason === "ambiguous_city") {
+    return { ok: true, status: "needs_more_info", data, nextQuestion: `¿En cuál de estas ciudades estás: ${r.city_candidates.join(", ")}?` };
+  }
+  if (r.reason === "unknown_city") {
+    return { ok: true, status: "needs_more_info", data, nextQuestion: "¿En qué ciudad o municipio te encuentras?" };
+  }
+  if (r.reason === "none_in_city") {
+    data.message_es = `No tengo ${plural} de la red registrados en ${r.city ?? "esa ciudad"}: una persona de FindMed le ayuda a ubicar la mejor opción.`;
+  }
+  return { ok: true, status: "success", data };
+}
+
+const networkSchema = (what: string): Schema => ({
+  type: "object",
+  additionalProperties: false,
+  required: ["city"],
+  properties: {
+    city: { type: "string", minLength: 2, maxLength: 80, description: `Ciudad o municipio donde está el paciente, tal como lo dijo (acepta CDMX, DF, Edomex o una zona como Naucalpan). Se buscan ${what} de esa ciudad.` },
+    zone: { type: "string", maxLength: 80, description: "Zona o colonia, opcional: solo ordena los resultados (primero los de su zona)." },
+    limit: { type: "integer", minimum: 1, maximum: NETWORK_MAX_LIMIT, description: `Cuántos devolver (1–${NETWORK_MAX_LIMIT}, default ${NETWORK_DEFAULT_LIMIT}).` },
+  },
+});
+
+const findNetworkHospitalsTool: ToolDef = {
+  name: "find_network_hospitals",
+  safety: "read_only",
+  description: [
+    "Hospitales de la red FindMed en la ciudad (y zona) del paciente: nombre, dirección, teléfono y zona. Solo datos del catálogo de FindMed.",
+    "When to use: cuando suggest_specialty devuelve routing='urgencias_hoy' (que lo valoren hoy en urgencias) o cuando el paciente pide un hospital de la red. Después de compartirlos abre open_case (request_type='urgency') + request_handoff.",
+    "Never use for: urgencias_inmediato ANTES del 911 (primero la ruta de seguridad: 911 / urgencias más cercana), recomendar hospital por diagnóstico, ni inventar hospitales, direcciones o teléfonos.",
+    "Result: data.result none|one|many y data.hospitals[] con name, address, phone, zone, city, in_requested_zone. Comparte de 1 a 3 con nombre, dirección y teléfono; si phone viene null, NO des teléfono.",
+    "Si result='none': ambiguous_city → haz la nextQuestion; unknown_city → pregunta la ciudad una vez (nextQuestion) y si sigue sin aparecer, abre el caso; none_in_city → no hay hospital de la red registrado ahí: NO digas que no hay atención, di que una persona de FindMed le ayuda a ubicar la mejor opción (data.other_cities son ciudades con red, solo si puede trasladarse) y abre el caso + request_handoff.",
+    "Side effects: ninguno.",
+  ].join("\n"),
+  inputSchema: networkSchema("hospitales"),
+  handler: (supabase, args) => networkHandler(supabase, "hospitals", args),
+};
+
+const findNetworkLaboratoriesTool: ToolDef = {
+  name: "find_network_laboratories",
+  safety: "read_only",
+  description: [
+    "Laboratorios de la red FindMed en la ciudad (y zona) del paciente: nombre, dirección, teléfono y zona. Solo datos del catálogo de FindMed.",
+    "When to use: cuando el paciente necesita hacerse estudios de laboratorio y pregunta dónde; compártelos y abre open_case (request_type='studies') + request_handoff para que una persona le ayude con la orden y la cobertura.",
+    "Never use for: indicar qué estudios hacerse, interpretar resultados ni inventar laboratorios, direcciones o teléfonos.",
+    "Result: data.result none|one|many y data.laboratories[] con name, address, phone, zone, city, in_requested_zone. Si phone viene null, NO des teléfono.",
+    "Si result='none': ambiguous_city / unknown_city → haz la nextQuestion; none_in_city → no hay laboratorio de la red registrado ahí: di que una persona de FindMed le ayuda y abre el caso + request_handoff.",
+    "Side effects: ninguno.",
+  ].join("\n"),
+  inputSchema: networkSchema("laboratorios"),
+  handler: (supabase, args) => networkHandler(supabase, "laboratories", args),
 };
 
 const listMyAppointmentsTool: ToolDef = {
@@ -469,7 +677,7 @@ const openCaseTool: ToolDef = {
   safety: "mutation_limited",
   description: [
     "Registra una solicitud que necesita seguimiento de una persona de FindMed.",
-    "When to use: hospital, estudios/laboratorio, urgencia, seguimiento, búsqueda sin opciones automáticas (result='none' por no_active_offices), o cuando el paciente pide hablar con una persona.",
+    "When to use: hospital, estudios/laboratorio, urgencia, seguimiento, búsqueda sin opciones automáticas (search_care_options con data.escalate=true, o el paciente no acepta las alternativas), o cuando el paciente pide hablar con una persona.",
     "Never use for: solicitudes que ya resolviste con search_care_options + create_booking_link.",
     "Identity: phone mapeado a {{contact.phoneNumber}}.",
     "request_type: appointment_help | hospital | studies | urgency | follow_up | other. priority: normal | high | urgent (urgency → urgent).",
@@ -583,10 +791,13 @@ export function buildTools(opts: { chatActions: boolean; whaapy?: WhaapyClient }
     searchCareOptionsTool,
     listAvailableSlotsTool,
     createBookingLinkTool,
+    savePatientInsuranceTool,
     listMyAppointmentsTool,
     prepareAppointmentActionTool,
     getOperationStatusTool,
     ...(opts.chatActions ? [commitAppointmentActionTool] : []),
+    findNetworkHospitalsTool,
+    findNetworkLaboratoriesTool,
     openCaseTool,
     requestHandoffTool(whaapy),
     getMyCaseStatusTool,

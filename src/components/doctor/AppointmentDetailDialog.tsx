@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, isPast } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { es } from "date-fns/locale";
@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppointmentStatusBadge, SoftBadge } from "@/components/app/StatusBadge";
+import { InsuranceDocumentsSection } from "@/components/app/PatientInsurance";
 import { cn } from "@/lib/utils";
 import type { Database } from "@/integrations/supabase/types";
 import CreateEventDialog from "./CreateEventDialog";
@@ -97,6 +98,28 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
     blocks: { start_time: string; end_time: string }[];
     office_name: string;
   } | null>(null);
+
+  // Seguro del paciente y estado de sus documentos (solo lectura para el doctor; RLS: sus citas y sus pacientes).
+  const isFindmedAppointment = !!item && item.type === "appointment";
+  const { data: coverage } = useQuery({
+    queryKey: ["doctor-appointment-coverage", item?.id],
+    enabled: open && isFindmedAppointment,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("appointments")
+        .select("documents_requested_at, documents_received_at, patients(id, has_insurance, insurer, policy_number)")
+        .eq("id", item!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const coveragePatient = coverage?.patients as {
+    id: string;
+    has_insurance: boolean | null;
+    insurer: string | null;
+    policy_number: string | null;
+  } | null | undefined;
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["doctor-appointments", doctorId] });
@@ -372,6 +395,18 @@ export default function AppointmentDetailDialog({ item, open, onClose, doctorId 
                   )}
                 </section>
               </div>
+              {coverage && (
+                <InsuranceDocumentsSection
+                  patientId={coveragePatient?.id}
+                  insurance={{
+                    hasInsurance: coveragePatient?.has_insurance,
+                    insurer: coveragePatient?.insurer,
+                    policyNumber: coveragePatient?.policy_number,
+                  }}
+                  requestedAt={coverage.documents_requested_at}
+                  receivedAt={coverage.documents_received_at}
+                />
+              )}
             </div>
           )}
 

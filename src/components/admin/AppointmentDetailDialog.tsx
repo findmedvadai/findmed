@@ -35,7 +35,9 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AppointmentStatusBadge, SoftBadge } from "@/components/app/StatusBadge";
+import { InsuranceDocumentsSection } from "@/components/app/PatientInsurance";
 import { formatMx } from "@/lib/timezone";
+import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import RescheduleAppointmentDialog from "./RescheduleAppointmentDialog";
 
 const CANCEL_REASON_LABELS: Record<string, string> = {
@@ -79,7 +81,8 @@ export default function AppointmentDetailDialog({
           `id, start_at, end_at, status, symptoms,
            doctor_notes, doctor_notes_updated_at,
            cancel_reason, booking_source, google_event_id, outlook_event_id,
-           patients(id, full_name, phone),
+           documents_requested_at, documents_received_at,
+           patients(id, full_name, phone, has_insurance, insurer, policy_number),
            doctors(id, full_name, doctor_specialties(specialties(name)))`
         )
         .eq("id", appointmentId)
@@ -90,7 +93,14 @@ export default function AppointmentDetailDialog({
     enabled: !!appointmentId && open,
   });
 
-  const patient = data?.patients as { id: string; full_name: string | null; phone: string | null } | null;
+  const patient = data?.patients as {
+    id: string;
+    full_name: string | null;
+    phone: string | null;
+    has_insurance: boolean | null;
+    insurer: string | null;
+    policy_number: string | null;
+  } | null;
   const doctor = data?.doctors as { id: string; full_name: string | null; doctor_specialties: { specialties: { name: string } | null }[] } | null;
   const specialties = (doctor?.doctor_specialties ?? [])
     .map((ds) => ds.specialties?.name)
@@ -118,10 +128,8 @@ export default function AppointmentDetailDialog({
     },
     onSuccess: () => {
       toast.success("Cita cancelada");
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-appointment-detail", appointmentId] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-google-events"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-calendar-outlook-events"] });
+      // Calendario, lista de la Agenda, eventos externos y este detalle.
+      invalidateAdminAppointmentViews(queryClient);
       onAfterAction?.();
       onOpenChange(false);
     },
@@ -177,6 +185,20 @@ export default function AppointmentDetailDialog({
                   {specialties.length > 0 ? specialties.join(", ") : "—"}
                 </DetailField>
               </dl>
+
+              <InsuranceDocumentsSection
+                patientId={patient?.id}
+                insurance={{
+                  hasInsurance: patient?.has_insurance,
+                  insurer: patient?.insurer,
+                  policyNumber: patient?.policy_number,
+                }}
+                requestedAt={data.documents_requested_at}
+                receivedAt={data.documents_received_at}
+                editable
+                whatsappLink
+                onSaved={() => queryClient.invalidateQueries({ queryKey: ["admin-appointment-detail", appointmentId] })}
+              />
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <section className="space-y-1.5">

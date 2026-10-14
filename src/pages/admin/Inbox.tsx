@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, isThisYear, isToday, isYesterday, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -19,6 +20,9 @@ import {
   Stethoscope,
   ClipboardList,
   SearchX,
+  LifeBuoy,
+  Hand,
+  AlarmClock,
 } from "lucide-react";
 import {
   Select,
@@ -49,6 +53,10 @@ const TYPE_CONFIG: Record<NotificationType, { label: string; icon: typeof Bell; 
   appointment_auto_cancelled: { label: "Auto-cancelada", icon: CalendarX, tone: "neutral" },
   appointment_completed: { label: "Completada", icon: CheckCircle2, tone: "info" },
   postconsultation_submitted: { label: "Post-consulta", icon: ClipboardList, tone: "warning" },
+  documents_received: { label: "Documentos recibidos", icon: ClipboardList, tone: "success" },
+  case_opened: { label: "Caso nuevo", icon: LifeBuoy, tone: "warning" },
+  case_handoff: { label: "Pide atención del equipo", icon: Hand, tone: "danger" },
+  case_overdue: { label: "Caso sin tomar", icon: AlarmClock, tone: "danger" },
 };
 
 const TONE_ICON: Record<Tone, string> = {
@@ -164,6 +172,7 @@ function NotificationItem({
 /** embedded: se muestra dentro de otro módulo, sin título propio. */
 export default function AdminInbox({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [doctorFilter, setDoctorFilter] = useState("all");
   const [specialtyFilter, setSpecialtyFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -222,15 +231,17 @@ export default function AdminInbox({ embedded = false }: { embedded?: boolean } 
       // Client-side specialty filter
       if (specialtyFilter !== "all") {
         results = results.filter((n) => {
-          const doctorSpecs = (n as any).doctors?.doctor_specialties as
-            | { specialty_id: string }[]
-            | null;
+          const doctorSpecs = (n as { doctors?: { doctor_specialties?: { specialty_id: string }[] | null } | null })
+            .doctors?.doctor_specialties;
           return doctorSpecs?.some((ds) => ds.specialty_id === specialtyFilter);
         });
       }
 
       return results;
     },
+    // Realtime y "marcar como leída" invalidan esta lista, y cambiar de filtro
+    // cambia la llave: la lista anterior sigue visible mientras se recarga.
+    placeholderData: keepPreviousData,
   });
 
   // Realtime
@@ -317,6 +328,12 @@ export default function AdminInbox({ embedded = false }: { embedded?: boolean } 
   };
 
   const openNotification = (notif: NotificationRow) => {
+    // Las alertas de casos abren el caso; el resto, la cita o su formulario.
+    if (notif.case_id) {
+      if (!notif.is_read) markReadMut.mutate(notif.id);
+      navigate(`/admin/casos?caso=${notif.case_id}`);
+      return;
+    }
     if (!notif.appointment_id) return;
     if (notif.type === "postconsultation_submitted") {
       setPostConsultationAppointmentId(notif.appointment_id);
@@ -430,7 +447,7 @@ export default function AdminInbox({ embedded = false }: { embedded?: boolean } 
                     key={notif.id}
                     notif={notif}
                     doctorName={doctorNameOf(notif)}
-                    onOpen={notif.appointment_id ? () => openNotification(notif) : undefined}
+                    onOpen={notif.appointment_id || notif.case_id ? () => openNotification(notif) : undefined}
                     onMarkRead={() => markReadMut.mutate(notif.id)}
                     marking={markReadMut.isPending}
                   />

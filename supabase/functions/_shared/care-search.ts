@@ -27,7 +27,8 @@ export function normalizeText(s: string): string {
 
 // Alias (normalized) -> canonical city name (normalized). Only well-known,
 // unambiguous abbreviations; extend here when operations reports new ones.
-const CITY_ALIASES: Record<string, string> = {
+// Also used by the network search (hospitals/laboratories, network-search.ts).
+export const CITY_ALIASES: Record<string, string> = {
   "cdmx": "ciudad de mexico",
   "cd mx": "ciudad de mexico",
   "cd de mexico": "ciudad de mexico",
@@ -38,6 +39,10 @@ const CITY_ALIASES: Record<string, string> = {
   "distrito federal": "ciudad de mexico",
   "mexico df": "ciudad de mexico",
   "mexico city": "ciudad de mexico",
+  "edomex": "estado de mexico",
+  "edo mex": "estado de mexico",
+  "edo de mexico": "estado de mexico",
+  "edo mexico": "estado de mexico",
   "qro": "queretaro",
   "santiago de queretaro": "queretaro",
   "mty": "monterrey",
@@ -236,4 +241,47 @@ export async function searchCareOptions(
     matched_specialties: matchedSpecialties,
     options,
   };
+}
+
+/**
+ * Cities where a specialty has bookable offices (active office of an active
+ * doctor), with how many, most first. Used to offer alternatives instead of
+ * "no hay médicos" when a search comes back empty. null = query failed.
+ */
+export async function citiesWithSpecialty(
+  supabase: SupabaseClient,
+  especialidad: string,
+  excludeCityIds: string[] = [],
+): Promise<{ city_id: string; city: string; options: number }[] | null> {
+  const stem = specialtyStem(especialidad);
+  const { data: specRows, error: specErr } = await supabase
+    .from("doctor_specialties")
+    .select("doctor_id, specialties!inner(name)")
+    .ilike("specialties.name", `%${stem}%`);
+  if (specErr) return null;
+  const doctorIds = [...new Set(((specRows ?? []) as { doctor_id: string }[]).map((m) => m.doctor_id))];
+  if (doctorIds.length === 0) return [];
+
+  const { data: officeRows, error: officeErr } = await supabase
+    .from("doctor_offices")
+    .select("id, city_id, doctors!inner(is_active, is_deleted)")
+    .eq("is_active", true)
+    .eq("is_deleted", false)
+    .in("doctor_id", doctorIds)
+    .eq("doctors.is_active", true)
+    .eq("doctors.is_deleted", false);
+  if (officeErr) return null;
+  const counts = new Map<string, number>();
+  for (const o of (officeRows ?? []) as { city_id: string | null }[]) {
+    if (!o.city_id || excludeCityIds.includes(o.city_id)) continue;
+    counts.set(o.city_id, (counts.get(o.city_id) ?? 0) + 1);
+  }
+  if (counts.size === 0) return [];
+  const { data: cityRows, error: cityErr } = await supabase.from("cities").select("id, name").in("id", [...counts.keys()]);
+  if (cityErr) return null;
+  const names = Object.fromEntries(((cityRows ?? []) as Place[]).map((c) => [c.id, c.name]));
+  return [...counts.entries()]
+    .filter(([id]) => names[id])
+    .map(([id, n]) => ({ city_id: id, city: names[id], options: n }))
+    .sort((a, b) => b.options - a.options || a.city.localeCompare(b.city));
 }

@@ -47,6 +47,7 @@ const TYPE_CONFIG: Partial<Record<NotificationType, { label: string; icon: typeo
   appointment_auto_cancelled: { label: "Auto-cancelada", icon: CalendarX, tone: "neutral" },
   appointment_completed: { label: "Completada", icon: CheckCircle2, tone: "info" },
   postconsultation_submitted: { label: "Post-consulta", icon: ClipboardList, tone: "warning" },
+  documents_received: { label: "Documentos recibidos", icon: ClipboardList, tone: "success" },
 };
 
 const FILTER_OPTIONS: { value: string; label: string }[] = [

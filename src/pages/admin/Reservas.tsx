@@ -1,5 +1,5 @@
 import { useState, useMemo, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { CalendarX2, ChevronLeft, ChevronRight, SlidersHorizontal, X } from "lucide-react";
@@ -35,6 +35,7 @@ import { PageHeader } from "@/components/app/PageHeader";
 import { FilterBar, SearchInput } from "@/components/app/FilterBar";
 import { EmptyState } from "@/components/app/EmptyState";
 import { AppointmentStatusBadge, SoftBadge } from "@/components/app/StatusBadge";
+import { DocumentsBadge } from "@/components/app/PatientInsurance";
 import { APPOINTMENT_STATUS } from "@/lib/appointment-status";
 import { formatMx, getMexicoWeekBounds, isSameMexicoDay } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
@@ -67,16 +68,24 @@ interface AppointmentRow {
   symptoms: string | null;
   doctor_notes: string | null;
   cancel_reason: string | null;
+  documents_requested_at: string | null;
+  documents_received_at: string | null;
   patients: { full_name: string; phone: string } | null;
   doctors: {
     id: string;
     full_name: string;
-    city_id: string | null;
-    zone_id: string | null;
     doctor_specialties: {
       specialty_id: string;
       specialties: { id: string; name: string } | null;
     }[];
+  } | null;
+  // Ubicación de la cita = su consultorio (doctors.city_id/zone_id están
+  // deprecated desde multi-consultorio y no reflejan dónde es la cita).
+  doctor_offices: {
+    id: string;
+    name: string;
+    city_id: string | null;
+    zone_id: string | null;
   } | null;
 }
 
@@ -121,14 +130,19 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
         .from("appointments")
         .select(`
           id, start_at, end_at, status, symptoms, doctor_notes, cancel_reason,
+          documents_requested_at, documents_received_at,
           patients(full_name, phone),
-          doctors(id, full_name, city_id, zone_id, doctor_specialties(specialty_id, specialties(id, name)))
+          doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name))),
+          doctor_offices(id, name, city_id, zone_id)
         `)
         .in("status", ["scheduled", "confirmed", "completed", "cancelled"])
         .order("start_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as AppointmentRow[];
     },
+    // Los diálogos de la Agenda invalidan esta llave (lib/admin-appointment-queries):
+    // la lista se queda visible mientras se recarga.
+    placeholderData: keepPreviousData,
   });
 
   const { data: cities } = useQuery({
@@ -184,8 +198,8 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
       items = items.filter((a) =>
         a.doctors?.doctor_specialties?.some((ds) => ds.specialty_id === filterSpecialty)
       );
-    if (filterCity !== "all") items = items.filter((a) => a.doctors?.city_id === filterCity);
-    if (filterZone !== "all") items = items.filter((a) => a.doctors?.zone_id === filterZone);
+    if (filterCity !== "all") items = items.filter((a) => a.doctor_offices?.city_id === filterCity);
+    if (filterZone !== "all") items = items.filter((a) => a.doctor_offices?.zone_id === filterZone);
     if (filterDate !== "all") {
       const now = new Date();
       const week = getMexicoWeekBounds(now);
@@ -228,9 +242,10 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
   }
 
   function getLocation(a: AppointmentRow) {
-    const zone = a.doctors?.zone_id ? zoneMap.get(a.doctors.zone_id) : null;
-    const city = a.doctors?.city_id ? cityMap.get(a.doctors.city_id) : null;
-    return { zone: zone ?? null, city: city ?? null };
+    const office = a.doctor_offices;
+    const zone = office?.zone_id ? zoneMap.get(office.zone_id) : null;
+    const city = office?.city_id ? cityMap.get(office.city_id) : null;
+    return { office: office?.name ?? null, zone: zone ?? null, city: city ?? null };
   }
 
   const rangeStart = filtered.length === 0 ? 0 : page * PAGE_SIZE + 1;
@@ -288,7 +303,7 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
           <PopoverContent align="start" className="w-72 space-y-3 p-4">
             <div>
               <p className="text-sm font-semibold text-foreground">Más filtros</p>
-              <p className="text-xs text-muted-foreground">Por especialidad y ubicación del doctor.</p>
+              <p className="text-xs text-muted-foreground">Por especialidad y por la ubicación del consultorio de la cita.</p>
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm">Especialidad</Label>
@@ -434,6 +449,11 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
                               {CANCEL_REASON_LABELS[a.cancel_reason] ?? a.cancel_reason}
                             </p>
                           )}
+                          {(a.status === "scheduled" || a.status === "confirmed") && (
+                            <div className="mt-1">
+                              <DocumentsBadge short requestedAt={a.documents_requested_at} receivedAt={a.documents_received_at} />
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="py-2.5 pl-0 text-right">
                           <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground/50 transition-colors group-hover:text-foreground" />
@@ -504,6 +524,7 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
                 <DetailField label="Teléfono">{selectedAppt.patients?.phone ?? "—"}</DetailField>
                 <DetailField label="Doctor">{selectedAppt.doctors?.full_name ?? "—"}</DetailField>
                 <DetailField label="Especialidad">{getSpecialty(selectedAppt)}</DetailField>
+                <DetailField label="Consultorio">{getLocation(selectedAppt).office ?? "—"}</DetailField>
                 <DetailField label="Zona">{getLocation(selectedAppt).zone ?? "—"}</DetailField>
                 <DetailField label="Ciudad">{getLocation(selectedAppt).city ?? "—"}</DetailField>
               </dl>

@@ -9,6 +9,10 @@
 //    ownership is still checked against the phone that pressed the button.
 //    Plain "confirmar_cita"/"cancelar_cita" (buttons sent by n8n) are left
 //    to n8n, so the two systems never act on the same button.
+//  * message.received with an image or a document (PDF) → if the patient has
+//    an upcoming appointment whose documents FindMed already asked for
+//    (pedir_documentos), mark it "documentos recibidos" and notify admins
+//    (patient-documents.ts). Nothing is downloaded or stored.
 //  * Everything else is just marked processed (kept for the messaging center).
 //
 // On a successful action the patient's confirmation arrives through the normal
@@ -18,6 +22,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { applyReceipt, BUTTON_PAYLOAD_PREFIX } from "./messaging.ts";
 import { commitAction, prepareAction } from "./operations.ts";
+import { markDocumentsReceived, parseInboundMedia } from "./patient-documents.ts";
 import type { WhaapyClient } from "./whaapy-client.ts";
 
 const BUTTON_RE = new RegExp(
@@ -111,6 +116,11 @@ export async function processWhaapyEvent(
   if (ev.event_type === "message.received") {
     const press = parseButtonPress(data);
     if (press) return handleButtonPress(supabase, whaapy, press);
+    const media = parseInboundMedia(data);
+    if (media) {
+      const { outcome } = await markDocumentsReceived(supabase, media.phone);
+      return { outcome, error: outcome === "media_lookup_failed" ? outcome : undefined };
+    }
   }
   return { outcome: "stored" };
 }

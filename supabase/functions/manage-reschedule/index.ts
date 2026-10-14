@@ -4,6 +4,7 @@ import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
+import { carryOverDocuments } from "../_shared/patient-documents.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -190,6 +191,10 @@ Deno.serve(async (req) => {
     console.error("[manage-reschedule] insert failed:", apptError);
     return json(500, { error: "Error al crear la nueva cita" });
   }
+
+  // The new appointment keeps the documents state of the one it replaces
+  // (pedir_documentos is not re-sent on reschedules). Best-effort.
+  await carryOverDocuments(supabase, oldAppt.id, newAppt.id);
 
   // 2. Cancel old appointment + delete calendar events if not already cancelled.
   // Shared helper handles refresh token rotation (Microsoft) and auto-disconnects
@@ -382,6 +387,9 @@ Deno.serve(async (req) => {
             start_at: startAt,
             timestamp: new Date().toISOString(),
             manage_url: manageUrl,
+            // Marks this as a reschedule, not a first booking: steps flagged
+            // skip_on_reschedule (pedir_documentos) are not sent again.
+            rescheduled_from: oldAppt.id,
           },
         }),
       }),

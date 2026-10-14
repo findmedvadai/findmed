@@ -24,16 +24,25 @@ no coincide o el secret no está configurado (falla cerrado).
 | Autenticación | `bearer` → el valor de `FINDMED_MCP_TOKEN` |
 | Motor del agente | `colme-2` (tools, MCPs, batching, handoff) |
 
-Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 10 tools (11 con `MCP_CHAT_ACTIONS_ENABLED=true`).
+Prueba de conexión: WHAAPY hace `initialize` + `tools/list`; deben aparecer 13 tools (14 con `MCP_CHAT_ACTIONS_ENABLED=true`).
+Desde v2.5 (14-oct-2026) hay 3 tools nuevas: `save_patient_insurance`, `find_network_hospitals` y
+`find_network_laboratories`. Tras desplegar `findmed-mcp`, en WHAAPY → Agente → MCPs → FindMed pulsar
+**Sincronizar / Probar conexión** para que aparezcan, **habilitarlas** y configurar el campo `phone` de
+`save_patient_insurance` (ver tabla). Sin esa sincronización el prompt v2.5 llamaría herramientas que el agente no ve.
 
 ## 3. Tools habilitadas y mapeo de campos
 
 | Tool | Seguridad | Campo | Valor en "Configurar tool" |
 |---|---|---|---|
+| `suggest_specialty` | lectura | keywords | vacío |
 | `search_care_options` | lectura | specialty, city, zone | vacío (la IA los toma de la conversación) |
 | `list_available_slots` | lectura | office_id, date, days | vacío |
 | `create_booking_link` | escritura limitada (crea sesión de reserva) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
-| | | patient_name, doctor_id, office_id, symptoms | vacío |
+| | | patient_name, doctor_id, office_id, symptoms, has_insurance, insurer, policy_number | vacío |
+| `save_patient_insurance` (nueva, v2.5) | escritura limitada (seguro del paciente) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
+| | | has_insurance, insurer, policy_number, patient_name | vacío |
+| `find_network_hospitals` (nueva, v2.5) | lectura (catálogo de hospitales de la red) | city, zone, limit | vacío |
+| `find_network_laboratories` (nueva, v2.5) | lectura (catálogo de laboratorios de la red) | city, zone, limit | vacío |
 | `list_my_appointments` | lectura privada | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
 | `prepare_appointment_action` | lectura privada (registra intención) | **phone** | **`{{contact.phoneNumber}}`** (obligatorio) |
 | | | appointment_id, action | vacío |
@@ -69,3 +78,8 @@ agente en el equipo de WHAAPY. No crear en WHAAPY otra automatización que pause
 | "Quiero hablar con una persona" | `open_case` + `request_handoff` → `awaiting_assignment`; el agente dice que una persona de FindMed tomará su solicitud, sin prometer tiempo; la IA deja de responder (R31) |
 | Mensaje del paciente tras el handoff | la IA no contesta (apagada en esa conversación); el caso aparece en `/admin/casos` (R31) |
 | "¿Qué pasó con mi solicitud?" | `get_my_case_status` con frase para el paciente, sin notas internas (R10) |
+| "Quiero una cita" vs. "Busco ortopedista" (v2.5) | la primera recibe "¿Qué especialista buscas o qué te está pasando?"; la segunda reconoce ortopedia y pregunta el seguro. Ninguna busca sin ciudad |
+| "Sí, GNP, póliza 12345" (v2.5) | `save_patient_insurance` con has_insurance/insurer/policy_number; el detalle de la cita muestra la aseguradora y la póliza |
+| Ortopedista en una zona sin consultorio (v2.5) | `search_care_options` devuelve `alternatives` (otras zonas u otras ciudades); el agente las ofrece y nunca dice "no tenemos especialistas en tu zona"; sin alternativas → caso `appointment_help` + handoff |
+| Síntomas con routing `urgencias_hoy` (v2.5) | `find_network_hospitals` con la ciudad → 1–3 hospitales con dirección (teléfono solo si existe) + caso `urgency`/`urgent` + handoff |
+| Foto o PDF después de "pedir_documentos" (v2.5) | el agente agradece y confirma; la cita queda "Documentos recibidos" y llega la notificación al admin |

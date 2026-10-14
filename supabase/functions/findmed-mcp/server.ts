@@ -133,7 +133,7 @@ export async function handleMcpRequest(req: Request, deps: ServerDeps): Promise<
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
         instructions:
-          "Herramientas de FindMed para orientar, buscar médico/consultorio, consultar horarios, generar el enlace de reserva y consultar citas. Mapea siempre el campo phone a {{contact.phoneNumber}}.",
+          "Herramientas de FindMed para orientar, buscar médico/consultorio, consultar horarios, generar el enlace de reserva, guardar el seguro del paciente, consultar hospitales y laboratorios de la red, consultar citas y pasar a una persona. Mapea siempre el campo phone a {{contact.phoneNumber}}.",
       });
     }
     case "ping":

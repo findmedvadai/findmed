@@ -89,6 +89,8 @@ export type Database = {
           doctor_id: string
           doctor_notes: string | null
           doctor_notes_updated_at: string | null
+          documents_received_at: string | null
+          documents_requested_at: string | null
           end_at: string
           google_event_id: string | null
           id: string
@@ -111,6 +113,8 @@ export type Database = {
           doctor_id: string
           doctor_notes?: string | null
           doctor_notes_updated_at?: string | null
+          documents_received_at?: string | null
+          documents_requested_at?: string | null
           end_at: string
           google_event_id?: string | null
           id?: string
@@ -133,6 +137,8 @@ export type Database = {
           doctor_id?: string
           doctor_notes?: string | null
           doctor_notes_updated_at?: string | null
+          documents_received_at?: string | null
+          documents_requested_at?: string | null
           end_at?: string
           google_event_id?: string | null
           id?: string
@@ -224,6 +230,75 @@ export type Database = {
           reason_code?: string | null
         }
         Relationships: []
+      }
+      case_alerts: {
+        Row: {
+          attempts: number
+          case_id: string
+          created_at: string
+          dedupe_key: string
+          id: string
+          kind: string
+          level: number
+          locked_until: string | null
+          next_attempt_at: string
+          notification_id: string | null
+          priority: string
+          processed_at: string | null
+          updated_at: string
+          whatsapp_detail: string | null
+          whatsapp_status: string
+        }
+        Insert: {
+          attempts?: number
+          case_id: string
+          created_at?: string
+          dedupe_key: string
+          id?: string
+          kind: string
+          level?: number
+          locked_until?: string | null
+          next_attempt_at?: string
+          notification_id?: string | null
+          priority: string
+          processed_at?: string | null
+          updated_at?: string
+          whatsapp_detail?: string | null
+          whatsapp_status?: string
+        }
+        Update: {
+          attempts?: number
+          case_id?: string
+          created_at?: string
+          dedupe_key?: string
+          id?: string
+          kind?: string
+          level?: number
+          locked_until?: string | null
+          next_attempt_at?: string
+          notification_id?: string | null
+          priority?: string
+          processed_at?: string | null
+          updated_at?: string
+          whatsapp_detail?: string | null
+          whatsapp_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_alerts_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "patient_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_alerts_notification_id_fkey"
+            columns: ["notification_id"]
+            isOneToOne: false
+            referencedRelation: "notifications"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       case_events: {
         Row: {
@@ -803,6 +878,8 @@ export type Database = {
         Row: {
           appointment_id: string | null
           attempts: number
+          case_alert_id: string | null
+          case_id: string | null
           created_at: string
           error_code: string | null
           error_message: string | null
@@ -812,6 +889,7 @@ export type Database = {
           request: Json | null
           sent_by: string | null
           source: string
+          staff_recipient_id: string | null
           status: string
           step_position: number | null
           template_name: string
@@ -823,6 +901,8 @@ export type Database = {
         Insert: {
           appointment_id?: string | null
           attempts?: number
+          case_alert_id?: string | null
+          case_id?: string | null
           created_at?: string
           error_code?: string | null
           error_message?: string | null
@@ -832,6 +912,7 @@ export type Database = {
           request?: Json | null
           sent_by?: string | null
           source?: string
+          staff_recipient_id?: string | null
           status?: string
           step_position?: number | null
           template_name: string
@@ -843,6 +924,8 @@ export type Database = {
         Update: {
           appointment_id?: string | null
           attempts?: number
+          case_alert_id?: string | null
+          case_id?: string | null
           created_at?: string
           error_code?: string | null
           error_message?: string | null
@@ -852,6 +935,7 @@ export type Database = {
           request?: Json | null
           sent_by?: string | null
           source?: string
+          staff_recipient_id?: string | null
           status?: string
           step_position?: number | null
           template_name?: string
@@ -866,6 +950,27 @@ export type Database = {
             columns: ["appointment_id"]
             isOneToOne: false
             referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_deliveries_case_alert_id_fkey"
+            columns: ["case_alert_id"]
+            isOneToOne: false
+            referencedRelation: "case_alerts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_deliveries_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "patient_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_deliveries_staff_recipient_id_fkey"
+            columns: ["staff_recipient_id"]
+            isOneToOne: false
+            referencedRelation: "staff_alert_recipients"
             referencedColumns: ["id"]
           },
           {
@@ -887,6 +992,7 @@ export type Database = {
           language: string
           position: number
           quick_reply_action: string | null
+          skip_on_reschedule: boolean
           template_name: string
           updated_at: string
           url_button_param: string | null
@@ -902,6 +1008,7 @@ export type Database = {
           language?: string
           position: number
           quick_reply_action?: string | null
+          skip_on_reschedule?: boolean
           template_name: string
           updated_at?: string
           url_button_param?: string | null
@@ -917,6 +1024,7 @@ export type Database = {
           language?: string
           position?: number
           quick_reply_action?: string | null
+          skip_on_reschedule?: boolean
           template_name?: string
           updated_at?: string
           url_button_param?: string | null
@@ -964,6 +1072,7 @@ export type Database = {
         Row: {
           appointment_id: string | null
           body: string | null
+          case_id: string | null
           created_at: string
           doctor_id: string | null
           id: string
@@ -975,6 +1084,7 @@ export type Database = {
         Insert: {
           appointment_id?: string | null
           body?: string | null
+          case_id?: string | null
           created_at?: string
           doctor_id?: string | null
           id?: string
@@ -986,6 +1096,7 @@ export type Database = {
         Update: {
           appointment_id?: string | null
           body?: string | null
+          case_id?: string | null
           created_at?: string
           doctor_id?: string | null
           id?: string
@@ -1000,6 +1111,13 @@ export type Database = {
             columns: ["appointment_id"]
             isOneToOne: false
             referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "patient_cases"
             referencedColumns: ["id"]
           },
           {
@@ -1067,6 +1185,8 @@ export type Database = {
       patient_cases: {
         Row: {
           ai_state: string
+          alert_level: number
+          appointment_id: string | null
           assigned_at: string | null
           assigned_user_id: string | null
           city: string | null
@@ -1076,6 +1196,7 @@ export type Database = {
           handoff_reason: string | null
           handoff_requested_at: string | null
           id: string
+          last_alert_at: string | null
           next_action: string | null
           patient_id: string | null
           priority: string
@@ -1094,6 +1215,8 @@ export type Database = {
         }
         Insert: {
           ai_state?: string
+          alert_level?: number
+          appointment_id?: string | null
           assigned_at?: string | null
           assigned_user_id?: string | null
           city?: string | null
@@ -1103,6 +1226,7 @@ export type Database = {
           handoff_reason?: string | null
           handoff_requested_at?: string | null
           id?: string
+          last_alert_at?: string | null
           next_action?: string | null
           patient_id?: string | null
           priority?: string
@@ -1121,6 +1245,8 @@ export type Database = {
         }
         Update: {
           ai_state?: string
+          alert_level?: number
+          appointment_id?: string | null
           assigned_at?: string | null
           assigned_user_id?: string | null
           city?: string | null
@@ -1130,6 +1256,7 @@ export type Database = {
           handoff_reason?: string | null
           handoff_requested_at?: string | null
           id?: string
+          last_alert_at?: string | null
           next_action?: string | null
           patient_id?: string | null
           priority?: string
@@ -1148,6 +1275,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "patient_cases_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "patient_cases_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
@@ -1160,22 +1294,73 @@ export type Database = {
         Row: {
           created_at: string
           full_name: string
+          has_insurance: boolean | null
           id: string
+          insurance_updated_at: string | null
+          insurer: string | null
           phone: string
+          policy_number: string | null
         }
         Insert: {
           created_at?: string
           full_name: string
+          has_insurance?: boolean | null
           id?: string
+          insurance_updated_at?: string | null
+          insurer?: string | null
           phone: string
+          policy_number?: string | null
         }
         Update: {
           created_at?: string
           full_name?: string
+          has_insurance?: boolean | null
           id?: string
+          insurance_updated_at?: string | null
+          insurer?: string | null
           phone?: string
+          policy_number?: string | null
         }
         Relationships: []
+      }
+      post_consultation_case_links: {
+        Row: {
+          case_id: string
+          created_at: string
+          form_id: string
+          outcome: string
+          request_type: string
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          form_id: string
+          outcome: string
+          request_type: string
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          form_id?: string
+          outcome?: string
+          request_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_consultation_case_links_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "patient_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consultation_case_links_form_id_fkey"
+            columns: ["form_id"]
+            isOneToOne: false
+            referencedRelation: "post_consultation_forms"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       post_consultation_forms: {
         Row: {
@@ -1186,6 +1371,7 @@ export type Database = {
           id: string
           imaging_studies: string | null
           lab_tests: string | null
+          management_type: string | null
           observations: string | null
           prescribed_medications: string | null
           report_destination_id: string | null
@@ -1202,6 +1388,7 @@ export type Database = {
           id?: string
           imaging_studies?: string | null
           lab_tests?: string | null
+          management_type?: string | null
           observations?: string | null
           prescribed_medications?: string | null
           report_destination_id?: string | null
@@ -1218,6 +1405,7 @@ export type Database = {
           id?: string
           imaging_studies?: string | null
           lab_tests?: string | null
+          management_type?: string | null
           observations?: string | null
           prescribed_medications?: string | null
           report_destination_id?: string | null
@@ -1239,6 +1427,82 @@ export type Database = {
             columns: ["doctor_id"]
             isOneToOne: false
             referencedRelation: "doctors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reimbursements: {
+        Row: {
+          amount: number | null
+          appointment_id: string | null
+          case_id: string
+          created_at: string
+          created_by_user_id: string | null
+          currency: string
+          id: string
+          insurer: string
+          invoice_number: string | null
+          notes: string | null
+          patient_id: string | null
+          resolved_at: string | null
+          status: string
+          submitted_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount?: number | null
+          appointment_id?: string | null
+          case_id: string
+          created_at?: string
+          created_by_user_id?: string | null
+          currency?: string
+          id?: string
+          insurer: string
+          invoice_number?: string | null
+          notes?: string | null
+          patient_id?: string | null
+          resolved_at?: string | null
+          status?: string
+          submitted_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount?: number | null
+          appointment_id?: string | null
+          case_id?: string
+          created_at?: string
+          created_by_user_id?: string | null
+          currency?: string
+          id?: string
+          insurer?: string
+          invoice_number?: string | null
+          notes?: string | null
+          patient_id?: string | null
+          resolved_at?: string | null
+          status?: string
+          submitted_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reimbursements_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reimbursements_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "patient_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reimbursements_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
             referencedColumns: ["id"]
           },
         ]
@@ -1322,6 +1586,78 @@ export type Database = {
           id?: string
           is_active?: boolean
           name?: string
+        }
+        Relationships: []
+      }
+      staff_alert_recipients: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          phone: string
+          receives: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          phone: string
+          receives?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          phone?: string
+          receives?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      staff_alert_settings: {
+        Row: {
+          created_at: string
+          id: boolean
+          max_escalations: number
+          sla_high_minutes: number
+          sla_normal_minutes: number
+          sla_urgent_minutes: number
+          template_language: string
+          template_name: string
+          updated_at: string
+          updated_by: string | null
+          whatsapp_enabled: boolean
+        }
+        Insert: {
+          created_at?: string
+          id?: boolean
+          max_escalations?: number
+          sla_high_minutes?: number
+          sla_normal_minutes?: number
+          sla_urgent_minutes?: number
+          template_language?: string
+          template_name?: string
+          updated_at?: string
+          updated_by?: string | null
+          whatsapp_enabled?: boolean
+        }
+        Update: {
+          created_at?: string
+          id?: boolean
+          max_escalations?: number
+          sla_high_minutes?: number
+          sla_normal_minutes?: number
+          sla_urgent_minutes?: number
+          template_language?: string
+          template_name?: string
+          updated_at?: string
+          updated_by?: string | null
+          whatsapp_enabled?: boolean
         }
         Relationships: []
       }
@@ -1574,6 +1910,32 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_case_alerts: {
+        Args: { p_lease_seconds: number; p_limit: number }
+        Returns: {
+          attempts: number
+          case_id: string
+          created_at: string
+          dedupe_key: string
+          id: string
+          kind: string
+          level: number
+          locked_until: string | null
+          next_attempt_at: string
+          notification_id: string | null
+          priority: string
+          processed_at: string | null
+          updated_at: string
+          whatsapp_detail: string | null
+          whatsapp_status: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "case_alerts"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_outbox: {
         Args: { p_lease_seconds: number; p_limit: number }
         Returns: {
@@ -1608,6 +1970,7 @@ export type Database = {
       }
       invoke_edge_function: { Args: { function_slug: string }; Returns: number }
       is_admin_or_superadmin: { Args: { _user_id: string }; Returns: boolean }
+      staff_alerts_have_work: { Args: never; Returns: boolean }
     }
     Enums: {
       app_role: "superadmin" | "admin" | "doctor"
@@ -1623,6 +1986,10 @@ export type Database = {
         | "postconsultation_submitted"
         | "appointment_rescheduled"
         | "appointment_cancelled_by_admin"
+        | "documents_received"
+        | "case_opened"
+        | "case_handoff"
+        | "case_overdue"
       post_consultation_status: "pending" | "read" | "report_sent"
     }
     CompositeTypes: {
@@ -1764,6 +2131,10 @@ export const Constants = {
         "postconsultation_submitted",
         "appointment_rescheduled",
         "appointment_cancelled_by_admin",
+        "documents_received",
+        "case_opened",
+        "case_handoff",
+        "case_overdue",
       ],
       post_consultation_status: ["pending", "read", "report_sent"],
     },
