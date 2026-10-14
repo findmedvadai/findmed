@@ -131,10 +131,10 @@ Enum `app_role` (SQL): `superadmin | admin | doctor`. El rol se lee de `public.u
   - `/admin/inicio` → indicadores del día, "Por resolver" de todos los módulos, conexiones (WHAAPY, agente IA, mensajes, calendarios) y notificaciones (el antiguo Inbox, embebido).
   - `/admin/agenda` → calendario (vista por defecto) y lista de citas (`?vista=lista`) con búsqueda y filtros.
   - `/admin/doctores` → CRUD de doctores (alta crea usuario auth + fila en `doctors` + `users`), consultorios, horarios y calendarios.
-  - `/admin/casos` → cola de casos y canalización humana (B6): tomar, seguimiento, notas, cierre con motivo. Escrituras vía Edge Function `case-actions`.
+  - `/admin/casos` → cola de casos y canalización humana (B6): tomar, seguimiento, notas, cierre con motivo. Escrituras vía Edge Function `case-actions`. Etapa 2: botón "Nuevo caso", panel "Reembolso" y origen post‑consulta (tipo de manejo, cita) en el detalle; `?caso=<id>` abre un caso.
   - `/admin/whatsapp` → bandeja de WHAAPY (`https://app.whaapy.com/inbox`) embebida en iframe al 75 % de zoom.
   - `/admin/automatizacion` → mensajes de WhatsApp por evento (los envía FindMed por la API de WHAAPY; activo/pausado por evento), historial de envíos con recibos y reenvío, catálogo de plantillas (`?tab=envios|plantillas`). Escrituras vía `messaging-admin`.
-- **Configuración** (desde el engrane, `/admin/configuracion/:tab`): `agente-ia` (conexión, actividad, errores, catálogo de triaje), `catalogos` (especialidades, ciudades, zonas, hospitales, laboratorios), `webhooks` y `api-keys` (estos dos protegidos por [PasswordGate](src/components/admin/PasswordGate.tsx)).
+- **Configuración** (desde el engrane, `/admin/configuracion/:tab`): `agente-ia` (conexión, actividad, errores, catálogo de triaje), `alertas` (números de guardia por WhatsApp, SLA de casos, plantilla, alerta de prueba y avisos del navegador), `catalogos` (especialidades, ciudades, zonas, hospitales, laboratorios), `webhooks` y `api-keys` (estos dos protegidos por [PasswordGate](src/components/admin/PasswordGate.tsx), que pide la contraseña de la propia cuenta del admin y desbloquea 30 min; no hay contraseña compartida).
 - Las rutas anteriores (`/admin/calendario`, `/admin/reservas`, `/admin/inbox`, `/admin/mensajeria`, `/admin/agente-ia`, `/admin/catalogos`, `/admin/webhooks`, `/admin/api-keys`) redirigen a las nuevas.
 
 ### doctor
@@ -143,7 +143,7 @@ Enum `app_role` (SQL): `superadmin | admin | doctor`. El rol se lee de `public.u
 - **Módulos** (bajo `/doctor/…`):
   - `/doctor/inicio` → citas de hoy, pendientes (notas post-consulta, consultorios sin horarios o sin calendario) y notificaciones (el antiguo Inbox).
   - `/doctor/agenda` → calendario semanal propio (incluye citas FindMed + eventos del Google/Outlook Calendar vinculado).
-  - `/doctor/por-completar` → citas `completed` cuyo post‑consultation form aún no se llena (o está `pending`), con toggles para medicamentos, estudios, laboratorio, referencia, hospitalización.
+  - `/doctor/por-completar` → citas `completed` cuyo post‑consultation form aún no se llena (o está `pending`), con toggles para medicamentos, estudios, laboratorio, referencia, hospitalización y el **tipo de manejo** obligatorio (sugerido según lo capturado; al enviar, `dispatch-webhook` abre los casos de seguimiento).
 - **Mi configuración** (engrane, `/doctor/configuracion`): disponibilidad semanal, duración de cita, `min_confirm_hours_before`, overrides por día, vinculación de Google/Outlook Calendar y selección del calendario destino. `/doctor/inbox` redirige a `/doctor/inicio`.
 
 ### paciente (sin login)
@@ -165,7 +165,7 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 | `app_role` | `superadmin`, `admin`, `doctor` |
 | `appointment_status` | `scheduled`, `confirmed`, `cancelled`, `completed` |
 | `cancel_reason` | `patient`, `doctor`, `no_confirmation`, `admin` (Mejora 1) |
-| `notification_type` | `appointment_scheduled`, `appointment_cancelled_by_patient`, `appointment_cancelled_by_doctor`, `appointment_auto_cancelled`, `appointment_completed`, `postconsultation_submitted`, `appointment_rescheduled`, `appointment_cancelled_by_admin` (Mejora 1) |
+| `notification_type` | `appointment_scheduled`, `appointment_cancelled_by_patient`, `appointment_cancelled_by_doctor`, `appointment_auto_cancelled`, `appointment_completed`, `postconsultation_submitted`, `appointment_rescheduled`, `appointment_cancelled_by_admin` (Mejora 1), `case_opened`, `case_handoff`, `case_overdue` (alertas de casos; `notifications.case_id`) |
 | `post_consultation_status` | `pending`, `read`, `report_sent` |
 | `booking_source` | `patient_self`, `admin_manual`, `doctor_manual` (Mejora 1) |
 
@@ -183,20 +183,23 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 | `doctor_date_overrides` | Excepciones puntuales por fecha (`is_available`, `note`). Unique `(doctor_id, override_date)`. |
 | `specialties` | Catálogo con `name`, `color`, `is_active`. |
 | `cities` / `zones` / `hospitals` / `laboratories` | Catálogos geográficos y destinos para enviar reportes post‑consulta. |
-| `patients` | Pacientes identificados por `phone` único + `full_name`. Teléfonos siempre normalizados a `+52XXXXXXXXXX`. |
+| `patients` | Pacientes identificados por `phone` único + `full_name`. Teléfonos siempre normalizados a `+52XXXXXXXXXX`. **Seguro** (migración `20261014130000`): `has_insurance` (null = no capturado, false = sin seguro), `insurer`, `policy_number`, `insurance_updated_at`; los escribe el agente (MCP `save_patient_insurance` / `create_booking_link`) y el admin vía `admin-update-patient-insurance`. "Sin seguro" no puede conservar aseguradora ni póliza (CHECK). |
 | `reservation_sessions` | Token efímero (72 h). Tiene `office_id` (FK compuesta a `doctor_offices`). Lo crea `triage-webhook`. FK a `patients` y `doctors`. |
-| `appointments` | Cita: `doctor_id`, `office_id` (FK compuesta a `doctor_offices`), `patient_id`, `start_at`, `end_at`, `status`, `cancel_reason`, `booking_source`, `created_by_user_id`, `symptoms`, `doctor_notes`, `google_event_id`, `outlook_event_id`, `created_from_session_id`, `reminder_48h_sent_at`, `reminder_day_of_sent_at` (marcadores de los crons). **Constraints** (migración `20261012120000`): `appointments_end_after_start` (`end_at > start_at`) y `appointments_no_overlap_per_doctor` — exclusión GiST que impide dos citas `scheduled`/`confirmed` traslapadas del mismo doctor, aunque sean en consultorios distintos (decisión D2, 2026-10-12). Un INSERT/UPDATE que la viole falla con SQLSTATE `23P01`; las EFs lo mapean a HTTP 409. |
+| `appointments` | Cita: `doctor_id`, `office_id` (FK compuesta a `doctor_offices`), `patient_id`, `start_at`, `end_at`, `status`, `cancel_reason`, `booking_source`, `created_by_user_id`, `symptoms`, `doctor_notes`, `google_event_id`, `outlook_event_id`, `created_from_session_id`, `reminder_48h_sent_at`, `reminder_day_of_sent_at` (marcadores de los crons), `documents_requested_at` (lo pone un trigger cuando WHAAPY acepta la plantilla `pedir_documentos`) y `documents_received_at` (foto/PDF del paciente por WhatsApp, `_shared/patient-documents.ts`; los archivos no se guardan). **Constraints** (migración `20261012120000`): `appointments_end_after_start` (`end_at > start_at`) y `appointments_no_overlap_per_doctor` — exclusión GiST que impide dos citas `scheduled`/`confirmed` traslapadas del mismo doctor, aunque sean en consultorios distintos (decisión D2, 2026-10-12). Un INSERT/UPDATE que la viole falla con SQLSTATE `23P01`; las EFs lo mapean a HTTP 409. |
 | `appointment_manage_tokens` | Tokens para que el paciente gestione su cita (confirmar/cancelar/reagendar). Expiran al finalizar la cita. Generados siempre con `createManageToken` de `_shared/manage-token.ts`. |
-| `post_consultation_forms` | Formulario post‑consulta: observaciones, medicamentos recetados, estudios de imagen, laboratorio, referencia a especialista, hospitalización, `review_status`, destino del reporte (`report_destination_type`/`report_destination_id`), `report_sent_at`. |
+| `post_consultation_forms` | Formulario post‑consulta: observaciones, medicamentos recetados, estudios de imagen, laboratorio, referencia a especialista, hospitalización, `review_status`, destino del reporte (`report_destination_type`/`report_destination_id`), `report_sent_at`. **Etapa 2:** `management_type` (`conservador`/`estudios`/`procedimiento`/`urgente`, nullable en formularios previos) que el médico confirma en `/doctor/por-completar`. |
+| `post_consultation_case_links` | **Etapa 2.** Una fila por `(form_id, request_type)`: marcador de idempotencia de las rutas post‑consulta y lista de casos que generó cada formulario (`outcome` `created` o `appended` si se agregó a un caso activo existente). RLS: SELECT admins. |
+| `reimbursements` | **Etapa 2.** Facturas/reembolsos de un caso: `insurer`, `invoice_number`, `amount` numeric(12,2), `currency` (default MXN), `status` recibido → en_proceso → finalizado/rechazado (solo avanza; los finales se bloquean), `notes`, `submitted_at`, `resolved_at`. Escrituras solo vía `case-actions`; historial en `case_events`. RLS: SELECT admins. |
 | `notifications` | Feed para admin y doctor: `recipient_role`, `doctor_id`, `title`, `body`, `type`, `appointment_id`, `is_read`. En publicación realtime. |
 | `webhooks` | Webhooks salientes firmados con HMAC: `url`, `events[]`, `secret`, `payload_overrides`, `is_active`. |
 | `api_keys` | API keys externas: `key_hash` (SHA‑256), `key_prefix`, `is_active`, `last_used_at`. |
 | `calendar_connection_events` | **Bitácora durable append-only** de desconexiones de calendario (Google/Outlook). `provider`, `event_type` (`auto_disconnect` \| `manual_disconnect`), `office_id`/`doctor_id` (UUID **sin FK**, para sobrevivir borrados y ser investigable indefinidamente), `reason_code`, `http_status`, `provider_response` (jsonb con la respuesta cruda del proveedor), `actor_user_id`/`actor_role` (manual), `connected_at` (snapshot) + `lifetime_seconds` (generada), `occurred_at`. Independiente del retention de logs. RLS: SELECT solo admins; los inserts vienen de Edge Functions con service role. No se borra nunca. Complementa las columnas `doctor_offices.google_connected_at` / `outlook_connected_at` (timestamp al conectar). |
-| `patient_cases` | **B6.** Solicitudes que necesitan a una persona (hospital, estudios, urgencia, seguimiento, sin opciones). `status` open → awaiting_assignment → assigned → awaiting_patient/awaiting_provider → resolved/closed (cierre exige `resolution_reason`). Un caso activo por `(subject_phone, request_type)`. Proyección WHAAPY: `ai_state`, `whaapy_assignment`, ids de conversación/contacto. RLS: SELECT admins; escrituras solo Edge Functions. |
+| `patient_cases` | **B6.** Solicitudes que necesitan a una persona (hospital, estudios, urgencia, seguimiento, sin opciones). `status` open → awaiting_assignment → assigned → awaiting_patient/awaiting_provider → resolved/closed (cierre exige `resolution_reason`). Un caso activo por `(subject_phone, request_type)`. **Etapa 2:** tipos `procedure`, `referral`, `reimbursement` (solo equipo/post‑consulta; el agente sigue con `REQUEST_TYPES`), origen `source = post_consultation` y `appointment_id`. Proyección WHAAPY: `ai_state`, `whaapy_assignment`, ids de conversación/contacto. RLS: SELECT admins; escrituras solo Edge Functions. |
 | `case_events` | **B6.** Historial interno append-only de cada caso (quién, qué, resultado del proveedor). Nunca se muestra al paciente. |
+| `case_alerts` / `staff_alert_recipients` / `staff_alert_settings` | **Alertas al equipo** (migración `20261014110000`). `case_alerts`: una fila por alerta (caso, `opened`/`handoff`/`overdue`, nivel) — compuerta de idempotencia (`dedupe_key`) y cola de WhatsApp (`claim_case_alerts`). `staff_alert_recipients`: números de guardia (teléfono canónico, `all`/`urgent_only`). `staff_alert_settings` (una fila): SLA por prioridad (10/30/120 min), re-avisos máximos (3), WhatsApp on/off y plantilla (`alerta_caso_findmed`). `patient_cases.last_alert_at`/`alert_level` guardan el escalamiento. RLS: SELECT admins; escrituras solo Edge Functions. |
 | `operation_requests` / `whaapy_events` | Acciones preparadas idempotentes (confirmar/cancelar) y eventos recibidos de WHAAPY (retención 12 meses). Ver `docs/findmed-migration/`. |
 | `message_routes` / `message_route_steps` | **B7.** Dueño de cada evento (`n8n` default, `findmed`, `none`) y plantillas que envía cada evento, en orden, con sus variables y botones. Editables desde `/admin/mensajeria`. |
-| `domain_outbox` / `message_deliveries` | **B7.** Cola durable de eventos que envía FindMed (dedupe, claim `claim_outbox` con SKIP LOCKED) y cada envío a WHAAPY con su estado (accepted → sent → delivered → read / failed / uncertain). Retención 12 meses. |
+| `domain_outbox` / `message_deliveries` | **B7.** Cola durable de eventos que envía FindMed (dedupe, claim `claim_outbox` con SKIP LOCKED) y cada envío a WHAAPY con su estado (accepted → sent → delivered → read / failed / uncertain). Retención 12 meses. Las alertas al equipo también quedan aquí (`source = staff_alert`, `case_id`, `case_alert_id`, `staff_recipient_id`). |
 
 ### Funciones SQL helper (`SECURITY DEFINER`, `search_path = public`)
 
@@ -247,6 +250,7 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `admin-reschedule-appointment` | Admin reagenda cita: valida disponibilidad, actualiza timestamps, sync PATCH/CREATE en calendario externo, notificación + webhook. |
 | `admin-cancel-appointment` | Admin cancela cita con `cancel_reason = admin`, elimina evento externo, notificación + webhook. |
 | `admin-search-patients` | Búsqueda de pacientes por nombre/teléfono para el autocomplete del admin. Requiere rol admin. |
+| `admin-update-patient-insurance` | Admin corrige el seguro del paciente (aseguradora, póliza, "Sin seguro", "No capturado") desde el detalle de la cita. `verify_jwt = false` + `requireAdmin` en código. |
 
 ### Multi-consultorio CRUD (Mejora 2)
 
@@ -276,25 +280,33 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `phone.ts` | `normalizeMxPhone` (canonicaliza `+52XXXXXXXXXX`) y `mxPhoneLookupVariants` (variantes para lookup). |
 | `manage-token.ts` | `createManageToken` — genera token + URL `/gestionar` e inserta en `appointment_manage_tokens`. |
 | `slot-validation.ts` | `validateSlotAvailable` — verifica que un slot no colisione con citas existentes en el mismo office. |
+| `calendar-busy.ts` | Lectura de ocupación de Google/Outlook para disponibilidad: pagina (`nextPageToken` / `@odata.nextLink`, hasta 10 páginas), bloquea el día CDMX completo con eventos de todo el día, ignora eventos libres/cancelados/rechazados y devuelve "no verificado" si el proveedor falla. Lo usan `day-slots` y `slot-validation`. |
+| `oauth-state.ts` | `state` firmado (HMAC-SHA256 con clave derivada de `getServiceKey()`, nonce, expira en 15 min) para `google/outlook-calendar-auth` y sus callbacks, más la lista de orígenes permitidos para redirigir. Las cuatro funciones se despliegan juntas. |
 | `availability-check.ts` | `checkAvailability` — verifica si un slot cae dentro de la disponibilidad semanal configurada del office. |
 | `office-resolver.ts` | Helpers para resolver el office a partir de doctor_id (p. ej. office primario para backwards-compat). |
 | `calendar-tokens.ts` | `getGoogleAccessToken`, `getOutlookAccessToken` — intercambian refresh token por access token vía el secret del office. En `invalid_grant` auto-desconecta el office **y** registra el evento durable vía `recordAutoDisconnect`. |
 | `connection-events.ts` | `recordAutoDisconnect` / `recordManualDisconnect` — insertan en `calendar_connection_events` (bitácora durable). Best-effort: nunca lanzan ni bloquean el flujo de conexión/desconexión. Único lugar que escribe esa tabla. |
-| `cases.ts` | **B6.** `openCase`, `requestHandoff`, `getMyCases`, `applyStaffAction`. Persistir, apagar la IA y asignar son pasos separados registrados en `case_events`; nunca se reporta `assigned` sin que una persona tome el caso. |
+| `cases.ts` | **B6.** `openCase`, `requestHandoff`, `getMyCases`, `applyStaffAction`. Persistir, apagar la IA y asignar son pasos separados registrados en `case_events`; nunca se reporta `assigned` sin que una persona tome el caso. Cada caso nuevo y cada canalización llama a `raiseCaseAlert`. |
+| `staff-alerts.ts` | **Alertas al equipo.** `raiseCaseAlert` (notificación en el panel al momento, idempotente), `escalateOverdueCases` (SLA → re-aviso), `processCaseAlert`/`runStaffAlerts` (plantilla por WHAAPY a los números de guardia, mismas reglas de reintento que `messaging.ts`), `sendTestAlert`. La regla de SLA (`nextEscalationAt`) se replica en SQL en `staff_alerts_have_work()`: cambiar ambas juntas. Nunca lanza hacia el flujo del paciente. |
 | `whaapy-client.ts` | Cliente REST de WHAAPY (by-phone, IA por conversación, equipo, contactos, envío de mensajes, plantillas) con timeout; nunca lanza ni expone la API key. |
 | `messaging.ts` | **B7.** `routeOwner`, `enqueueEvent`, `processOutboxRow` (relee la BD, omite eventos viejos, un envío por paso, incierto sin reenvío), `applyReceipt`. |
 | `whaapy-events.ts` | **B7.** Procesa `whaapy_events`: recibos y botones `confirmar_cita:<id>`/`cancelar_cita:<id>` (prepare+commit sobre esa cita). |
 | `template-catalog.ts` | **B7b.** Normaliza plantillas de WHAAPY y valida que un paso del mapeo encaje con su plantilla. |
+| `patient-insurance.ts` | `savePatientInsuranceByPhone` (agente: merge; solo crea paciente si trae nombre) y `savePatientInsuranceById` (admin: replace). |
+| `patient-documents.ts` | `parseInboundMedia` + `markDocumentsReceived`: imagen/PDF del paciente → marca la cita próxima con documentos pedidos y notifica a admins (`documents_received`), idempotente. Lo llama `whaapy-events.ts`. |
+| `network-search.ts` | `findNetworkPlaces` (hospitales/laboratorios activos por ciudad, alias de `care-search.ts`, zona como ubicación, none/one/many, otras ciudades con red). |
+| `postconsult-routes.ts` | **Etapa 2.** `routePostConsultation(supabase, appointmentId)`: lee el último formulario de la cita y abre (vía `openCase`) un caso por ruta — urgente → `urgency`; procedimiento/hospitalización → `procedure`; estudios/laboratorio → `studies`; referencia → `referral`; conservador → `follow_up` a 7 días. Idempotente por formulario. No envía nada al paciente. La regla de sugerencia vive también en `src/lib/management-type.ts` (mantenerlas iguales). |
+| `reimbursements.ts` | **Etapa 2.** Validación, alta y cambios de reembolsos (solo hacia adelante, bloqueo en estados finales, `case_events`). |
 
 ### Triaje / recordatorios / webhooks
 
 | Función | Qué hace |
 |---|---|
-| `findmed-mcp` | Servidor MCP (JSON-RPC) para el agente nativo de WHAAPY. Auth: bearer `FINDMED_MCP_TOKEN`. Tools de búsqueda, horarios, enlace de reserva, citas, acciones preparadas y casos. |
+| `findmed-mcp` | Servidor MCP (JSON-RPC) para el agente nativo de WHAAPY. Auth: bearer `FINDMED_MCP_TOKEN`. Tools de búsqueda, horarios, enlace de reserva, citas, acciones preparadas y casos; desde v2.5 también `save_patient_insurance`, `find_network_hospitals` y `find_network_laboratories` (13 tools). `search_care_options` nunca devuelve un "none" seco: trae `alternatives` (otras zonas/ciudades) o `escalate=true`. |
 | `whaapy-inbound` | Webhook de WHAAPY firmado (HMAC con `WHAAPY_WEBHOOK_SECRET`); guarda en `whaapy_events` deduplicado y procesa recibos y botones. |
-| `findmed-events-worker` | **B7.** Cron (cada minuto, solo si hay trabajo): envía las plantillas de `domain_outbox` y reprocesa `whaapy_events` pendientes. Auth: `FINDMED_CRON_SECRET`. |
+| `findmed-events-worker` | **B7.** Cron (cada minuto, solo si hay trabajo): envía las plantillas de `domain_outbox`, reprocesa `whaapy_events` pendientes y corre las alertas de casos (escalamiento + WhatsApp a números de guardia; despierta también con `staff_alerts_have_work()`). Auth: `FINDMED_CRON_SECRET`. |
 | `messaging-admin` | **B7b.** Acciones del centro de mensajería (catálogo, dueño por evento, mapeo, reenvío). Auth: JWT admin. |
-| `case-actions` | Acciones del equipo sobre casos (`/admin/casos`). Auth: JWT admin (`requireAdmin`). |
+| `case-actions` | Acciones del equipo sobre casos (`/admin/casos`). Auth: JWT admin (`requireAdmin`). **Etapa 2** (`extra-actions.ts`): `create_case` ("Nuevo caso"), `reimbursement_create`, `reimbursement_update`. **Alertas** (`alerts.ts`): `alert_recipient_save`, `alert_recipient_delete`, `alert_settings_save`, `alert_test` (Configuración → Alertas). |
 
 | Función | Qué hace |
 |---|---|
@@ -443,6 +455,7 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role (acceso total, bypasea RLS). Requerido por prácticamente todas las Edge Functions. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth client de Google Cloud para Google Calendar. |
 | `GOOGLE_OAUTH_REDIRECT_URI` | **Opcional.** Override del redirect URI de Google Calendar. Si no se define, usa `https://app.findmed.com.mx/oauth/google/callback` (proxeado por Vercel a `google-calendar-callback`). Debe ser el mismo en `google-calendar-auth` y `google-calendar-callback` (es project-level, ambas lo leen). |
+| `OAUTH_ALLOWED_ORIGINS` | **Opcional, no secreto.** Orígenes extra (separados por coma) a los que pueden volver los flujos de conexión de calendario, p. ej. previews de Vercel. Siempre permitidos: `https://app.findmed.com.mx`, localhost y el origen de `APP_URL`. |
 | `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` | App registration de Microsoft (Azure AD) para Outlook Calendar. |
 | `APP_URL` | URL pública de la app (producción: URL de Vercel; desarrollo: `http://localhost:5173`); se usa para construir links `/reserva?token=…` y `/gestionar?token=…`. Actualizar en Supabase al hacer deploy. |
 | `FINDMED_MCP_TOKEN` | Bearer que WHAAPY envía al MCP `findmed-mcp`. |

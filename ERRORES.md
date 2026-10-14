@@ -640,3 +640,135 @@ Las otras dos eran verdaderas: cifrado en tránsito (TLS) + cifrado de credencia
 - **Tipos de Supabase**: un `.select()` armado con `"..." + "..."` pierde el tipado (GenericStringError) y obliga a casts; pasó en `doctor/Agenda.tsx` y `OfficeManager.tsx`.
 
 **Lección aprendida:** una query key = una forma de dato. Si dos componentes leen columnas distintas de la misma tabla, keys distintas con prefijo común. Los `select` de Supabase siempre en un solo literal. Ids de formularios repetidos en listas deben llevar el id de la fila.
+
+## 2026-10-14 — Post-consulta: formulario repetible y acciones indicadas que se perdían
+
+**Categoría:** frontend / datos
+
+**Síntoma:** (Detectado al construir las rutas post-consulta, Etapa 2.) (1) Si el médico enviaba el formulario sin observaciones, la consulta seguía en "Por completar" y podía enviarse otro formulario para la misma cita. (2) Un interruptor encendido sin detalle (p. ej. "Se envió a hospitalización" sin texto) se guardaba como `null`: el equipo nunca se enteraba de que se indicó.
+
+**Causa raíz:** (1) La lista filtraba solo por `appointments.doctor_notes IS NULL`, y `doctor_notes` toma el valor de las observaciones, que pueden ir vacías; no se revisaba si ya existía un `post_consultation_forms` para la cita. (2) El guardado hacía `toggle ? texto || null : null`, mezclando "no indicado" con "indicado sin detalle".
+
+**Solución aplicada:** La lista excluye citas que ya tienen formulario (`post_consultation_forms(id)` en el select). Un interruptor encendido sin texto se guarda como "Sí, sin detalle.". Además, las rutas post-consulta son idempotentes por formulario (`post_consultation_case_links`) y, si llega un segundo formulario de la misma cita, se agrega a los casos activos en lugar de duplicarlos.
+
+**Lección aprendida:** "Pendiente" debe derivarse de la existencia del registro que lo completa, no de un campo opcional que puede quedar vacío. En formularios con interruptor + detalle, el interruptor es el dato; el texto es complemento: nunca convertir "sí, sin detalle" en `null`.
+
+## 2026-10-14 — "Pedir documentos" se reenviaba cuando el paciente reagendaba
+
+**Categoría:** backend
+
+**Síntoma:** Al reagendar desde `/gestionar`, el paciente volvía a recibir la plantilla `pedir_documentos` (póliza + INE).
+
+**Causa raíz:** `manage-reschedule` crea una cita NUEVA y emite `appointment.status_changed` con `new_status = scheduled`, idéntico a una primera reserva; el mapeo de mensajes (antes n8n, ahora `message_route_steps`) manda todos los pasos de "Reservada". Las reagendas del staff no lo provocaban porque mueven la cita en su lugar y solo emiten `appointment.rescheduled_by_staff`.
+
+**Solución aplicada:** Migración `20261014100000`: `message_route_steps.skip_on_reschedule` (true en `pedir_documentos`). `manage-reschedule` marca el payload con `rescheduled_from`; `messaging.ts` (`isRescheduleEvent`) trata como reagenda ese marcador y cualquier `appointment.rescheduled*`, y omite los pasos marcados. Editable en Automatización ("No enviar al reagendar"); `messaging-admin` solo escribe el indicador si se envía, para que una pantalla vieja no lo apague.
+
+**Lección aprendida:** Un evento que significa cosas distintas según su origen (primera reserva vs. reagenda) debe llevar el origen en el payload desde el productor. Al migrar mapeos de n8n, revisar qué productores emiten el mismo `event_type` y con qué intención.
+
+## 2026-10-14 — Calendario externo: solo 50 eventos y sin eventos de día completo
+
+**Categoría:** backend
+
+**Síntoma:** (F13/R23) Se ofrecían o aceptaban horarios ocupados: días con muchos eventos y días con eventos de día completo ("Vacaciones", "Congreso") en Google/Outlook.
+
+**Causa raíz:** `slot-validation.ts` pedía `maxResults=50` / `$top=50` sin paginar y descartaba eventos sin `dateTime` (los de día completo). `day-slots.ts` pedía 250 sin paginar e igualmente ignoraba los de día completo; además las dos reglas divergían (uno respetaba eventos "libres" y el otro no), así que un horario ofrecido al paciente podía rechazarse al reservar.
+
+**Solución aplicada:** `_shared/calendar-busy.ts` compartido por ambos: pagina (`nextPageToken` / `@odata.nextLink`, tope 10 páginas), día completo = bloqueo de todo el día CDMX (aunque esté marcado "libre"), ignora cancelados, rechazados y entradas informativas de Google; lectura incompleta = "no verificado", nunca "verificado libre". `slot-validation` consulta el día CDMX completo y devuelve `external_calendar`.
+
+**Lección aprendida:** Toda lectura de una API paginada debe seguir la paginación o declararse incompleta. La regla que decide qué se ofrece y la que decide qué se acepta deben ser el mismo código.
+
+## 2026-10-14 — Auto-desconexión con un token viejo borraba una conexión recién hecha
+
+**Categoría:** backend / integración
+
+**Síntoma:** La única auto-desconexión registrada en `calendar_connection_events` (1-jul) ocurrió 63 s después de reconectar Google; el consultorio quedó desconectado.
+
+**Causa raíz:** En `calendar-tokens.ts`, ante `invalid_grant` se hacía `UPDATE … WHERE id = office` sin comprobar que el token que falló siguiera siendo el del consultorio. Una petición que cargó la fila antes de una reconexión (o con un token ya rotado) podía apagar la conexión nueva y válida. La persistencia del token rotado tenía el mismo problema (podía pisar una reconexión con otra cuenta).
+
+**Solución aplicada:** Compare-and-swap: ambos UPDATE llevan `.eq(<columna del token>, <token usado>)`. Si no afecta filas, se registra en log y no se desconecta ni se escribe evento.
+
+**Lección aprendida:** Toda escritura que "invalida" un estado a partir de un dato leído antes debe condicionarse a que ese dato no haya cambiado (CAS), sobre todo cuando el usuario puede reconectar mientras otras peticiones siguen en curso.
+
+## 2026-10-14 — Alta de médico a medias sin aviso (create-doctor)
+
+**Categoría:** backend
+
+**Síntoma:** (F11) Si fallaban el rol, las especialidades, los ajustes, el consultorio o el horario, el admin veía "Doctor creado" y el médico quedaba sin consultorio/horario (sin horarios que ofrecer) o sin especialidades (invisible para el triaje). Una lista de especialidades mal formada lanzaba excepción después de crear el usuario.
+
+**Causa raíz:** Pasos sin transacción y errores solo en `console.error`.
+
+**Solución aplicada:** `create-doctor/provision.ts`: todo o nada. Cualquier paso que falle borra lo creado (hijos primero, luego `doctors` y el usuario de Auth) y responde `registration_failed` con el paso que falló; si no se pudo deshacer, `incomplete_registration` con el correo afectado. La entrada se valida antes de crear nada.
+
+**Lección aprendida:** En altas de varios pasos sin transacción, cada paso o se compensa o se reporta; "solo loguear" equivale a mentirle al usuario.
+
+## 2026-10-14 — El agente cerraba la puerta: "no tenemos especialistas en tu zona"
+
+**Categoría:** backend / agente
+
+**Síntoma:** Queja del cliente: el agente de WhatsApp respondía repetidamente que no había especialistas en la zona del paciente, incluso sin haber entendido qué necesitaba, y "quiero una cita" y "busco ortopedista" recibían casi la misma respuesta.
+
+**Causa raíz:** (1) `search_care_options` devolvía `result: "none"` con `no_active_offices` cuando la zona exacta no tenía consultorio, sin decir que en la misma ciudad (u otras) sí había opciones: el modelo solo tenía un "no" para transmitir. (2) El prompt v2.4 preguntaba el seguro antes de entender la necesidad y no prohibía de forma absoluta el "no tenemos médicos"; solo pedía haber buscado antes.
+
+**Solución aplicada:** `search_care_options` ahora busca alternativas cuando no hay resultado (otras zonas de la misma ciudad con opciones, luego otras ciudades vía `citiesWithSpecialty`) y marca `escalate=true` cuando no hay ninguna; `unknown_city` trae las ciudades con opciones. Prompt FINDI v2.5: necesidad primero, gate de búsqueda (necesidad + ciudad), FALLO 7/8 y prohibición explícita; sin alternativas → caso `appointment_help` + `request_handoff`.
+
+**Lección aprendida:** Una herramienta para un agente nunca debe devolver un "no" seco: el resultado vacío tiene que traer lo que sí hay (alternativas) o la instrucción de escalar. Si el único dato que tiene el modelo es negativo, el modelo lo repetirá al paciente.
+
+## 2026-10-14 — Canalización humana sin aviso al equipo: el paciente oía "alguien te atenderá" y nadie se enteraba
+
+**Categoría:** backend / operación
+
+**Síntoma:** Queja #1 del cliente: cuando el agente canalizaba a un paciente con el equipo, nadie recibía alerta, correo ni notificación. En producción había 3 casos en `awaiting_assignment`, uno urgente con 20 h sin que nadie lo tomara.
+
+**Causa raíz:** `_shared/cases.ts` (`openCase` / `requestHandoff`) solo creaba el caso, apagaba la IA y etiquetaba el contacto en WHAAPY. No había ninguna notificación (`notifications` solo tenía tipos de citas), ningún aviso fuera del panel y ningún tiempo máximo: si nadie abría la pantalla Casos, el caso esperaba indefinidamente. El badge del menú era el único indicio y solo contaba `awaiting_assignment`.
+
+**Solución aplicada:** Migración `20261014110000_case_staff_alerts.sql` + `_shared/staff-alerts.ts`. Cada caso nuevo y cada canalización crea al momento una notificación (`case_opened` / `case_handoff`, con `notifications.case_id`) que el panel muestra por Realtime como aviso fijo con “Ver caso”, sonido y notificación del navegador; idempotente por `case_alerts.dedupe_key`. El worker de cada minuto escala los casos que nadie toma dentro de su SLA (urgente 10, alta 30, normal 120 min; `case_overdue`, hasta 3 re-avisos) y envía la plantilla `alerta_caso_findmed` a los números de guardia (`staff_alert_recipients`), registrando cada envío en `message_deliveries` (`source = 'staff_alert'`) con sus recibos. Si la plantilla falta o WHAAPY falla, el envío queda fallido con motivo y aparece en Inicio; el aviso del panel nunca depende del WhatsApp.
+
+**Lección aprendida:** Toda promesa que el sistema le hace a una persona ("alguien del equipo te atenderá") necesita un responsable notificado, un tiempo máximo y una escalación cuando el tiempo se cumple. Registrar un caso no es avisar: si el único lugar donde aparece es una pantalla que alguien tiene que abrir, la promesa no se cumple. Además: los regex de Postgres no aceptan repeticiones mayores a 255 (`{1,512}` falla al crear la tabla); el largo va en un `char_length` aparte.
+
+## 2026-10-14 — State de OAuth sin firma y redirección abierta en la conexión de calendarios
+
+**Categoría:** seguridad / backend
+
+**Síntoma:** Hallazgo N12: el parámetro `state` de `google/outlook-calendar-auth` era JSON en base64 sin firma, y los callbacks redirigían al origen que viniera dentro.
+
+**Causa raíz:** El `state` se trataba como dato confiable. Cualquiera podía armar un `state` con el `office_id` de otro consultorio (conectar un calendario ajeno) o con un origen arbitrario (redirección abierta tras el consentimiento de Google/Microsoft).
+
+**Solución aplicada:** `_shared/oauth-state.ts`: `state` = payload base64url + HMAC-SHA256 con clave derivada de `getServiceKey()` (contexto `findmed-oauth-state-v1`), nonce, expiración de 15 min, comparación en tiempo constante y proveedor dentro de la firma. Los callbacks verifican antes de tocar la base y solo redirigen a orígenes permitidos (`app.findmed.com.mx`, localhost, el de `APP_URL` y `OAUTH_ALLOWED_ORIGINS` opcional); cualquier otro cae a `APP_URL`. Las cuatro funciones se despliegan juntas.
+
+**Lección aprendida:** Todo lo que viaja por el navegador y vuelve al servidor (state, redirect, return_to) es entrada del usuario: se firma o se valida contra una lista cerrada, nunca se usa tal cual.
+
+## 2026-10-14 — Contraseña fija de "Webhooks" y "API keys" dentro del bundle
+
+**Categoría:** seguridad / frontend
+
+**Síntoma:** Hallazgo N11: `PasswordGate` comparaba contra una contraseña literal que cualquiera podía leer en el JavaScript publicado.
+
+**Causa raíz:** Una "protección" del lado del cliente con un secreto compartido incluido en el código.
+
+**Solución aplicada:** `PasswordGate` re-autentica al admin con la contraseña de su propia cuenta (`supabase.auth.signInWithPassword`) y desbloquea 30 min por usuario en `sessionStorage` (`src/lib/settings-unlock.ts`). El bundle ya no contiene la contraseña; la anterior sigue en el historial público del repo y no debe usarse en ningún otro lugar.
+
+**Lección aprendida:** Un secreto en el frontend no es un secreto. Las confirmaciones sensibles se apoyan en la identidad del usuario, no en una clave compartida.
+
+## 2026-10-14 — Páginas del paciente en la hora del navegador y calendario recorrido un día
+
+**Categoría:** frontend / fechas
+
+**Síntoma:** Hallazgo N19: `/reserva` y `/gestionar` formateaban con `format(new Date(...))`; un paciente fuera de CDMX (o con el teléfono en otra zona) veía otra hora, y el selector de fecha marcaba como "hoy" el día de su zona: bloqueaba el día vigente en CDMX o permitía uno ya pasado.
+
+**Causa raíz:** Fechas de negocio formateadas en la zona del dispositivo y "hoy" calculado con el reloj local.
+
+**Solución aplicada:** `formatMx` en todos los textos; helpers `mexicoTodayYmd`, `mexicoTodayPickerDate`, `isBeforeMexicoToday` y `pickerDateToYmd` en `src/lib/timezone.ts`, con pruebas que simulan navegadores en Madrid, Honolulu y Tokio; leyenda "Horarios en hora del centro de México".
+
+**Lección aprendida:** En páginas públicas el dispositivo puede estar en cualquier zona: toda fecha de negocio se formatea y se compara en `America/Mexico_City`, incluido el "hoy" de los calendarios.
+
+## 2026-10-14 — La lista de la Agenda no se refrescaba tras crear, cancelar o reagendar
+
+**Categoría:** frontend / react-query
+
+**Síntoma:** En `/admin/agenda?vista=lista` la cita creada, cancelada o reagendada desde los diálogos no cambiaba hasta recargar la página.
+
+**Causa raíz:** Los diálogos solo invalidaban las llaves del calendario; la lista usa otra llave (`admin-reservas-appointments`).
+
+**Solución aplicada:** `src/lib/admin-appointment-queries.ts` (`invalidateAdminAppointmentViews`) invalida por prefijo calendario, lista, eventos externos, detalle e Inicio; lo usan todos los `onSuccess` que cambian citas, incluido el borrado de consultorio en `OfficeManager`.
+
+**Lección aprendida:** Cuando la misma entidad se pinta en varias vistas, la invalidación vive en un solo helper con todos los prefijos; no se repite a mano en cada diálogo.
