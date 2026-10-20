@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, Bot, CalendarDays, Home, Key, Layers, LifeBuoy, MessageCircle, UserCog, Webhook, Workflow } from "lucide-react";
+import { BellRing, Bot, CalendarDays, Home, Key, Layers, LifeBuoy, MessageCircle, UserCog, Users, Webhook, Workflow } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useCaseAlertListener } from "@/hooks/useCaseAlertListener";
 import { supabase } from "@/integrations/supabase/client";
 import AppShell, { type ShellNavItem, type ShellSettingsItem } from "./AppShell";
 
 const settings: ShellSettingsItem[] = [
+  { title: "Usuarios", url: "/admin/configuracion/usuarios", icon: Users, description: "Accesos del equipo" },
   { title: "Agente IA", url: "/admin/configuracion/agente-ia", icon: Bot, description: "Conexión, actividad y errores del agente" },
   { title: "Alertas", url: "/admin/configuracion/alertas", icon: BellRing, description: "Avisos de casos, números de guardia y tiempos" },
   { title: "Catálogos", url: "/admin/configuracion/catalogos", icon: Layers, description: "Especialidades, ciudades, hospitales…" },

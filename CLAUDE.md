@@ -78,7 +78,7 @@ findmed/
 │   │   ├── Login.tsx               # Punto de entrada de doctores/admins en "/login"
 │   │   ├── NotFound.tsx            # Catch-all 404 (en español); su CTA lleva a la landing "/"
 │   │   ├── GoogleCalendarSuccess.tsx / OutlookCalendarSuccess.tsx  # Popups de OAuth
-│   │   ├── admin/                  # Módulos: Inicio, Agenda (embebe Calendario y Reservas), Doctores, Casos, WhatsApp, Automatizacion; Configuracion (pestañas AgenteIA, Alertas, Catalogos, Webhooks, ApiKeys); Inbox embebido en Inicio
+│   │   ├── admin/                  # Módulos: Inicio, Agenda (embebe Calendario y Reservas), Doctores, Casos, WhatsApp, Automatizacion; Configuracion (pestañas Usuarios, AgenteIA, Alertas, Catalogos, Webhooks, ApiKeys); Inbox embebido en Inicio
 │   │   ├── doctor/                 # Inicio (embebe DoctorInbox), Agenda, PorCompletar, Configuracion
 │   │   ├── patient/                # Reserva, Gestionar (acceso por token, sin login)
 │   │   └── legal/                  # Privacidad, Terminos (rutas públicas /privacidad y /terminos, sin login)
@@ -146,8 +146,9 @@ Enum `app_role` (SQL): `superadmin | admin | doctor`. El rol se lee de `public.u
   - `/admin/casos` → cola de casos y canalización humana (B6): tomar, seguimiento, notas, cierre con motivo. Escrituras vía Edge Function `case-actions`. Etapa 2: botón "Nuevo caso", panel "Reembolso" y origen post‑consulta (tipo de manejo, cita) en el detalle; `?caso=<id>` abre un caso.
   - `/admin/whatsapp` → bandeja de WHAAPY (`https://app.whaapy.com/inbox`) embebida en iframe al 75 % de zoom.
   - `/admin/automatizacion` → mensajes de WhatsApp por evento (los envía FindMed por la API de WHAAPY; activo/pausado por evento), historial de envíos con recibos y reenvío, catálogo de plantillas (`?tab=envios|plantillas`). Escrituras vía `messaging-admin`.
-- **Configuración** (desde el engrane, `/admin/configuracion/:tab`): `agente-ia` (conexión, actividad, errores, resumen del catálogo de triaje con enlace a Catálogos → Triaje), `alertas` (números de guardia por WhatsApp, SLA de casos, plantilla, alerta de prueba y avisos del navegador), `catalogos` (especialidades, ciudades, zonas, hospitales, laboratorios y **triaje**: `?catalogo=triaje&vista=condiciones|mapeo|probar` — condiciones del triaje con filtros, alta/edición/duplicado/activar/eliminar, validación clínica e historial; mapeo de especialidades con aviso de especialidades sin médicos activos; probador que corre el motor real. Escrituras solo vía `triage-admin`), `webhooks` y `api-keys` (estos dos protegidos por [PasswordGate](src/components/admin/PasswordGate.tsx), que pide la contraseña de la propia cuenta del admin y desbloquea 30 min; no hay contraseña compartida).
-- Las rutas anteriores (`/admin/calendario`, `/admin/reservas`, `/admin/inbox`, `/admin/mensajeria`, `/admin/agente-ia`, `/admin/catalogos`, `/admin/webhooks`, `/admin/api-keys`) redirigen a las nuevas.
+- **Configuración** (desde el engrane, `/admin/configuracion/:tab`): `usuarios` (cuentas del equipo que entran al panel: lista con rol, último acceso en hora CDMX y estado; "Nuevo usuario" con correo + contraseña definida ahí mismo, botón "Generar" y resumen "Comparte estos datos de acceso" que se muestra una sola vez; "Cambiar contraseña", "Desactivar/Reactivar acceso". Todo vía `admin-users`), `agente-ia` (conexión, actividad, errores, resumen del catálogo de triaje con enlace a Catálogos → Triaje), `alertas` (números de guardia por WhatsApp, SLA de casos, plantilla, alerta de prueba y avisos del navegador), `catalogos` (especialidades, ciudades, zonas, hospitales, laboratorios y **triaje**: `?catalogo=triaje&vista=condiciones|mapeo|probar` — condiciones del triaje con filtros, alta/edición/duplicado/activar/eliminar, validación clínica e historial; mapeo de especialidades con aviso de especialidades sin médicos activos; probador que corre el motor real. Escrituras solo vía `triage-admin`), `webhooks` y `api-keys` (estos dos protegidos por [PasswordGate](src/components/admin/PasswordGate.tsx), que pide la contraseña de la propia cuenta del admin y desbloquea 30 min; no hay contraseña compartida).
+- **Cuentas del equipo (admin/superadmin) solo se crean en Configuración → Usuarios** (`admin-users`): el registro público de Supabase Auth está desactivado (`disable_signup = true`), no hay invitaciones por correo ni Google. Nunca crearlas a mano (SQL, dashboard): la cuenta necesita las tres piezas juntas (`auth.users` confirmado, `public.users` con el rol y sin `initial_password`, `user_roles`). Un admin no crea superadmins ni toca la cuenta de uno; nadie se desactiva a sí mismo y siempre queda al menos un admin activo. Los médicos siguen en Doctores (`create-doctor`, `update-doctor-credentials`).
+- Las rutas anteriores (`/admin/calendario`, `/admin/reservas`, `/admin/inbox`, `/admin/mensajeria`, `/admin/agente-ia`, `/admin/catalogos`, `/admin/webhooks`, `/admin/api-keys`, `/admin/usuarios`) redirigen a las nuevas.
 
 ### doctor
 
@@ -222,6 +223,7 @@ Schema `public`. Todas las tablas tienen **RLS habilitado**. Tipos completos en 
 - `has_role(_user_id, _role)` → boolean
 - `is_admin_or_superadmin(_user_id)` → boolean
 - `get_doctor_id_for_user(_user_id)` → uuid
+- `revoke_user_sessions(_user_id)` → integer — borra las sesiones de Auth del usuario (`auth.sessions` + `refresh_tokens`). Solo `service_role` (la llama `admin-users` al desactivar un acceso). Migración `20261020120000`.
 
 Usadas en políticas RLS para evitar recursión y decidir acceso.
 
@@ -257,6 +259,7 @@ Todas están en `supabase/functions/<nombre>/index.ts`, usan Deno, comparten `co
 | `generate-manage-link` | Genera/reusa un token para enviar al paciente el link `/gestionar`. Requiere API key `fm_` o service key. |
 | `create-doctor` | Admin crea usuario auth + fila en `doctors` + `users` + `doctor_schedule_settings`. |
 | `update-doctor-credentials` | Admin cambia correo y/o contraseña de un doctor: actualiza `public.users` y `auth.users` juntos y revierte `public.users` si Auth falla (ERRORES.md 2026-05-01). `verify_jwt = true`. |
+| `admin-users` | Cuentas del equipo (Configuración → Usuarios). Acciones: `list` (admins/superadmins con último acceso y estado de Auth; no lista médicos), `create` (`auth.admin.createUser` con `email_confirm: true` → `public.users` → `user_roles`, todo o nada con el paso que falló; correo duplicado → 409 "Ya existe una cuenta con ese correo"), `set_password`, `set_active` (ban de Auth `876000h` + `revoke_user_sessions`; reactivar = `ban_duration: "none"`), `update_email` (public.users + Auth con rollback). Contraseña ≥ 8 con letras y números; nunca se devuelve, se registra en logs ni se guarda en `initial_password` (al cambiarla se limpia la copia vieja). `superadmin` solo por un superadmin. Lógica en `handler.ts` (pruebas: `supabase/tests/admin-users_test.ts`). `verify_jwt = false` + `requireAdmin` en código. |
 | `search-doctors` | Endpoint público con API key para buscar doctores (usado por el triaje externo). |
 
 ### Gestión de citas por admin (Mejora 1)
@@ -441,7 +444,7 @@ La página `/admin/webhooks` gestiona los endpoints suscritos y `/admin/api-keys
   - **Usuario autenticado**: verificar el JWT con `auth.getClaims` o cliente anon con el header `Authorization`.
   - **API Key externa**: header `Authorization: Bearer fm_…`, validar contra `api_keys.key_hash` (SHA‑256 hex).
 - El CORS header `Access-Control-Allow-Headers` incluye los propios de supabase‑js v2 (`x-supabase-client-*`); mantenerlos al copiar a funciones nuevas.
-- Toda función nueva lleva su entrada `[functions.<nombre>]` con `verify_jwt` explícito en `supabase/config.toml` (hoy las 49 la tienen y coinciden con producción).
+- Toda función nueva lleva su entrada `[functions.<nombre>]` con `verify_jwt` explícito en `supabase/config.toml` (hoy las 50 la tienen; `admin-users` es nueva y se agrega a producción en su primer deploy).
 - `.select()` siempre con **un solo literal** de columnas (nunca `"a, " + "b"` ni una constante armada por concatenación): supabase-js deduce el tipo de la fila del literal; una concatenación lo vuelve `GenericStringError` y `deno check` falla (N15).
 - Imports remotos: hoy `https://esm.sh/@supabase/supabase-js@2` (rango flotante: cada deploy empaqueta la última 2.x), salvo `create-doctor` fijado a `@2.49.4`, y `deno.land/std@0.168.0` (`serve`) en las 14 funciones de calendario. No agregar más versiones distintas; ver riesgos en `docs/findmed-migration/estado-ejecucion.md`.
 - **Ninguna función con `verify_jwt = false` puede quedar sin auth en código.** Elegir explícitamente: token de paciente, `verifyApiKey`, `isServiceRequest` o `verifyJwtClaims`/`requireAdmin*`. Nunca decodificar un JWT con `atob` sin verificar firma.

@@ -116,6 +116,11 @@ verify_jwt = false
 [functions.triage-admin]
 verify_jwt = false
 
+# Team accounts (Configuración → Usuarios): create, password, enable/disable.
+# Auth: admin JWT verified in code (requireAdmin).
+[functions.admin-users]
+verify_jwt = false
+
 
 # Gateway verifies the user JWT (default). Declared explicitly so every
 # function in supabase/functions has an entry here and a deploy never

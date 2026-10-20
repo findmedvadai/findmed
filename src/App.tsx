@@ -119,6 +119,7 @@ const App = () => (
                 <Route path="/admin/catalogos" element={<Navigate to="/admin/configuracion/catalogos" replace />} />
                 <Route path="/admin/webhooks" element={<Navigate to="/admin/configuracion/webhooks" replace />} />
                 <Route path="/admin/api-keys" element={<Navigate to="/admin/configuracion/api-keys" replace />} />
+                <Route path="/admin/usuarios" element={<Navigate to="/admin/configuracion/usuarios" replace />} />
               </Route>
 
               {/* Doctor routes */}
