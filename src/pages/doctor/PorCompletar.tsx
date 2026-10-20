@@ -26,6 +26,7 @@ import {
 } from "@/lib/management-type";
 import { CalendarDays, CheckCircle2, Phone, Send, Pill, ScanLine, FlaskConical, UserRoundPlus, Building2 } from "lucide-react";
 import { userErrorMessage } from "@/lib/edge-function-error";
+import { appointmentPatientName } from "@/lib/patient-name";
 
 const TOGGLE_FIELDS = [
   { key: "prescribed_medications", label: "Se recetaron medicamentos", placeholder: "Nombres, dosis y frecuencia...", icon: Pill },
@@ -66,7 +67,7 @@ export default function PorCompletar() {
       const nowIso = new Date().toISOString();
       const { data, error } = await supabase
         .from("appointments")
-        .select("id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone), post_consultation_forms(id)")
+        .select("id, start_at, end_at, status, symptoms, doctor_notes, patient_name, patients(full_name, phone), post_consultation_forms(id)")
         .eq("doctor_id", doctorId)
         .is("doctor_notes", null)
         .or(`status.eq.completed,and(status.eq.confirmed,end_at.lt.${nowIso})`)
@@ -157,7 +158,7 @@ export default function PorCompletar() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <p className={cn("truncate text-sm font-medium", active ? "text-primary" : "text-foreground")}>
-                            {appt.patients?.full_name ?? "Paciente desconocido"}
+                            {appointmentPatientName(appt, "Paciente desconocido")}
                           </p>
                           <span className="shrink-0 text-[11px] text-muted-foreground">{pendingFor(appt.start_at)}</span>
                         </div>
@@ -200,6 +201,7 @@ interface PostConsultationFormProps {
     status: string;
     symptoms: string | null;
     doctor_notes: string | null;
+    patient_name?: string | null;
     patients: { full_name: string; phone: string } | null;
   };
   doctorId: string;
@@ -232,6 +234,8 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
 
   const start = parseISO(appointment.start_at);
   const patient = appointment.patients as { full_name: string; phone: string } | null;
+  // Quien se atiende en esta cita (puede ser un familiar del titular del teléfono).
+  const patientName = appointmentPatientName(appointment, "Paciente desconocido");
 
   const handleToggle = (key: ToggleKey, checked: boolean) => {
     setToggles((prev) => ({ ...prev, [key]: checked }));
@@ -294,7 +298,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
         type: "postconsultation_submitted",
         title: "Formulario post-consulta enviado",
         // El nombre ya trae el título ("Dra. Mariana…"): no anteponer "Dr.".
-        body: `${doctorData?.full_name ?? "El doctor"} envió formulario post-consulta para ${patient?.full_name ?? "Paciente"} (${formatMx(start, "d MMM yyyy", { locale: es })})`,
+        body: `${doctorData?.full_name ?? "El doctor"} envió formulario post-consulta para ${patientName} (${formatMx(start, "d MMM yyyy", { locale: es })})`,
       });
 
       // Dispatch webhook
@@ -304,7 +308,7 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
             event_type: "postconsultation.submitted",
             payload: {
               appointment_id: appointment.id,
-              patient_name: patient?.full_name,
+              patient_name: patientName,
               patient_phone: patient?.phone,
               doctor_name: doctorData?.full_name,
               start_at: appointment.start_at,
@@ -340,10 +344,10 @@ function PostConsultationForm({ appointment, doctorId, onSaved }: PostConsultati
       <CardHeader className="flex flex-col gap-3 space-y-0 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-            {initials(patient?.full_name)}
+            {initials(patientName)}
           </div>
           <div className="min-w-0">
-            <CardTitle className="truncate text-sm font-semibold">{patient?.full_name ?? "Paciente desconocido"}</CardTitle>
+            <CardTitle className="truncate text-sm font-semibold">{patientName}</CardTitle>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <CalendarDays className="h-3 w-3" />

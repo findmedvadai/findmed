@@ -37,6 +37,7 @@ import { EmptyState } from "@/components/app/EmptyState";
 import { AppointmentStatusBadge, SoftBadge } from "@/components/app/StatusBadge";
 import { DocumentsBadge } from "@/components/app/PatientInsurance";
 import { APPOINTMENT_STATUS } from "@/lib/appointment-status";
+import { appointmentPatientName, titularIfDifferent } from "@/lib/patient-name";
 import { formatMx, getMexicoWeekBounds, isSameMexicoDay } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +71,7 @@ interface AppointmentRow {
   cancel_reason: string | null;
   documents_requested_at: string | null;
   documents_received_at: string | null;
+  patient_name: string | null;
   patients: { full_name: string; phone: string } | null;
   doctors: {
     id: string;
@@ -130,7 +132,7 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
         .from("appointments")
         .select(`
           id, start_at, end_at, status, symptoms, doctor_notes, cancel_reason,
-          documents_requested_at, documents_received_at,
+          documents_requested_at, documents_received_at, patient_name,
           patients(full_name, phone),
           doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name))),
           doctor_offices(id, name, city_id, zone_id)
@@ -188,6 +190,7 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
       items = items.filter(
         (a) =>
           a.patients?.full_name?.toLowerCase().includes(q) ||
+          a.patient_name?.toLowerCase().includes(q) ||
           a.patients?.phone?.includes(q) ||
           a.doctors?.full_name?.toLowerCase().includes(q)
       );
@@ -421,7 +424,10 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
                         }}
                       >
                         <TableCell className="py-2.5">
-                          <p className="font-medium text-foreground">{a.patients?.full_name ?? "—"}</p>
+                          <p className="font-medium text-foreground">{appointmentPatientName(a, "—")}</p>
+                          {titularIfDifferent(a) && (
+                            <p className="text-xs text-muted-foreground">Titular: {titularIfDifferent(a)}</p>
+                          )}
                           <p className="text-xs text-muted-foreground">{a.patients?.phone ?? "Sin teléfono"}</p>
                           <AppointmentStatusBadge status={a.status} className="mt-1.5 md:hidden" />
                         </TableCell>
@@ -506,7 +512,7 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
             <>
               <DialogHeader className="space-y-2 pr-6">
                 <div className="flex flex-wrap items-center gap-2">
-                  <DialogTitle className="text-base">{selectedAppt.patients?.full_name ?? "Detalle de cita"}</DialogTitle>
+                  <DialogTitle className="text-base">{appointmentPatientName(selectedAppt, "Detalle de cita")}</DialogTitle>
                   <AppointmentStatusBadge status={selectedAppt.status} />
                   {selectedAppt.cancel_reason && (
                     <SoftBadge tone="neutral">
@@ -521,6 +527,9 @@ export default function Reservas({ embedded = false }: { embedded?: boolean } = 
               </DialogHeader>
 
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-3">
+                {titularIfDifferent(selectedAppt) && (
+                  <DetailField label="Titular del teléfono">{titularIfDifferent(selectedAppt)}</DetailField>
+                )}
                 <DetailField label="Teléfono">{selectedAppt.patients?.phone ?? "—"}</DetailField>
                 <DetailField label="Doctor">{selectedAppt.doctors?.full_name ?? "—"}</DetailField>
                 <DetailField label="Especialidad">{getSpecialty(selectedAppt)}</DetailField>

@@ -9,6 +9,7 @@ import { deleteAppointmentEvents } from "../_shared/calendar-sync.ts";
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 interface Body {
   appointment_id: string;
@@ -37,7 +38,7 @@ Deno.serve(async (req) => {
 
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, doctor_id, office_id, patient_id, status, start_at, end_at, google_event_id, outlook_event_id")
+    .select("id, doctor_id, office_id, patient_id, patient_name, status, start_at, end_at, google_event_id, outlook_event_id")
     .eq("id", appointment_id)
     .maybeSingle();
 
@@ -88,6 +89,7 @@ Deno.serve(async (req) => {
     .select("full_name, phone")
     .eq("id", appointment.patient_id)
     .maybeSingle();
+  const attended = attendedName(appointment.patient_name, patient?.full_name);
 
   // Delete external events (best-effort; shared helper with timeouts and
   // per-provider result, _shared/calendar-sync.ts).
@@ -100,7 +102,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_cancelled_by_admin",
     title: "Cita cancelada por admin",
-    body: `${patient?.full_name ?? "Paciente"} - ${formatMxLongDateTime(appointment.start_at)}`,
+    body: `${attended ?? "Paciente"} - ${formatMxLongDateTime(appointment.start_at)}`,
   });
 
   // WhatsApp dispatch — both doctor and patient.
@@ -130,7 +132,7 @@ Deno.serve(async (req) => {
             source: "admin",
             previous_status: previousStatus,
             cancel_reason: "admin",
-            patient_name: patient?.full_name ?? null,
+            patient_name: attended,
             patient_phone: patient?.phone ?? null,
             doctor_name: doctor?.full_name ?? null,
             doctor_id: appointment.doctor_id,
@@ -156,7 +158,7 @@ Deno.serve(async (req) => {
             new_status: "cancelled",
             cancel_reason: "admin",
             patient_phone: patient?.phone ?? null,
-            patient_name: patient?.full_name ?? null,
+            patient_name: attended,
             start_at: appointment.start_at,
             timestamp: new Date().toISOString(),
             manage_url: manageUrl,

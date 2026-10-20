@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
   // — we surface its name and address to the patient on the reservation page.
   const { data: session, error: sessionError } = await supabase
     .from("reservation_sessions")
-    .select("id, doctor_id, office_id, patient_id, symptoms, expires_at, used_at")
+    .select("id, doctor_id, office_id, patient_id, patient_name, symptoms, expires_at, used_at")
     .eq("token", token)
     .maybeSingle();
 
@@ -112,7 +113,7 @@ Deno.serve(async (req) => {
       doctor_address: officeAddress,
       office_name: officeName,
       office_address: officeAddress,
-      patient_name: patient?.full_name ?? "Paciente",
+      patient_name: attendedName(session.patient_name, patient?.full_name) ?? "Paciente",
       symptoms: session.symptoms,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

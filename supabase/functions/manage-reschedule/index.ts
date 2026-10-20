@@ -7,6 +7,7 @@ import { formatMxLongDateTime, isValidLocalDate, isValidLocalTime, msToMxIso, mx
 import { carryOverDocuments } from "../_shared/patient-documents.ts";
 import { repointManageTokens } from "../_shared/manage-token.ts";
 import { externalTimeout } from "../_shared/http-timeout.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -83,7 +84,7 @@ Deno.serve(async (req) => {
   // reschedule on the same office.
   const { data: oldAppt } = await supabase
     .from("appointments")
-    .select("id, doctor_id, office_id, patient_id, symptoms, google_event_id, outlook_event_id, status, start_at")
+    .select("id, doctor_id, office_id, patient_id, patient_name, symptoms, google_event_id, outlook_event_id, status, start_at")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -131,6 +132,8 @@ Deno.serve(async (req) => {
     .select("full_name")
     .eq("id", oldAppt.patient_id)
     .maybeSingle();
+  // The new appointment keeps who is attended (garantía 20-oct-2026).
+  const attended = attendedName(oldAppt.patient_name, patient?.full_name) ?? "Paciente";
 
   const durationMinutes = office?.appointment_duration_minutes ?? 30;
 
@@ -184,6 +187,7 @@ Deno.serve(async (req) => {
       doctor_id: oldAppt.doctor_id,
       office_id: oldAppt.office_id,
       patient_id: oldAppt.patient_id,
+      patient_name: oldAppt.patient_name ?? null,
       start_at: startAt,
       end_at: endAt,
       status: newStatus,
@@ -269,7 +273,7 @@ Deno.serve(async (req) => {
     const calendarId = encodeURIComponent(office.google_calendar_id);
     try {
       const eventBody = {
-        summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
+        summary: `Cita: ${attended}`,
         description: oldAppt.symptoms ? `Síntomas: ${oldAppt.symptoms}` : undefined,
         start: { dateTime: startAt, timeZone: "America/Mexico_City" },
         end: { dateTime: endAt, timeZone: "America/Mexico_City" },
@@ -307,7 +311,7 @@ Deno.serve(async (req) => {
     const calendarId = encodeURIComponent(office.outlook_calendar_id);
     try {
       const eventBody = {
-        subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
+        subject: `Cita: ${attended}`,
         body: oldAppt.symptoms ? { contentType: "Text", content: `Síntomas: ${oldAppt.symptoms}` } : undefined,
         start: { dateTime: startAt, timeZone: "America/Mexico_City" },
         end: { dateTime: endAt, timeZone: "America/Mexico_City" },
@@ -350,7 +354,7 @@ Deno.serve(async (req) => {
       recipient_role: "doctor",
       type: "appointment_cancelled_by_patient",
       title: "Cita reagendada (anterior cancelada)",
-      body: `${patient?.full_name ?? "Paciente"} reagendó su cita`,
+      body: `${attended} reagendó su cita`,
     },
     {
       doctor_id: oldAppt.doctor_id,
@@ -358,7 +362,7 @@ Deno.serve(async (req) => {
       recipient_role: "doctor",
       type: "appointment_scheduled",
       title: "Nueva cita (reagendada)",
-      body: `${patient?.full_name ?? "Paciente"} - ${formatMxLongDateTime(startAt)}`,
+      body: `${attended} - ${formatMxLongDateTime(startAt)}`,
     },
   ]);
 
@@ -379,7 +383,7 @@ Deno.serve(async (req) => {
           payload: {
             old_appointment_id: oldAppt.id,
             new_appointment_id: newAppt.id,
-            patient_name: patient?.full_name,
+            patient_name: attended,
             patient_phone: manageToken.patient_phone ?? null,
             doctor_name: doctor?.full_name,
             new_start_at: startAt,
@@ -397,7 +401,7 @@ Deno.serve(async (req) => {
           payload: {
             appointment_id: newAppt.id,
             patient_phone: manageToken.patient_phone ?? null,
-            patient_name: patient?.full_name ?? null,
+            patient_name: attended,
             previous_status: oldAppt.status,
             new_status: newStatus,
             start_at: startAt,
@@ -420,7 +424,7 @@ Deno.serve(async (req) => {
       appointment_id: newAppt.id,
       status: newStatus,
       doctor_name: doctor?.full_name ?? "Doctor",
-      patient_name: patient?.full_name ?? "Paciente",
+      patient_name: attended,
       start_at: startAt,
       end_at: endAt,
     }),

@@ -97,6 +97,7 @@ export type Database = {
           office_id: string | null
           outlook_event_id: string | null
           patient_id: string
+          patient_name: string | null
           reminder_48h_sent_at: string | null
           reminder_day_of_sent_at: string | null
           start_at: string
@@ -121,6 +122,7 @@ export type Database = {
           office_id?: string | null
           outlook_event_id?: string | null
           patient_id: string
+          patient_name?: string | null
           reminder_48h_sent_at?: string | null
           reminder_day_of_sent_at?: string | null
           start_at: string
@@ -145,6 +147,7 @@ export type Database = {
           office_id?: string | null
           outlook_event_id?: string | null
           patient_id?: string
+          patient_name?: string | null
           reminder_48h_sent_at?: string | null
           reminder_day_of_sent_at?: string | null
           start_at?: string
@@ -1556,6 +1559,7 @@ export type Database = {
           id: string
           office_id: string | null
           patient_id: string
+          patient_name: string | null
           symptoms: string | null
           token: string
           used_at: string | null
@@ -1567,6 +1571,7 @@ export type Database = {
           id?: string
           office_id?: string | null
           patient_id: string
+          patient_name?: string | null
           symptoms?: string | null
           token: string
           used_at?: string | null
@@ -1578,6 +1583,7 @@ export type Database = {
           id?: string
           office_id?: string | null
           patient_id?: string
+          patient_name?: string | null
           symptoms?: string | null
           token?: string
           used_at?: string | null

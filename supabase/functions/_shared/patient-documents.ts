@@ -15,6 +15,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { formatMxDateTime } from "./messaging.ts";
 import { mxDayBoundsMs, mxToday } from "./mx-time.ts";
 import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "./phone.ts";
+import { attendedName } from "./patient-identity.ts";
 
 /** Template that asks for the documents (message_route_steps). */
 export const DOCUMENTS_TEMPLATE = "pedir_documentos";
@@ -62,6 +63,7 @@ interface UpcomingRow {
   id: string;
   doctor_id: string;
   patient_id: string;
+  patient_name?: string | null;
   start_at: string;
   documents_requested_at: string | null;
   documents_received_at: string | null;
@@ -98,7 +100,7 @@ export async function markDocumentsReceived(
   const { startMs } = mxDayBoundsMs(mxToday(now));
   const { data: appts, error: aErr } = await supabase
     .from("appointments")
-    .select("id, doctor_id, patient_id, start_at, documents_requested_at, documents_received_at")
+    .select("id, doctor_id, patient_id, patient_name, start_at, documents_requested_at, documents_received_at")
     .in("patient_id", people.map((p) => p.id))
     .in("status", ["scheduled", "confirmed"])
     .gte("start_at", new Date(startMs).toISOString())
@@ -141,7 +143,7 @@ export async function markDocumentsReceived(
       .select("id");
     if (uErr || !won || (won as unknown[]).length === 0) continue; // already marked by a concurrent event
     marked.push(a.id);
-    const name = nameOf[a.patient_id]?.trim() || "Paciente";
+    const name = attendedName(a.patient_name, nameOf[a.patient_id]) ?? "Paciente";
     const { error: nErr } = await supabase.from("notifications").insert({
       recipient_role: "admin",
       doctor_id: a.doctor_id,

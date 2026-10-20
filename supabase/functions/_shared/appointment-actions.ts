@@ -17,6 +17,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { deleteAppointmentEvents, type CalendarDeleteResult } from "./calendar-sync.ts";
 import { emitEvent, manageUrlFor } from "./events.ts";
 import { formatMxLongDateTime } from "./mx-time.ts";
+import { attendedName } from "./patient-identity.ts";
 
 export type PatientAction = "confirm" | "cancel";
 export type ActionChannel = "web" | "whatsapp" | "mcp" | "api";
@@ -63,7 +64,7 @@ interface ActionInput {
 export async function applyPatientAction(supabase: SupabaseClient, input: ActionInput): Promise<ActionResult> {
   const { data: appt, error: readErr } = await supabase
     .from("appointments")
-    .select("id, status, doctor_id, office_id, patient_id, start_at, end_at, google_event_id, outlook_event_id")
+    .select("id, status, doctor_id, office_id, patient_id, patient_name, start_at, end_at, google_event_id, outlook_event_id")
     .eq("id", input.appointmentId)
     .maybeSingle();
   if (readErr) return fail("db_error");
@@ -99,7 +100,7 @@ export async function applyPatientAction(supabase: SupabaseClient, input: Action
     .select("full_name, phone")
     .eq("id", appt.patient_id)
     .maybeSingle();
-  const patientName = patient?.full_name ?? "Paciente";
+  const patientName = attendedName(appt.patient_name, patient?.full_name) ?? "Paciente";
   const when = formatMxLongDateTime(appt.start_at); // "martes 14 de octubre, 10:00"
   const via = input.channel === "whatsapp" || input.channel === "mcp" ? " vía WhatsApp" : "";
 
@@ -128,7 +129,7 @@ export async function applyPatientAction(supabase: SupabaseClient, input: Action
   const payload = {
     appointment_id: appt.id,
     doctor_id: appt.doctor_id,
-    patient_name: patient?.full_name ?? null,
+    patient_name: attendedName(appt.patient_name, patient?.full_name),
     patient_phone: patient?.phone ?? null,
     start_at: appt.start_at,
     end_at: appt.end_at,

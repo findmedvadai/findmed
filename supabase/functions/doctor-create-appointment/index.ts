@@ -16,7 +16,8 @@ import { requireAdminOrDoctor } from "../_shared/auth.ts";
 import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { checkAvailability } from "../_shared/availability-check.ts";
 import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar-tokens.ts";
-import { normalizeMxPhone, mxPhoneLookupVariants, isValidNormalizedPhone } from "../_shared/phone.ts";
+import { normalizeMxPhone, isValidNormalizedPhone } from "../_shared/phone.ts";
+import { cleanPersonName, matchOrCreatePatient } from "../_shared/patient-identity.ts";
 import { createManageToken } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { externalTimeout } from "../_shared/http-timeout.ts";
@@ -128,35 +129,17 @@ Deno.serve(async (req) => {
   if (!isValidNormalizedPhone(normalizedPhone)) {
     return jsonResponse({ error: "Teléfono inválido. Usa 10 dígitos (México) o el formato internacional con +." }, 400);
   }
-  const lookupVariants = mxPhoneLookupVariants(normalizedPhone);
-  const fullName = patient.full_name.trim();
+  // `patient.full_name` is who is attended in THIS appointment; with a known
+  // phone it can be a relative of the titular, who is never renamed
+  // (garantía 20-oct-2026). It is stored on the appointment as patient_name.
+  const fullName = cleanPersonName(patient.full_name) ?? patient.full_name.trim();
 
-  let patientId: string;
-  const { data: matchedPatients } = await supabase
-    .from("patients")
-    .select("id, full_name, phone")
-    .in("phone", lookupVariants)
-    .order("created_at", { ascending: true })
-    .limit(1);
-  const existingPatient = matchedPatients?.[0];
-
-  if (existingPatient) {
-    patientId = existingPatient.id;
-    if (fullName && fullName !== existingPatient.full_name) {
-      await supabase.from("patients").update({ full_name: fullName }).eq("id", patientId);
-    }
-  } else {
-    const { data: newPatient, error: insertErr } = await supabase
-      .from("patients")
-      .insert({ full_name: fullName, phone: normalizedPhone })
-      .select("id")
-      .single();
-    if (insertErr || !newPatient) {
-      console.error("[doctor-create-appointment] patient insert failed:", insertErr);
-      return jsonResponse({ error: "No se pudo crear el paciente" }, 500);
-    }
-    patientId = newPatient.id;
+  const matched = await matchOrCreatePatient(supabase, { canonicalPhone: normalizedPhone, name: fullName });
+  if (!matched.ok) {
+    console.error("[doctor-create-appointment] patient match/insert failed:", matched.error);
+    return jsonResponse({ error: "No se pudo crear el paciente" }, 500);
   }
+  const patientId = matched.patientId;
 
   // Create appointment (status = confirmed, source = doctor_manual).
   const { data: appointment, error: apptErr } = await supabase
@@ -165,6 +148,7 @@ Deno.serve(async (req) => {
       doctor_id,
       office_id,
       patient_id: patientId,
+      patient_name: fullName,
       start_at,
       end_at,
       status: "confirmed",

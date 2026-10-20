@@ -21,6 +21,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOrCreateManageUrl } from "./manage-token.ts";
 import { msToMxIso } from "./mx-time.ts";
+import { attendedName } from "./patient-identity.ts";
 import type { WhaapyClient } from "./whaapy-client.ts";
 
 export type RouteOwner = "n8n" | "findmed" | "none";
@@ -115,7 +116,7 @@ export interface AppointmentContext {
 export async function loadAppointmentContext(supabase: SupabaseClient, appointmentId: string): Promise<AppointmentContext | null> {
   const { data: appt } = await supabase
     .from("appointments")
-    .select("id, status, cancel_reason, start_at, end_at, doctor_id, office_id, patient_id")
+    .select("id, status, cancel_reason, start_at, end_at, doctor_id, office_id, patient_id, patient_name")
     .eq("id", appointmentId)
     .maybeSingle();
   if (!appt) return null;
@@ -136,7 +137,9 @@ export async function loadAppointmentContext(supabase: SupabaseClient, appointme
     cancel_reason: a.cancel_reason ?? null,
     start_at: a.start_at!,
     end_at: a.end_at!,
-    patient_name: p?.full_name ?? null,
+    // Greets who is attended in this appointment (a relative can book with the
+    // titular's phone, garantía 20-oct-2026); the message still goes to the phone.
+    patient_name: attendedName(a.patient_name, p?.full_name),
     patient_phone: p?.phone ?? null,
     doctor_name: (doctor as { full_name?: string } | null)?.full_name ?? null,
     // 9 bookable offices had no address (14-oct): without a fallback every

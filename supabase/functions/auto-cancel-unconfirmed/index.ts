@@ -4,6 +4,7 @@ import { isServiceRequest } from "../_shared/service-auth.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
 import { deleteAppointmentEvents } from "../_shared/calendar-sync.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,7 +37,7 @@ Deno.serve(async (req) => {
   const { data: appointments, error } = await supabase
     .from("appointments")
     .select(`
-      id, start_at, end_at, doctor_id, patient_id, office_id, google_event_id, outlook_event_id,
+      id, start_at, end_at, doctor_id, patient_id, patient_name, office_id, google_event_id, outlook_event_id,
       doctors(full_name),
       patients(full_name, phone)
     `)
@@ -65,6 +66,7 @@ Deno.serve(async (req) => {
 
   for (const appt of appointments) {
     const patient = appt.patients as unknown as { full_name: string; phone: string } | null;
+    const attended = attendedName(appt.patient_name, patient?.full_name);
     const doctor = appt.doctors as unknown as { full_name: string } | null;
 
     // Query settings separately since there's no FK between appointments and doctor_schedule_settings
@@ -112,7 +114,7 @@ Deno.serve(async (req) => {
         recipient_role: "doctor",
         type: "appointment_auto_cancelled",
         title: "Cita auto-cancelada",
-        body: `${patient?.full_name ?? "Paciente"} no confirmó a tiempo. La cita del ${formatMxLongDateTime(appt.start_at ?? "")} fue cancelada.`,
+        body: `${attended ?? "Paciente"} no confirmó a tiempo. La cita del ${formatMxLongDateTime(appt.start_at ?? "")} fue cancelada.`,
       });
 
       // Generate reschedule token. Auto-cancellation gives the patient 24h to
@@ -146,7 +148,7 @@ Deno.serve(async (req) => {
               payload: {
                 appointment_id: appt.id,
                 patient_phone: patient?.phone ?? null,
-                patient_name: patient?.full_name ?? null,
+                patient_name: attended,
                 doctor_name: doctor?.full_name ?? null,
                 start_at: appt.start_at,
                 cancel_reason: "no_confirmation",
@@ -167,7 +169,7 @@ Deno.serve(async (req) => {
               payload: {
                 appointment_id: appt.id,
                 patient_phone: patient?.phone ?? null,
-                patient_name: patient?.full_name ?? null,
+                patient_name: attended,
                 previous_status: "scheduled",
                 new_status: "cancelled",
                 start_at: appt.start_at,

@@ -24,6 +24,7 @@ import {
   isSameMexicoDay,
 } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
+import { appointmentPatientName } from "@/lib/patient-name";
 
 type AppointmentStatus = Database["public"]["Enums"]["appointment_status"];
 
@@ -182,7 +183,7 @@ export default function Agenda() {
       let q = supabase
         .from("appointments")
         .select(
-          "id, office_id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, patients(full_name, phone), doctor_offices(name)"
+          "id, office_id, google_event_id, outlook_event_id, start_at, end_at, status, symptoms, doctor_notes, patient_name, patients(full_name, phone), doctor_offices(name)"
         )
         .eq("doctor_id", doctorId)
         .gte("start_at", weekStart.toISOString())
@@ -253,7 +254,7 @@ export default function Agenda() {
         type: "appointment",
         start: parseISO(appt.start_at),
         end: parseISO(appt.end_at),
-        title: patient?.full_name ?? "Paciente desconocido",
+        title: appointmentPatientName(appt, "Paciente desconocido"),
         status: appt.status as AppointmentStatus,
         phone: patient?.phone ?? undefined,
         symptoms: appt.symptoms ?? undefined,

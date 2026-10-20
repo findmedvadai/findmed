@@ -29,6 +29,7 @@ import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { commitAction, getOperation, prepareAction } from "../_shared/operations.ts";
 import { getMyCases, openCase, PRIORITIES, REQUEST_TYPES, requestHandoff, type Priority, type RequestType } from "../_shared/cases.ts";
 import { createWhaapyClient, type WhaapyClient } from "../_shared/whaapy-client.ts";
+import { scheduleWhaapyContactSync } from "../_shared/whaapy-contact-sync.ts";
 import { ALL_KEYWORDS, suggestSpecialty } from "../_shared/triage.ts";
 import { DATE_PATTERN, type Schema, UUID_PATTERN } from "./schema.ts";
 
@@ -343,7 +344,7 @@ const listAvailableSlotsTool: ToolDef = {
   },
 };
 
-const createBookingLinkTool: ToolDef = {
+const createBookingLinkTool = (whaapy: WhaapyClient): ToolDef => ({
   name: "create_booking_link",
   safety: "mutation_limited",
   description: [
@@ -396,6 +397,9 @@ const createBookingLinkTool: ToolDef = {
       insuranceSaved = saved.ok && saved.saved;
     }
 
+    // Titular name + insurance into the WHAAPY contact (background, best-effort).
+    await scheduleWhaapyContactSync(supabase, whaapy, { phone: String(args.phone), patientId: r.patient_id });
+
     return {
       ok: true,
       status: "success",
@@ -412,11 +416,11 @@ const createBookingLinkTool: ToolDef = {
       },
     };
   },
-};
+});
 
 // --- Insurance (FindMed decision a) -------------------------------------------
 
-const savePatientInsuranceTool: ToolDef = {
+const savePatientInsuranceTool = (whaapy: WhaapyClient): ToolDef => ({
   name: "save_patient_insurance",
   safety: "mutation_limited",
   description: [
@@ -459,6 +463,8 @@ const savePatientInsuranceTool: ToolDef = {
         },
       };
     }
+    // Insurance + titular name into the WHAAPY contact (background, best-effort).
+    await scheduleWhaapyContactSync(supabase, whaapy, { phone: String(args.phone), patientId: r.patient_id });
     return {
       ok: true,
       status: "success",
@@ -471,7 +477,7 @@ const savePatientInsuranceTool: ToolDef = {
       },
     };
   },
-};
+});
 
 // --- Network hospitals and laboratories (FindMed decision c) -----------------
 
@@ -785,7 +791,7 @@ const suggestSpecialtyTool: ToolDef = {
 
 // --- Cases and human handoff (B6: M09/M10/M11) -----------------------------
 
-const openCaseTool: ToolDef = {
+const openCaseTool = (whaapy: WhaapyClient): ToolDef => ({
   name: "open_case",
   safety: "mutation_limited",
   description: [
@@ -824,9 +830,14 @@ const openCaseTool: ToolDef = {
       zone: args.zone ? String(args.zone) : null,
     });
     if (!r.ok) return fail(r.code, r.message_es);
+    // What FindMed knows of this contact (or the name given here) into WHAAPY.
+    await scheduleWhaapyContactSync(supabase, whaapy, {
+      phone: String(args.phone),
+      fallbackName: args.contact_name ? String(args.contact_name) : null,
+    });
     return { ok: true, status: "success", data: { case_id: r.case_id, status: r.status, priority: r.priority, deduplicated: r.deduplicated } };
   },
-};
+});
 
 const requestHandoffTool = (whaapy: WhaapyClient): ToolDef => ({
   name: "request_handoff",
@@ -903,15 +914,15 @@ export function buildTools(opts: { chatActions: boolean; whaapy?: WhaapyClient }
     suggestSpecialtyTool,
     searchCareOptionsTool,
     listAvailableSlotsTool,
-    createBookingLinkTool,
-    savePatientInsuranceTool,
+    createBookingLinkTool(whaapy),
+    savePatientInsuranceTool(whaapy),
     listMyAppointmentsTool,
     prepareAppointmentActionTool,
     getOperationStatusTool,
     ...(opts.chatActions ? [commitAppointmentActionTool] : []),
     findNetworkHospitalsTool,
     findNetworkLaboratoriesTool,
-    openCaseTool,
+    openCaseTool(whaapy),
     requestHandoffTool(whaapy),
     getMyCaseStatusTool,
   ];

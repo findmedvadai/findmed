@@ -57,6 +57,7 @@ import {
   toUtcIso,
 } from "@/lib/timezone";
 import AppointmentDetailDialog from "@/components/admin/AppointmentDetailDialog";
+import { appointmentPatientName } from "@/lib/patient-name";
 import ExternalEventDetailDialog, {
   type ExternalEvent,
 } from "@/components/admin/ExternalEventDetailDialog";
@@ -104,6 +105,7 @@ interface AppointmentRow {
   office_id: string | null;
   google_event_id: string | null;
   outlook_event_id: string | null;
+  patient_name: string | null;
   patients: { full_name: string } | null;
   doctors: {
     id: string;
@@ -367,7 +369,7 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
       const { data, error } = await supabase
         .from("appointments")
         .select(`
-          id, start_at, end_at, status, symptoms, office_id, google_event_id, outlook_event_id,
+          id, start_at, end_at, status, symptoms, office_id, google_event_id, outlook_event_id, patient_name,
           patients(full_name),
           doctors(id, full_name, doctor_specialties(specialty_id, specialties(id, name, color))),
           doctor_offices(id, name)
@@ -457,8 +459,8 @@ export default function Calendario({ embedded = false }: { embedded?: boolean } 
         type: "appointment",
         start: parseISO(a.start_at),
         end: parseISO(a.end_at),
-        title: a.patients?.full_name ?? "Paciente desconocido",
-        patientName: a.patients?.full_name ?? "Paciente desconocido",
+        title: appointmentPatientName(a, "Paciente desconocido"),
+        patientName: appointmentPatientName(a, "Paciente desconocido"),
         doctorId: a.doctors?.id ?? null,
         doctorName: a.doctors?.full_name ?? "Doctor",
         specialtyId: firstSpec?.specialty_id ?? null,

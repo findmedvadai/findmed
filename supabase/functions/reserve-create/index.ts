@@ -6,6 +6,11 @@ import { validateSlotAvailable } from "../_shared/slot-validation.ts";
 import { formatMxLongDateTime, isValidLocalDate, isValidLocalTime, msToMxIso, mxLocalToMs } from "../_shared/mx-time.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { externalTimeout } from "../_shared/http-timeout.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
+import { createWhaapyClient } from "../_shared/whaapy-client.ts";
+import { scheduleWhaapyContactSync } from "../_shared/whaapy-contact-sync.ts";
+
+const whaapy = createWhaapyClient();
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,7 +70,7 @@ Deno.serve(async (req) => {
   // and the external calendar event both go to the right place.
   const { data: session, error: sessionError } = await supabase
     .from("reservation_sessions")
-    .select("id, doctor_id, office_id, patient_id, symptoms, used_at, expires_at")
+    .select("id, doctor_id, office_id, patient_id, patient_name, symptoms, used_at, expires_at")
     .eq("id", session_id)
     .maybeSingle();
 
@@ -167,6 +172,10 @@ Deno.serve(async (req) => {
     .eq("id", session.doctor_id)
     .maybeSingle();
 
+  // Who is attended: the name given when the link was created (can be a
+  // relative of the phone's titular), else the titular (garantía 20-oct-2026).
+  const attended = attendedName(session.patient_name, patient?.full_name) ?? "Paciente";
+
   // Determine if within 48h → auto-confirm
   const startDate = new Date(startAt);
   const hoursUntilAppt = (startDate.getTime() - Date.now()) / (1000 * 60 * 60);
@@ -192,6 +201,7 @@ Deno.serve(async (req) => {
       doctor_id: session.doctor_id,
       office_id: session.office_id,
       patient_id: session.patient_id,
+      patient_name: attendedName(session.patient_name, patient?.full_name),
       start_at: startAt,
       end_at: endAt,
       status: appointmentStatus,
@@ -221,7 +231,7 @@ Deno.serve(async (req) => {
       if (accessToken) {
         const calendarId = encodeURIComponent(office.google_calendar_id);
         const eventBody = {
-          summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
+          summary: `Cita: ${attended}`,
           description: session.symptoms ? `Síntomas: ${session.symptoms}` : undefined,
           start: { dateTime: startAt, timeZone: "America/Mexico_City" },
           end: { dateTime: endAt, timeZone: "America/Mexico_City" },
@@ -258,7 +268,7 @@ Deno.serve(async (req) => {
       if (accessToken) {
         const calendarId = encodeURIComponent(office.outlook_calendar_id);
         const eventBody = {
-          subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
+          subject: `Cita: ${attended}`,
           body: session.symptoms ? { contentType: "Text", content: `Síntomas: ${session.symptoms}` } : undefined,
           start: { dateTime: startAt, timeZone: "America/Mexico_City" },
           end: { dateTime: endAt, timeZone: "America/Mexico_City" },
@@ -298,7 +308,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_scheduled",
     title: "Nueva cita agendada",
-    body: `${patient?.full_name ?? "Paciente"} - ${formatMxLongDateTime(startAt)}`,
+    body: `${attended} - ${formatMxLongDateTime(startAt)}`,
   });
 
   // Generate manage token (expires when appointment ends).
@@ -322,7 +332,7 @@ Deno.serve(async (req) => {
           event_type: "appointment.created",
           payload: {
             appointment_id: appointment.id,
-            patient_name: patient?.full_name,
+            patient_name: attended,
             patient_phone: patient?.phone,
             doctor_name: doctor?.full_name,
             office_id: office.id,
@@ -343,7 +353,7 @@ Deno.serve(async (req) => {
           payload: {
             appointment_id: appointment.id,
             patient_phone: patient?.phone ?? null,
-            patient_name: patient?.full_name ?? null,
+            patient_name: attended,
             office_id: office.id,
             office_name: office.name,
             office_address: office.address,
@@ -359,6 +369,10 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error("Error dispatching webhooks:", e);
   }
+
+  // Project the patient's data into the WHAAPY contact (best-effort, in the
+  // background: never delays or fails the booking).
+  await scheduleWhaapyContactSync(supabase, whaapy, { patientId: session.patient_id, phone: patient?.phone ?? null });
 
   return new Response(
     JSON.stringify({

@@ -22,6 +22,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Building2, FlaskConical, Send } from "lucide-react";
 import { userErrorMessage } from "@/lib/edge-function-error";
+import { appointmentPatientName } from "@/lib/patient-name";
 
 interface Props {
   open: boolean;
@@ -112,7 +113,7 @@ export default function SendReportModal({ open, onOpenChange, formId, appointmen
             event_type: "postconsultation.report_sent",
             payload: {
               appointment_id: appointmentId,
-              patient_name: appt?.patients?.full_name,
+              patient_name: appointmentPatientName(appt, null),
               patient_phone: appt?.patients?.phone,
               doctor_name: appt?.doctors?.full_name,
               start_at: appt?.start_at,

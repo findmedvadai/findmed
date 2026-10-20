@@ -36,6 +36,7 @@ import { AlertTriangle, Bot, BotOff, CheckCircle2, Hand, LifeBuoy, MapPin, Phone
 import { CASE_TYPE_LABEL, caseEventLabel } from "@/lib/case-labels";
 import NewCaseDialog from "@/components/admin/cases/NewCaseDialog";
 import CaseOriginCard from "@/components/admin/cases/CaseOriginCard";
+import CasePatientContact from "@/components/admin/cases/CasePatientContact";
 import CaseReimbursementPanel from "@/components/admin/cases/CaseReimbursementPanel";
 import { useCaseDeepLink } from "@/components/admin/cases/useCaseDeepLink";
 import { type CaseSla, caseSla, formatWait, SLA_STATE, sortBySla } from "@/lib/case-sla";
@@ -688,6 +689,9 @@ export function CaseSheet({
                 </div>
               )}
             </section>
+
+            {/* Garantía 20-oct: nombre del titular y teléfono, editables (y se copian a WHAAPY). */}
+            {caseRow.patient_id && <CasePatientContact patientId={caseRow.patient_id} />}
 
             {/* Etapa 2: origen post-consulta (tipo de manejo, cita) y reembolsos. */}
             <CaseOriginCard caseRow={caseRow} />

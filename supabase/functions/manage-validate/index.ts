@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,7 +97,7 @@ Deno.serve(async (req) => {
 
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, start_at, end_at, status, doctor_id, office_id, patient_id, symptoms")
+    .select("id, start_at, end_at, status, doctor_id, office_id, patient_id, patient_name, symptoms")
     .eq("id", manageToken.appointment_id)
     .maybeSingle();
 
@@ -149,7 +150,7 @@ Deno.serve(async (req) => {
       doctor_name: doctor?.full_name ?? "Doctor",
       // Backward compat for older /gestionar markup that reads `doctor_address`.
       doctor_address: officeAddress,
-      patient_name: patient?.full_name ?? "Paciente",
+      patient_name: attendedName(appointment.patient_name, patient?.full_name) ?? "Paciente",
       start_at: toLocalISOString(appointment.start_at, timezone),
       end_at: toLocalISOString(appointment.end_at, timezone),
       status: appointment.status,

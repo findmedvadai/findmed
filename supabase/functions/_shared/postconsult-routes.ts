@@ -25,6 +25,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { openCase, type Priority, type RequestType } from "./cases.ts";
 import { msToMxIso } from "./mx-time.ts";
+import { attendedName } from "./patient-identity.ts";
 
 export const MANAGEMENT_TYPES = ["conservador", "estudios", "procedimiento", "urgente"] as const;
 export type ManagementType = (typeof MANAGEMENT_TYPES)[number];
@@ -173,10 +174,10 @@ export async function routePostConsultation(
 
   const { data: apptData } = await supabase
     .from("appointments")
-    .select("id, doctor_id, patient_id, start_at")
+    .select("id, doctor_id, patient_id, patient_name, start_at")
     .eq("id", appointmentId)
     .maybeSingle();
-  const appt = apptData as { id: string; doctor_id: string; patient_id: string; start_at: string } | null;
+  const appt = apptData as { id: string; doctor_id: string; patient_id: string; patient_name?: string | null; start_at: string } | null;
   if (!appt) return { ok: false, code: "appointment_not_found" };
 
   const { data: patientData } = await supabase
@@ -215,7 +216,7 @@ export async function routePostConsultation(
       requestType: route.requestType,
       summary: route.summary,
       priority: route.priority,
-      contactName: patient.full_name,
+      contactName: attendedName(appt.patient_name, patient.full_name),
       source: "post_consultation",
       actor: "system",
       patientId: patient.id,

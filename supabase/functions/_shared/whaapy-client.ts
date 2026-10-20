@@ -3,7 +3,8 @@
 //   GET   /conversations/v1/by-phone/:phone   → conversation + contact
 //   PATCH /conversations/v1/:id/ai            { aiEnabled }  (until changed again)
 //   GET   /team/v1                            → agents (id, email, is_available)
-//   PATCH /contacts/v1/:id                    { assigned_agent_id | null, add_tags }
+//   PATCH /contacts/v1/:id                    { assigned_agent_id | null, add_tags, name, notes,
+//                                               custom_fields (se fusionan con los existentes) }
 //   POST  /messages/v1                        template or text message
 //   GET   /templates/v1, POST /templates/v1/sync
 //
@@ -21,6 +22,24 @@ export interface WhaapyConversation {
   id: string;
   contact_id: string | null;
   ai_enabled: boolean | null;
+  /** Contact snapshot from the same response (by-phone embeds it). Optional for fakes. */
+  contact?: WhaapyContactSnapshot | null;
+}
+
+export interface WhaapyContactSnapshot {
+  name: string | null;
+  /** WhatsApp profile name; WHAAPY copies it into `name` when it creates the contact. */
+  wa_name: string | null;
+  custom_fields: Record<string, unknown>;
+}
+
+/** PATCH /contacts/v1/:id body. custom_fields are MERGED by WHAAPY with the existing ones. */
+export interface WhaapyContactPatch {
+  assigned_agent_id?: string | null;
+  add_tags?: string[];
+  name?: string;
+  notes?: string;
+  custom_fields?: Record<string, string | number | boolean | null>;
 }
 
 export interface WhaapyAgent {
@@ -36,10 +55,7 @@ export interface WhaapyClient {
   conversationByPhone(phone: string): Promise<WhaapyResult<WhaapyConversation | null>>;
   setAiEnabled(conversationId: string, enabled: boolean): Promise<WhaapyResult<unknown>>;
   listAgents(): Promise<WhaapyResult<WhaapyAgent[]>>;
-  updateContact(
-    contactId: string,
-    patch: { assigned_agent_id?: string | null; add_tags?: string[] },
-  ): Promise<WhaapyResult<unknown>>;
+  updateContact(contactId: string, patch: WhaapyContactPatch): Promise<WhaapyResult<unknown>>;
   /** POST /messages/v1 with any body (template or text). Returns WHAAPY's ids. */
   sendMessage(body: Record<string, unknown>): Promise<WhaapyResult<WhaapySent>>;
   /** GET /templates/v1 (raw WHAAPY objects; messaging-admin normalizes them). */
@@ -101,12 +117,28 @@ export function createWhaapyClient(
       if (!r.ok) return r.status === 404 ? { ok: true, status: 404, data: null } : r;
       const d = r.data?.data;
       if (!d || typeof d.id !== "string") return { ok: true, status: r.status, data: null };
-      const contact = d.contact as { id?: string } | undefined;
+      const contact = d.contact as
+        | { id?: string; name?: unknown; waName?: unknown; customFields?: unknown }
+        | undefined;
       const settings = d.settings as { aiEnabled?: boolean } | undefined;
+      const fields = contact?.customFields;
       return {
         ok: true,
         status: r.status,
-        data: { id: d.id, contact_id: contact?.id ?? null, ai_enabled: settings?.aiEnabled ?? null },
+        data: {
+          id: d.id,
+          contact_id: contact?.id ?? null,
+          ai_enabled: settings?.aiEnabled ?? null,
+          contact: contact
+            ? {
+              name: typeof contact.name === "string" ? contact.name : null,
+              wa_name: typeof contact.waName === "string" ? contact.waName : null,
+              custom_fields: fields && typeof fields === "object" && !Array.isArray(fields)
+                ? fields as Record<string, unknown>
+                : {},
+            }
+            : null,
+        },
       };
     },
 

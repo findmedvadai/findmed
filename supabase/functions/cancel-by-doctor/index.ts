@@ -3,6 +3,7 @@ import { createManageToken } from "../_shared/manage-token.ts";
 import { deleteAppointmentEvents } from "../_shared/calendar-sync.ts";
 import { getServiceKey, getPublishableKey } from "../_shared/supabase-keys.ts";
 import { formatMxLongDateTime } from "../_shared/mx-time.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -88,7 +89,7 @@ Deno.serve(async (req) => {
   // Get appointment — verify it belongs to the doctor.
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, status, doctor_id, office_id, patient_id, start_at, end_at, google_event_id, outlook_event_id")
+    .select("id, status, doctor_id, office_id, patient_id, patient_name, start_at, end_at, google_event_id, outlook_event_id")
     .eq("id", appointment_id)
     .eq("doctor_id", doctorId)
     .maybeSingle();
@@ -145,6 +146,7 @@ Deno.serve(async (req) => {
     .select("full_name, phone")
     .eq("id", appointment.patient_id)
     .maybeSingle();
+  const attended = attendedName(appointment.patient_name, patient?.full_name);
 
   // Doctor name (display only).
   const { data: doctor } = await supabase
@@ -172,7 +174,7 @@ Deno.serve(async (req) => {
     recipient_role: "doctor",
     type: "appointment_cancelled_by_doctor",
     title: "Cita cancelada",
-    body: `Cancelaste la cita de ${patient?.full_name ?? "Paciente"} del ${formatMxLongDateTime(appointment.start_at ?? "")}`,
+    body: `Cancelaste la cita de ${attended ?? "Paciente"} del ${formatMxLongDateTime(appointment.start_at ?? "")}`,
   });
 
   // Dispatch webhooks (fire-and-forget)
@@ -193,7 +195,7 @@ Deno.serve(async (req) => {
           payload: {
             appointment_id: appointment_id,
             patient_phone: patient?.phone ?? null,
-            patient_name: patient?.full_name ?? null,
+            patient_name: attended,
             doctor_name: doctor?.full_name ?? null,
             start_at: appointment.start_at,
             cancel_reason: "doctor",
@@ -210,7 +212,7 @@ Deno.serve(async (req) => {
           payload: {
             appointment_id: appointment_id,
             patient_phone: patient?.phone ?? null,
-            patient_name: patient?.full_name ?? null,
+            patient_name: attended,
             previous_status: appointment.status,
             new_status: "cancelled",
             start_at: appointment.start_at,

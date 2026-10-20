@@ -259,7 +259,11 @@ Deno.test("whaapy-client: maps by-phone, 404 → null, errors without the key, t
   });
   try {
     const c = createWhaapyClient({ apiKey: "wha_secret_value", baseUrl: "https://api.example.test/" });
-    assertEquals(await c.conversationByPhone("+525512345678"), { ok: true, status: 200, data: { id: "c1", contact_id: "k1", ai_enabled: true } });
+    assertEquals(await c.conversationByPhone("+525512345678"), {
+      ok: true,
+      status: 200,
+      data: { id: "c1", contact_id: "k1", ai_enabled: true, contact: { name: null, wa_name: null, custom_fields: {} } },
+    });
     assertEquals(f.calls[0].url, "https://api.example.test/conversations/v1/by-phone/%2B525512345678");
     assertEquals(await c.conversationByPhone("+525500000000"), { ok: true, status: 404, data: null });
     const team = await c.listAgents();

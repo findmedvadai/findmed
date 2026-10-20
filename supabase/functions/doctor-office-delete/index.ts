@@ -20,6 +20,7 @@ import { getGoogleAccessToken, getOutlookAccessToken } from "../_shared/calendar
 import { getOrCreateManageUrl } from "../_shared/manage-token.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { externalTimeout } from "../_shared/http-timeout.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 interface Body {
   office_id: string;
@@ -61,7 +62,7 @@ Deno.serve(async (req) => {
   const { data: futureAppts } = await supabase
     .from("appointments")
     .select(
-      "id, doctor_id, patient_id, start_at, end_at, status, google_event_id, outlook_event_id"
+      "id, doctor_id, patient_id, patient_name, start_at, end_at, status, google_event_id, outlook_event_id"
     )
     .eq("office_id", body.office_id)
     .in("status", ["scheduled", "confirmed"])
@@ -145,6 +146,7 @@ Deno.serve(async (req) => {
       supabase.from("patients").select("full_name, phone").eq("id", appt.patient_id).maybeSingle(),
       supabase.from("doctors").select("full_name").eq("id", appt.doctor_id).maybeSingle(),
     ]);
+    const attended = attendedName(appt.patient_name, patient?.full_name);
 
     const manageUrl = await getOrCreateManageUrl({
       supabase,
@@ -165,7 +167,7 @@ Deno.serve(async (req) => {
       recipient_role: "doctor",
       type: notifType,
       title: "Cita cancelada (consultorio borrado)",
-      body: `Se canceló la cita de ${patient?.full_name ?? "Paciente"} por borrado del consultorio "${office.name}".`,
+      body: `Se canceló la cita de ${attended ?? "Paciente"} por borrado del consultorio "${office.name}".`,
     });
 
     try {
@@ -180,7 +182,7 @@ Deno.serve(async (req) => {
               source: cancelReason,
               cancel_reason: cancelReason,
               cancel_context: "office_deleted",
-              patient_name: patient?.full_name ?? null,
+              patient_name: attended,
               patient_phone: patient?.phone ?? null,
               doctor_name: doctor?.full_name ?? null,
               doctor_id: appt.doctor_id,
@@ -206,7 +208,7 @@ Deno.serve(async (req) => {
               cancel_reason: cancelReason,
               cancel_context: "office_deleted",
               patient_phone: patient?.phone ?? null,
-              patient_name: patient?.full_name ?? null,
+              patient_name: attended,
               doctor_id: appt.doctor_id,
               office_id: body.office_id,
               office_name: office.name,

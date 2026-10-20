@@ -39,6 +39,7 @@ import { Link } from "react-router-dom";
 import { isManagementType, MANAGEMENT_TYPE_INFO } from "@/lib/management-type";
 import { CASE_PRIORITY, CASE_STATUS, caseTypeLabel } from "@/lib/case-labels";
 import SendReportModal from "./SendReportModal";
+import { appointmentPatientName, titularIfDifferent } from "@/lib/patient-name";
 
 const STATUS_BADGE: Record<string, { label: string; tone: Tone }> = {
   pending: { label: "Pendiente de revisión", tone: "warning" },
@@ -176,7 +177,8 @@ export default function PostConsultationDetailDialog({ appointmentId, open, onOp
                 {appt && (
                   <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
                     <InfoItem icon={User} label="Paciente">
-                      <span className="font-medium">{appt.patients?.full_name ?? "—"}</span>
+                      <span className="font-medium">{appointmentPatientName(appt, "—")}</span>
+                      {titularIfDifferent(appt) && <span className="block text-xs text-muted-foreground">Titular: {titularIfDifferent(appt)}</span>}
                       {appt.patients?.phone && <span className="block text-xs text-muted-foreground">{appt.patients.phone}</span>}
                     </InfoItem>
                     <InfoItem icon={Calendar} label="Consulta">

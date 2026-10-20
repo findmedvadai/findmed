@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/app/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { appointmentPatientName } from "@/lib/patient-name";
 import DoctorInbox from "./DoctorInbox";
 
 const TZ = "America/Mexico_City";
@@ -43,7 +44,7 @@ export default function DoctorInicio() {
       const [today, toConfirm, toComplete, offices, availability] = await Promise.all([
         supabase
           .from("appointments")
-          .select("id, start_at, end_at, status, symptoms, patients(full_name), doctor_offices(name)")
+          .select("id, start_at, end_at, status, symptoms, patient_name, patients(full_name), doctor_offices(name)")
           .eq("doctor_id", doctorId!)
           .in("status", ["scheduled", "confirmed", "completed"])
           .gte("start_at", start)
@@ -157,7 +158,6 @@ export default function DoctorInicio() {
             ) : (
               <ul className="divide-y">
                 {data.today.map((a) => {
-                  const p = a.patients as { full_name: string } | null;
                   const off = a.doctor_offices as { name: string } | null;
                   const t = toZonedTime(new Date(a.start_at), TZ);
                   return (
@@ -167,7 +167,7 @@ export default function DoctorInicio() {
                         <span className="text-sm font-semibold text-foreground">{format(t, "HH:mm")}</span>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">{p?.full_name ?? "Paciente"}</p>
+                        <p className="truncate text-sm font-medium text-foreground">{appointmentPatientName(a)}</p>
                         <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                           {off?.name && (<><MapPin className="h-3 w-3" /> {off.name}</>)}
                           {a.symptoms && <span className="truncate">{off?.name ? " · " : ""}{a.symptoms}</span>}

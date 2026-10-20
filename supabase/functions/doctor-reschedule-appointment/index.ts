@@ -13,6 +13,7 @@ import { dispatchStaffRescheduleWebhook } from "../_shared/staff-reschedule-webh
 import { isMovable, moveAppointment } from "../_shared/staff-reschedule.ts";
 import { getServiceKey } from "../_shared/supabase-keys.ts";
 import { externalTimeout } from "../_shared/http-timeout.ts";
+import { attendedName } from "../_shared/patient-identity.ts";
 
 interface Body {
   appointment_id: string;
@@ -50,7 +51,7 @@ Deno.serve(async (req) => {
   // Load appointment to determine the owning doctor.
   const { data: appointment } = await supabase
     .from("appointments")
-    .select("id, doctor_id, office_id, patient_id, status, start_at, end_at, symptoms, google_event_id, outlook_event_id")
+    .select("id, doctor_id, office_id, patient_id, patient_name, status, start_at, end_at, symptoms, google_event_id, outlook_event_id")
     .eq("id", appointment_id)
     .maybeSingle();
 
@@ -130,6 +131,7 @@ Deno.serve(async (req) => {
     .select("full_name, phone")
     .eq("id", appointment.patient_id)
     .maybeSingle();
+  const attended = attendedName(appointment.patient_name, patient?.full_name);
 
   const syncWarnings: string[] = [];
   const symptomsText = appointment.symptoms?.trim() ?? "";
@@ -142,7 +144,7 @@ Deno.serve(async (req) => {
     } else {
       const calendarId = encodeURIComponent(office.google_calendar_id);
       const eventBody = {
-        summary: `Cita: ${patient?.full_name ?? "Paciente"}`,
+        summary: `Cita: ${attended ?? "Paciente"}`,
         description: symptomsText ? `Síntomas: ${symptomsText}` : undefined,
         start: { dateTime: start_at, timeZone: "America/Mexico_City" },
         end: { dateTime: end_at, timeZone: "America/Mexico_City" },
@@ -210,7 +212,7 @@ Deno.serve(async (req) => {
     } else {
       const calendarId = encodeURIComponent(office.outlook_calendar_id);
       const eventBody = {
-        subject: `Cita: ${patient?.full_name ?? "Paciente"}`,
+        subject: `Cita: ${attended ?? "Paciente"}`,
         body: symptomsText ? { contentType: "Text", content: `Síntomas: ${symptomsText}` } : undefined,
         start: { dateTime: start_at, timeZone: "America/Mexico_City" },
         end: { dateTime: end_at, timeZone: "America/Mexico_City" },
@@ -277,7 +279,7 @@ Deno.serve(async (req) => {
     appointmentId: appointment_id,
     doctorId: appointment.doctor_id,
     doctorName: doctor?.full_name ?? null,
-    patientName: patient?.full_name ?? null,
+    patientName: attended,
     patientPhone: patient?.phone ?? null,
     officeId: appointment.office_id,
     officeName: office?.name ?? null,

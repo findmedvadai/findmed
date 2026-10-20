@@ -7,7 +7,8 @@
 // (reserve-create). Callers must word it that way.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { isValidNormalizedPhone, mxPhoneLookupVariants, normalizeMxPhone } from "./phone.ts";
+import { isValidNormalizedPhone, normalizeMxPhone } from "./phone.ts";
+import { cleanPersonName, matchOrCreatePatient } from "./patient-identity.ts";
 import { generateSecureToken } from "./manage-token.ts";
 import { appBaseUrl } from "./events.ts";
 
@@ -57,30 +58,17 @@ export async function createReservationSession(
     return { ok: false, status: 404, code: "office_not_found", message_es: "Ese consultorio no está disponible." };
   }
 
-  // Match-or-create the patient by every +52/+521 variant.
-  const { data: existing } = await supabase
-    .from("patients")
-    .select("id")
-    .in("phone", mxPhoneLookupVariants(phone))
-    .order("created_at", { ascending: true })
-    .limit(1);
-  let patientId: string;
-  const name = input.patientName.trim();
-  if (existing?.[0]) {
-    patientId = existing[0].id;
-    if (name) await supabase.from("patients").update({ full_name: name }).eq("id", patientId);
-  } else {
-    const { data: created, error } = await supabase
-      .from("patients")
-      .insert({ full_name: name || "Paciente", phone })
-      .select("id")
-      .single();
-    if (error || !created) {
-      console.error("[booking-session] patient insert failed:", error);
-      return { ok: false, status: 500, code: "db_error", message_es: "No pudimos registrar al paciente." };
-    }
-    patientId = created.id;
+  // Match-or-create the patient by every +52/+521 variant. The phone's owner
+  // (titular) is never renamed: `patientName` is who will be attended (it can
+  // be a relative booking with the titular's number) and travels on the
+  // session to the appointment (garantía 20-oct-2026, patient-identity.ts).
+  const name = cleanPersonName(input.patientName);
+  const matched = await matchOrCreatePatient(supabase, { canonicalPhone: phone, name });
+  if (!matched.ok) {
+    console.error("[booking-session] patient match/insert failed:", matched.error);
+    return { ok: false, status: 500, code: "db_error", message_es: "No pudimos registrar al paciente." };
   }
+  const patientId = matched.patientId;
 
   const token = generateSecureToken();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
@@ -90,6 +78,7 @@ export async function createReservationSession(
       doctor_id: input.doctorId,
       office_id: input.officeId,
       patient_id: patientId,
+      patient_name: name,
       token,
       symptoms: input.symptoms?.trim() || null,
       expires_at: expiresAt,

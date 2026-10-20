@@ -39,6 +39,8 @@ import { InsuranceDocumentsSection } from "@/components/app/PatientInsurance";
 import { formatMx } from "@/lib/timezone";
 import { invalidateAdminAppointmentViews } from "@/lib/admin-appointment-queries";
 import RescheduleAppointmentDialog from "./RescheduleAppointmentDialog";
+import { PatientContactSection } from "./PatientContactSection";
+import { appointmentPatientName } from "@/lib/patient-name";
 import { userErrorMessage } from "@/lib/edge-function-error";
 
 const CANCEL_REASON_LABELS: Record<string, string> = {
@@ -82,7 +84,7 @@ export default function AppointmentDetailDialog({
           `id, start_at, end_at, status, symptoms,
            doctor_notes, doctor_notes_updated_at,
            cancel_reason, booking_source, google_event_id, outlook_event_id,
-           documents_requested_at, documents_received_at,
+           documents_requested_at, documents_received_at, patient_name,
            patients(id, full_name, phone, has_insurance, insurer, policy_number),
            doctors(id, full_name, doctor_specialties(specialties(name)))`
         )
@@ -170,7 +172,7 @@ export default function AppointmentDetailDialog({
             <>
               <DialogHeader className="space-y-2 pr-6">
                 <div className="flex flex-wrap items-center gap-2">
-                  <DialogTitle className="text-base">{patient?.full_name ?? "Detalle de cita"}</DialogTitle>
+                  <DialogTitle className="text-base">{appointmentPatientName(data, "Detalle de cita")}</DialogTitle>
                   <AppointmentStatusBadge status={data.status} />
                   {data.cancel_reason && (
                     <SoftBadge tone="neutral">
@@ -184,13 +186,19 @@ export default function AppointmentDetailDialog({
                 </DialogDescription>
               </DialogHeader>
 
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-3">
-                <DetailField icon={Phone} label="Teléfono">{patient?.phone ?? "—"}</DetailField>
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-2">
                 <DetailField icon={Stethoscope} label="Doctor">{doctor?.full_name ?? "—"}</DetailField>
                 <DetailField icon={Tags} label="Especialidad">
                   {specialties.length > 0 ? specialties.join(", ") : "—"}
                 </DetailField>
               </dl>
+
+              <PatientContactSection
+                patientId={patient?.id}
+                contact={{ fullName: patient?.full_name, phone: patient?.phone }}
+                appointment={{ id: data.id, patientName: data.patient_name }}
+                onSaved={() => invalidateAdminAppointmentViews(queryClient)}
+              />
 
               <InsuranceDocumentsSection
                 patientId={patient?.id}
@@ -304,7 +312,7 @@ export default function AppointmentDetailDialog({
             id: data.id,
             start_at: data.start_at,
             end_at: data.end_at,
-            patient_name: patient?.full_name ?? "Paciente",
+            patient_name: appointmentPatientName(data),
           }}
           onRescheduled={() => {
             onAfterAction?.();
